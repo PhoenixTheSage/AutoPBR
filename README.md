@@ -1,6 +1,6 @@
 ## AutoPBR (C#)
 
-**C# rewrite of [LaChips/PBRify](https://github.com/LaChips/PBRify)** – generates a PBR-ready version of a Minecraft resource pack by creating:
+**C# Generator inspired by [LaChips/PBRify](https://github.com/LaChips/PBRify)** – generates a PBR-ready version of a Minecraft resource pack by creating:
 
 - **Specular maps** (`*_s.png`) from diffuse colors using a color→specular lookup table (`textures_data.json`)
 - **Normal maps** (`*_n.png`) from the diffuse texture via a Sobel-based normal map generator
@@ -26,17 +26,9 @@ The original Python version used PySimpleGUI (now paid for some uses). This proj
 - `src/AutoPBR.Cli` – command‑line front‑end
 - `src/AutoPBR.App` – Avalonia desktop app
 
-Solution file: `AutoPBR.sln`
-
 ---
 
 ### CLI usage
-
-Build (once):
-
-```bash
-dotnet build AutoPBR.sln -c Release
-```
 
 Run:
 
@@ -59,16 +51,6 @@ dotnet run --project src/AutoPBR.Cli -- \
 
 `textures_data.json` (color→specular mapping from the original project) is embedded as content and copied to `Data/textures_data.json` next to the executables.
 
----
-
-### GUI usage (Avalonia app)
-
-Run the app:
-
-```bash
-dotnet run --project src/AutoPBR.App
-```
-
 The main window lets you:
 
 - **Pick input pack (.zip)** and **output folder**
@@ -88,10 +70,9 @@ The output `.zip` is named after the input pack, with `_PBR_fast` or `_PBR_slow`
 
 - Image processing uses **SixLabors.ImageSharp**.
 - Color space and ΔE2000 distance use **Colourful**.
-- The logic closely mirrors the original Python:
+- The initial logic closely mirrors the original Python:
   - file discovery rules (folders, exclusions)
   - specular lookup behavior
   - normal and height generation formulas
 
-This repository intentionally contains **only the C# implementation**; the original Python code and PySimpleGUI UI are not included here.
 
