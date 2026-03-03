@@ -1,0 +1,129 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AutoPBR.App.ViewModels"
+        xmlns:m="using:AutoPBR.App.Models"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        x:Class="AutoPBR.App.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="AutoPBR"
+        Width="1000"
+        Height="720">
+
+    <Design.DataContext>
+        <!-- This only sets the DataContext for the previewer in an IDE,
+             to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
+        <vm:MainWindowViewModel/>
+    </Design.DataContext>
+
+    <Grid RowDefinitions="Auto,*,Auto">
+        <Border Background="{DynamicResource SystemControlBackgroundBaseLowBrush}" Padding="16">
+            <StackPanel Spacing="4">
+                <TextBlock FontSize="22" FontWeight="SemiBold" Text="AutoPBR" />
+                <TextBlock Opacity="0.8" Text="Convert a Minecraft resource pack to a PBR-friendly pack (specular + normal + height)." />
+            </StackPanel>
+        </Border>
+
+        <ScrollViewer Grid.Row="1">
+            <StackPanel Margin="16" Spacing="16">
+                <Border CornerRadius="8" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" Padding="16">
+                    <StackPanel Spacing="10">
+                        <TextBlock FontSize="16" FontWeight="SemiBold" Text="Input" />
+                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+                            <TextBox Grid.Row="0" Grid.Column="0" Watermark="Resource pack (.zip)" Text="{Binding PackPath, Mode=TwoWay}" />
+                            <Button Grid.Row="0" Grid.Column="1" Content="Browse…" Click="BrowsePack_Click" />
+
+                            <TextBox Grid.Row="1" Grid.Column="0" Watermark="Output folder" Text="{Binding OutputDirectory, Mode=TwoWay}" />
+                            <Button Grid.Row="1" Grid.Column="1" Content="Browse…" Click="BrowseOutput_Click" />
+
+                            <TextBox Grid.Row="2" Grid.Column="0" IsReadOnly="True" Watermark="Output zip path" Text="{Binding OutputZipPath}" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border CornerRadius="8" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" Padding="16">
+                    <StackPanel Spacing="10">
+                        <TextBlock FontSize="16" FontWeight="SemiBold" Text="Generation settings" />
+
+                        <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="10">
+                            <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Normal strength" />
+                            <Slider Grid.Row="0" Grid.Column="1" Minimum="1" Maximum="3" SmallChange="0.01" LargeChange="0.1"
+                                    Value="{Binding NormalIntensity, Mode=TwoWay}" />
+                            <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" Text="{Binding NormalIntensity, StringFormat={}{0:0.###}}" />
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="Height strength" />
+                            <Slider Grid.Row="1" Grid.Column="1" Minimum="0.01" Maximum="0.5" SmallChange="0.001" LargeChange="0.01"
+                                    Value="{Binding HeightIntensity, Mode=TwoWay}" />
+                            <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Text="{Binding HeightIntensity, StringFormat={}{0:0.###}}" />
+                        </Grid>
+
+                        <StackPanel Orientation="Horizontal" Spacing="16">
+                            <CheckBox Content="Fast specular (less accurate)" IsChecked="{Binding FastSpecular, Mode=TwoWay}" />
+                            <CheckBox Content="Ignore plants" IsChecked="{Binding IgnorePlants, Mode=TwoWay}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border CornerRadius="8" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" Padding="16">
+                    <StackPanel Spacing="10">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Left" FontSize="16" FontWeight="SemiBold" Text="Exclude textures" />
+                            <Button DockPanel.Dock="Right" Content="Load from pack" Command="{Binding LoadTexturesCommand}" />
+                        </DockPanel>
+
+                        <TextBox Watermark="Filter (e.g. \block\stone)" Text="{Binding TextureFilter, Mode=TwoWay}" />
+
+                        <Border CornerRadius="6" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" Padding="8">
+                            <ScrollViewer Height="240">
+                                <ItemsControl ItemsSource="{Binding FilteredTextureKeys}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="m:TextureKeyItem">
+                                            <CheckBox IsChecked="{Binding IsIgnored, Mode=TwoWay}" Content="{Binding Key}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <Border CornerRadius="8" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" Padding="16">
+                    <StackPanel Spacing="10">
+                        <TextBlock FontSize="16" FontWeight="SemiBold" Text="Progress" />
+                        <TextBlock Text="{Binding StatusText}" />
+                        <ProgressBar Minimum="0" Maximum="{Binding ProgressMax}" Value="{Binding ProgressValue}" Height="16" />
+                    </StackPanel>
+                </Border>
+
+                <Border CornerRadius="8" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" Padding="16">
+                    <StackPanel Spacing="10">
+                        <TextBlock FontSize="16" FontWeight="SemiBold" Text="Log" />
+                        <Border CornerRadius="6" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" Padding="8">
+                            <ScrollViewer Height="200">
+                                <ItemsControl ItemsSource="{Binding LogLines}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="12"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Border>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Border Grid.Row="2" Background="{DynamicResource SystemControlBackgroundBaseLowBrush}" Padding="12">
+            <DockPanel LastChildFill="False">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8">
+                    <Button Content="Cancel" Command="{Binding CancelCommand}" IsEnabled="{Binding IsConverting}" />
+                    <Button Content="Convert" Command="{Binding ConvertCommand}" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+    </Grid>
+
+</Window>

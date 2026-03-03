@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "WOf7h0G5FHE=",
+  "success": true,
+  "projectFilePath": "Z:\\Cursor Projects\\PBRify\\src\\AutoPBR.Cli\\AutoPBR.Cli.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\John_Phoenix\\.nuget\\packages\\colourful\\3.2.0\\colourful.3.2.0.nupkg.sha512",
+    "C:\\Users\\John_Phoenix\\.nuget\\packages\\sixlabors.imagesharp\\3.1.12\\sixlabors.imagesharp.3.1.12.nupkg.sha512"
+  ],
+  "logs": []
+}
