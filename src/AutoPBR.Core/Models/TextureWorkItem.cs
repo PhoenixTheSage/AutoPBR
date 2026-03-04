@@ -22,6 +22,11 @@ public sealed class TextureWorkItem
     public required string Extension { get; init; }         // e.g. .png
     public required string RelativeKey { get; init; }       // e.g. \block\stone
 
+    /// <summary>
+    /// When true, only specular is generated (e.g. particles); normals and height are skipped.
+    /// </summary>
+    public bool SpecularOnly { get; init; }
+
     public TextureOverrides Overrides { get; } = new();
 
     public string DiffusePath => FullPath;

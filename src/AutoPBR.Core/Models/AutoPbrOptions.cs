@@ -13,6 +13,26 @@ public sealed class AutoPbrOptions
     public bool ExperimentalSpecular { get; init; } = false;
 
     /// <summary>
+    /// When true, process block/textures (block, blocks folders).
+    /// </summary>
+    public bool ProcessBlocks { get; init; } = true;
+
+    /// <summary>
+    /// When true, process item textures (item, items folders).
+    /// </summary>
+    public bool ProcessItems { get; init; } = true;
+
+    /// <summary>
+    /// When true, process armor/entity textures (entity folder).
+    /// </summary>
+    public bool ProcessArmor { get; init; } = true;
+
+    /// <summary>
+    /// When true, process particle textures (particle folder). Particles get specular only (no normal/height).
+    /// </summary>
+    public bool ProcessParticles { get; init; } = true;
+
+    /// <summary>
     /// Keys like "\block\stone" (no extension). If a texture's key matches, it is skipped.
     /// </summary>
     public ISet<string> IgnoreTextureKeys { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

@@ -95,6 +95,14 @@
                                 </StackPanel>
 
                                 <CheckBox Content="Experimental Specular (LabPBR _s: RGBA — smoothness, F0/metal, porosity/subsurface, emissive)" IsChecked="{Binding ExperimentalSpecular, Mode=TwoWay}" />
+
+                                <TextBlock FontSize="14" FontWeight="SemiBold" Text="Texture types" Margin="0,8,0,0" />
+                                <StackPanel Orientation="Horizontal" Spacing="16">
+                                    <CheckBox Content="Blocks" IsChecked="{Binding ProcessBlocks, Mode=TwoWay}" />
+                                    <CheckBox Content="Items" IsChecked="{Binding ProcessItems, Mode=TwoWay}" />
+                                    <CheckBox Content="Armor (entity)" IsChecked="{Binding ProcessArmor, Mode=TwoWay}" />
+                                    <CheckBox Content="Particles (specular only)" IsChecked="{Binding ProcessParticles, Mode=TwoWay}" />
+                                </StackPanel>
                             </StackPanel>
                         </Border>
 

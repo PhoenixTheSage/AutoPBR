@@ -12,6 +12,10 @@ public sealed class UserSettings
     public bool IgnorePlants { get; set; }
     public bool ExperimentalSpecular { get; set; }
     public string ColorScheme { get; set; } = "Dark";
+    public bool ProcessBlocks { get; set; } = true;
+    public bool ProcessItems { get; set; } = true;
+    public bool ProcessArmor { get; set; } = true;
+    public bool ProcessParticles { get; set; } = true;
 
     private static string SettingsDirectory =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AutoPBR");

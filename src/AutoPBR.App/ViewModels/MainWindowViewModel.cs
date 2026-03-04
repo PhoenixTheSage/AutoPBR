@@ -25,6 +25,10 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private bool fastSpecular;
     [ObservableProperty] private bool ignorePlants;
     [ObservableProperty] private bool experimentalSpecular;
+    [ObservableProperty] private bool processBlocks = true;
+    [ObservableProperty] private bool processItems = true;
+    [ObservableProperty] private bool processArmor = true;
+    [ObservableProperty] private bool processParticles = true;
 
     [ObservableProperty] private bool isBusy;
     [ObservableProperty] private bool isConverting;
@@ -65,6 +69,10 @@ public partial class MainWindowViewModel : ViewModelBase
             IgnorePlants = _settings.IgnorePlants;
             ExperimentalSpecular = _settings.ExperimentalSpecular;
             ColorScheme = string.IsNullOrWhiteSpace(_settings.ColorScheme) ? "Dark" : _settings.ColorScheme;
+            ProcessBlocks = _settings.ProcessBlocks;
+            ProcessItems = _settings.ProcessItems;
+            ProcessArmor = _settings.ProcessArmor;
+            ProcessParticles = _settings.ProcessParticles;
             ApplyColorScheme();
         }
         finally
@@ -103,6 +111,10 @@ public partial class MainWindowViewModel : ViewModelBase
         ApplyColorScheme();
         SaveSettings();
     }
+    partial void OnProcessBlocksChanged(bool value) => SaveSettings();
+    partial void OnProcessItemsChanged(bool value) => SaveSettings();
+    partial void OnProcessArmorChanged(bool value) => SaveSettings();
+    partial void OnProcessParticlesChanged(bool value) => SaveSettings();
 
     private void RecomputeOutputZipPath()
     {
@@ -150,6 +162,10 @@ public partial class MainWindowViewModel : ViewModelBase
         _settings.IgnorePlants = IgnorePlants;
         _settings.ExperimentalSpecular = ExperimentalSpecular;
         _settings.ColorScheme = ColorScheme;
+        _settings.ProcessBlocks = ProcessBlocks;
+        _settings.ProcessItems = ProcessItems;
+        _settings.ProcessArmor = ProcessArmor;
+        _settings.ProcessParticles = ProcessParticles;
         _settings.Save();
     }
 
@@ -272,7 +288,14 @@ public partial class MainWindowViewModel : ViewModelBase
 
             var keys = await Task.Run(() =>
             {
-                var scan = ResourcePackConverter.ScanTextures(extracted, new AutoPbrOptions());
+                var scanOpts = new AutoPbrOptions
+                {
+                    ProcessBlocks = ProcessBlocks,
+                    ProcessItems = ProcessItems,
+                    ProcessArmor = ProcessArmor,
+                    ProcessParticles = ProcessParticles
+                };
+                var scan = ResourcePackConverter.ScanTextures(extracted, scanOpts);
                 return scan.Select(t => t.RelativeKey).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
             }).ConfigureAwait(false);
 
@@ -373,6 +396,10 @@ public partial class MainWindowViewModel : ViewModelBase
                 HeightIntensity = (float)HeightIntensity,
                 FastSpecular = FastSpecular,
                 ExperimentalSpecular = ExperimentalSpecular,
+                ProcessBlocks = ProcessBlocks,
+                ProcessItems = ProcessItems,
+                ProcessArmor = ProcessArmor,
+                ProcessParticles = ProcessParticles,
                 IgnoreTextureKeys = ignore,
                 SpecularData = _specularData
             };

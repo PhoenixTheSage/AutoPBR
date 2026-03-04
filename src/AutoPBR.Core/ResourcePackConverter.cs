@@ -10,7 +10,27 @@ namespace AutoPBR.Core;
 
 public sealed class ResourcePackConverter
 {
-    private static readonly string[] TextureFolders = ["blocks", "block", "items", "item"];
+    /// <summary>
+    /// Pairs of (texture folder name under assets/minecraft/textures, specular-only).
+    /// Specular-only folders (e.g. particle) get only _s; no _n or height.
+    /// </summary>
+    private static IEnumerable<(string folder, bool specularOnly)> GetEnabledFolders(AutoPbrOptions options)
+    {
+        if (options.ProcessBlocks)
+        {
+            yield return ("blocks", false);
+            yield return ("block", false);
+        }
+        if (options.ProcessItems)
+        {
+            yield return ("items", false);
+            yield return ("item", false);
+        }
+        if (options.ProcessArmor)
+            yield return ("entity", false);
+        if (options.ProcessParticles)
+            yield return ("particle", true);
+    }
 
     public async Task ConvertAsync(
         string inputZipPath,
@@ -68,7 +88,7 @@ public sealed class ResourcePackConverter
         var texturesRoot = Path.Combine(extractedPackRoot, "assets", "minecraft", "textures");
         var results = new List<TextureWorkItem>();
 
-        foreach (var folder in TextureFolders)
+        foreach (var (folder, specularOnly) in GetEnabledFolders(options))
         {
             var dir = Path.Combine(texturesRoot, folder);
             if (!Directory.Exists(dir))
@@ -111,7 +131,8 @@ public sealed class ResourcePackConverter
                     DirectoryPath = directoryPath,
                     Name = name,
                     Extension = ext,
-                    RelativeKey = relativePathNoExt
+                    RelativeKey = relativePathNoExt,
+                    SpecularOnly = specularOnly
                 });
             }
         }
@@ -333,6 +354,8 @@ public sealed class ResourcePackConverter
             {
                 ct.ThrowIfCancellationRequested();
                 var t = textures[i];
+                if (t.SpecularOnly)
+                    continue;
                 progress?.Report(new ConversionProgress(stage, i + 1, total, t.Name));
 
                 using var img = Image.Load<Rgba32>(t.DiffusePath);
@@ -363,6 +386,8 @@ public sealed class ResourcePackConverter
             {
                 ct.ThrowIfCancellationRequested();
                 var t = textures[i];
+                if (t.SpecularOnly)
+                    continue;
                 progress?.Report(new ConversionProgress(stage, i + 1, total, t.Name));
 
                 using var diffuseImg = Image.Load<Rgba32>(t.DiffusePath);

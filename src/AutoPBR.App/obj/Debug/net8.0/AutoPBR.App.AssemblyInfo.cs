@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("AutoPBR.App")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+2c8bcca0f3a06e7294c441f35d0341b32c5b48a4")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+b04b3910697dfe04e4f078ab6cb3151ec5405cb6")]
 [assembly: System.Reflection.AssemblyProductAttribute("AutoPBR.App")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AutoPBR.App")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
