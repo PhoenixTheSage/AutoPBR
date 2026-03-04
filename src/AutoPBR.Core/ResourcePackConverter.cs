@@ -15,7 +15,7 @@ public sealed class ResourcePackConverter
     public async Task ConvertAsync(
         string inputZipPath,
         string outputZipPath,
-        PbrifyOptions options,
+        AutoPbrOptions options,
         IProgress<ConversionProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
@@ -27,7 +27,7 @@ public sealed class ResourcePackConverter
 
         progress?.Report(new ConversionProgress(ConversionStage.Extracting, 0, 0));
 
-        var tempRoot = Path.Combine(Path.GetTempPath(), "PBRify", Guid.NewGuid().ToString("N"));
+        var tempRoot = Path.Combine(Path.GetTempPath(), "AutoPBR", Guid.NewGuid().ToString("N"));
         var extracted = Path.Combine(tempRoot, "pack_unzipped");
         Directory.CreateDirectory(extracted);
 
@@ -63,7 +63,7 @@ public sealed class ResourcePackConverter
         }
     }
 
-    public static IReadOnlyList<TextureWorkItem> ScanTextures(string extractedPackRoot, PbrifyOptions options)
+    public static IReadOnlyList<TextureWorkItem> ScanTextures(string extractedPackRoot, AutoPbrOptions options)
     {
         var texturesRoot = Path.Combine(extractedPackRoot, "assets", "minecraft", "textures");
         var results = new List<TextureWorkItem>();
@@ -77,7 +77,7 @@ public sealed class ResourcePackConverter
             foreach (var file in Directory.EnumerateFiles(dir, "*.png", SearchOption.AllDirectories))
             {
                 var fileName = Path.GetFileName(file);
-                if (PbrifyDefaults.ExcludedFileNames.Contains(fileName))
+                if (AutoPbrDefaults.ExcludedFileNames.Contains(fileName))
                     continue;
                 if (fileName.Contains("sapling", StringComparison.OrdinalIgnoreCase))
                     continue;
@@ -85,6 +85,12 @@ public sealed class ResourcePackConverter
                     continue;
 
                 var name = Path.GetFileNameWithoutExtension(file);
+                // Skip files that are already PBR maps (_n normal, _s specular, _e emissive).
+                if (name.EndsWith("_n", StringComparison.OrdinalIgnoreCase) ||
+                    name.EndsWith("_s", StringComparison.OrdinalIgnoreCase) ||
+                    name.EndsWith("_e", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
                 var ext = Path.GetExtension(file);
                 var directoryPath = Path.GetDirectoryName(file) ?? dir;
 
@@ -115,7 +121,7 @@ public sealed class ResourcePackConverter
 
     private static Task GenerateSpecularAsync(
         IReadOnlyList<TextureWorkItem> textures,
-        PbrifyOptions options,
+        AutoPbrOptions options,
         IProgress<ConversionProgress>? progress,
         CancellationToken ct)
     {
@@ -146,8 +152,6 @@ public sealed class ResourcePackConverter
                 var width = size;
                 var height = size;
 
-                using var outImg = new Image<Rgb24>(width, height);
-
                 // Precompute rule Lab colors for accurate mode.
                 List<(SpecularRule Rule, LabColor Lab)>? rulesLab = null;
                 if (!fast && rules is not null)
@@ -160,20 +164,39 @@ public sealed class ResourcePackConverter
                     }
                 }
 
-                if (!cropped.DangerousTryGetSinglePixelMemory(out var inMem) ||
-                    !outImg.DangerousTryGetSinglePixelMemory(out var outMem))
-                    throw new InvalidOperationException("Expected contiguous pixel memory.");
-
-                var inSpan = inMem.Span;
-                var outSpan = outMem.Span;
-                for (var idx = 0; idx < width * height; idx++)
+                var useLabPbr = options.ExperimentalSpecular;
+                if (useLabPbr)
                 {
-                    var p = inSpan[idx];
-                    var spec = GetSpecular(p, rules, rulesLab, fast, rgbToLab, de2000);
-                    outSpan[idx] = new Rgb24(spec.r, spec.g, spec.b);
+                    using var outImg = new Image<Rgba32>(width, height);
+                    if (!cropped.DangerousTryGetSinglePixelMemory(out var inMem) ||
+                        !outImg.DangerousTryGetSinglePixelMemory(out var outMem))
+                        throw new InvalidOperationException("Expected contiguous pixel memory.");
+                    var inSpan = inMem.Span;
+                    var outSpan = outMem.Span;
+                    for (var idx = 0; idx < width * height; idx++)
+                    {
+                        var p = inSpan[idx];
+                        var spec = GetSpecularRgba(p, rules, rulesLab, fast, rgbToLab, de2000);
+                        outSpan[idx] = new Rgba32(spec.r, spec.g, spec.b, spec.a);
+                    }
+                    outImg.Save(t.SpecularPath);
                 }
-
-                outImg.Save(t.SpecularPath);
+                else
+                {
+                    using var outImg = new Image<Rgb24>(width, height);
+                    if (!cropped.DangerousTryGetSinglePixelMemory(out var inMem) ||
+                        !outImg.DangerousTryGetSinglePixelMemory(out var outMem))
+                        throw new InvalidOperationException("Expected contiguous pixel memory.");
+                    var inSpan = inMem.Span;
+                    var outSpan = outMem.Span;
+                    for (var idx = 0; idx < width * height; idx++)
+                    {
+                        var p = inSpan[idx];
+                        var spec = GetSpecular(p, rules, rulesLab, fast, rgbToLab, de2000);
+                        outSpan[idx] = new Rgb24(spec.r, spec.g, spec.b);
+                    }
+                    outImg.Save(t.SpecularPath);
+                }
             }
         }, ct);
     }
@@ -230,6 +253,61 @@ public sealed class ResourcePackConverter
         return (rule2.SpecR, rule2.SpecG, rule2.SpecB);
     }
 
+    /// <summary>
+    /// Returns specular as LabPBR _s RGBA: R=perceptual smoothness, G=F0/metal, B=porosity/subsurface, A=emissive (255=off).
+    /// </summary>
+    private static (byte r, byte g, byte b, byte a) GetSpecularRgba(
+        Rgba32 pixel,
+        IReadOnlyList<SpecularRule>? rules,
+        List<(SpecularRule Rule, LabColor Lab)>? rulesLab,
+        bool fast,
+        IColorConverter<RGBColor, LabColor> rgbToLab,
+        CIEDE2000ColorDifference de2000)
+    {
+        if (rules is null || rules.Count == 0)
+            return (0, 0, 0, 255); // LabPBR: alpha 255 = no emission
+
+        var pr = pixel.R;
+        var pg = pixel.G;
+        var pb = pixel.B;
+
+        var bestIdx = -1;
+        double best = double.MaxValue;
+
+        if (fast)
+        {
+            for (var i = 0; i < rules.Count; i++)
+            {
+                var r = rules[i];
+                var d = FastDistance(pr, pg, pb, r.ColorR, r.ColorG, r.ColorB);
+                if (d < best)
+                {
+                    best = d;
+                    bestIdx = i;
+                }
+            }
+            var bestRule = rules[bestIdx];
+            return (bestRule.SpecR, bestRule.SpecG, bestRule.SpecB, bestRule.SpecA);
+        }
+
+        var pixLab = rgbToLab.Convert(RGBColor.FromRGB8Bit(pr, pg, pb));
+        if (rulesLab is null)
+            return (0, 0, 0, 255);
+
+        for (var i = 0; i < rulesLab.Count; i++)
+        {
+            var d = de2000.ComputeDifference(pixLab, rulesLab[i].Lab);
+            if (d < best)
+            {
+                best = d;
+                bestIdx = i;
+            }
+        }
+
+        var rule2 = rulesLab[bestIdx].Rule;
+        return (rule2.SpecR, rule2.SpecG, rule2.SpecB, rule2.SpecA);
+    }
+
     // Matches upstream Python `getFastDistance`.
     private static double FastDistance(byte r1, byte g1, byte b1, byte r2, byte g2, byte b2)
     {
@@ -242,7 +320,7 @@ public sealed class ResourcePackConverter
 
     private static Task GenerateNormalsAsync(
         IReadOnlyList<TextureWorkItem> textures,
-        PbrifyOptions options,
+        AutoPbrOptions options,
         IProgress<ConversionProgress>? progress,
         CancellationToken ct)
     {
@@ -272,7 +350,7 @@ public sealed class ResourcePackConverter
 
     private static Task GenerateHeightsAsync(
         IReadOnlyList<TextureWorkItem> textures,
-        PbrifyOptions options,
+        AutoPbrOptions options,
         IProgress<ConversionProgress>? progress,
         CancellationToken ct)
     {
@@ -293,7 +371,7 @@ public sealed class ResourcePackConverter
                 var squareHeight = size;
 
                 var heightIntensity = t.Overrides.HeightIntensity ?? options.HeightIntensity;
-                var brightness = t.Overrides.HeightBrightness ?? PbrifyDefaults.DefaultHeightBrightness;
+                var brightness = t.Overrides.HeightBrightness ?? AutoPbrDefaults.DefaultHeightBrightness;
                 var heightMap = GenerateHeightMap(croppedDiffuse, width, squareHeight, heightIntensity, brightness, t.Overrides.InvertHeight);
 
                 // Load the previously saved normal, replace alpha.
@@ -303,30 +381,21 @@ public sealed class ResourcePackConverter
 
                 using var croppedNormal = CropToSquare(normalImg, out _);
 
+                // LabPBR: height in normal alpha; linear, 0=25% depth 255=0% depth; min 1 recommended for POM
                 croppedNormal.ProcessPixelRows(acc =>
                 {
                     for (var y = 0; y < heightMap.Height; y++)
                     {
                         var row = acc.GetRowSpan(y);
                         for (var x = 0; x < heightMap.Width; x++)
-                            row[x].A = heightMap[x, y];
+                        {
+                            var a = heightMap[x, y];
+                            row[x].A = a == 0 ? (byte)1 : a;
+                        }
                     }
                 });
 
                 croppedNormal.Save(t.NormalPath);
-
-                using var heightImg = new Image<L8>(heightMap.Width, heightMap.Height);
-                heightImg.ProcessPixelRows(acc =>
-                {
-                    for (var y = 0; y < heightMap.Height; y++)
-                    {
-                        var row = acc.GetRowSpan(y);
-                        for (var x = 0; x < heightMap.Width; x++)
-                            row[x] = new L8(heightMap[x, y]);
-                    }
-                });
-
-                heightImg.Save(t.HeightPath);
             }
         }, ct);
     }
@@ -397,9 +466,10 @@ public sealed class ResourcePackConverter
                     ny /= len;
                     var nz = z / len;
 
+                    // LabPBR: R = normal X, G = normal Y, B = AO (0=100% occlusion, 255=0%); Z reconstructed by shader
                     var r = ToByte(nx);
                     var g = ToByte(ny);
-                    var b = ToByte(nz);
+                    var b = (byte)255; // No AO data from diffuse; 255 = 0% occlusion
 
                     if (invertR) r = (byte)(255 - r);
                     if (invertG) g = (byte)(255 - g);

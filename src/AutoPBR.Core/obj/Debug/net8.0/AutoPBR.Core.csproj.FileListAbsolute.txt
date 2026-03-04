@@ -11,3 +11,17 @@ Z:\Cursor Projects\PBRify\src\AutoPBR.Core\obj\Debug\net8.0\AutoPBR.Core.dll
 Z:\Cursor Projects\PBRify\src\AutoPBR.Core\obj\Debug\net8.0\refint\AutoPBR.Core.dll
 Z:\Cursor Projects\PBRify\src\AutoPBR.Core\obj\Debug\net8.0\AutoPBR.Core.pdb
 Z:\Cursor Projects\PBRify\src\AutoPBR.Core\obj\Debug\net8.0\ref\AutoPBR.Core.dll
+Z:\Cursor Projects\AutoPBR\src\AutoPBR.Core\bin\Debug\net8.0\Data\textures_data.json
+Z:\Cursor Projects\AutoPBR\src\AutoPBR.Core\bin\Debug\net8.0\AutoPBR.Core.deps.json
+Z:\Cursor Projects\AutoPBR\src\AutoPBR.Core\bin\Debug\net8.0\AutoPBR.Core.dll
+Z:\Cursor Projects\AutoPBR\src\AutoPBR.Core\bin\Debug\net8.0\AutoPBR.Core.pdb
+Z:\Cursor Projects\AutoPBR\src\AutoPBR.Core\obj\Debug\net8.0\AutoPBR.Core.csproj.AssemblyReference.cache
+Z:\Cursor Projects\AutoPBR\src\AutoPBR.Core\obj\Debug\net8.0\AutoPBR.Core.GeneratedMSBuildEditorConfig.editorconfig
+Z:\Cursor Projects\AutoPBR\src\AutoPBR.Core\obj\Debug\net8.0\AutoPBR.Core.AssemblyInfoInputs.cache
+Z:\Cursor Projects\AutoPBR\src\AutoPBR.Core\obj\Debug\net8.0\AutoPBR.Core.AssemblyInfo.cs
+Z:\Cursor Projects\AutoPBR\src\AutoPBR.Core\obj\Debug\net8.0\AutoPBR.Core.csproj.CoreCompileInputs.cache
+Z:\Cursor Projects\AutoPBR\src\AutoPBR.Core\obj\Debug\net8.0\AutoPBR.Core.sourcelink.json
+Z:\Cursor Projects\AutoPBR\src\AutoPBR.Core\obj\Debug\net8.0\AutoPBR.Core.dll
+Z:\Cursor Projects\AutoPBR\src\AutoPBR.Core\obj\Debug\net8.0\refint\AutoPBR.Core.dll
+Z:\Cursor Projects\AutoPBR\src\AutoPBR.Core\obj\Debug\net8.0\AutoPBR.Core.pdb
+Z:\Cursor Projects\AutoPBR\src\AutoPBR.Core\obj\Debug\net8.0\ref\AutoPBR.Core.dll

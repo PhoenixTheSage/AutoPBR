@@ -26,7 +26,6 @@ public sealed class TextureWorkItem
 
     public string DiffusePath => FullPath;
     public string NormalPath => Path.Combine(DirectoryPath, Name + "_n" + Extension);
-    public string HeightPath => Path.Combine(DirectoryPath, Name + "_h" + Extension);
     public string SpecularPath => Path.Combine(DirectoryPath, Name + "_s" + Extension);
 }
 

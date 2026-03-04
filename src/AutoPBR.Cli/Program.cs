@@ -23,10 +23,10 @@ if (args.Length < 2)
 var input = args[0];
 var output = args[1];
 
-var fast = args.Contains("--fast", StringComparer.OrdinalIgnoreCase);
-float normal = PbrifyDefaults.DefaultNormalIntensity;
-float height = PbrifyDefaults.DefaultHeightIntensity;
-var ignorePlants = args.Contains("--ignore-plants", StringComparer.OrdinalIgnoreCase);
+var fast = args.Any(a => a.Equals("--fast", StringComparison.OrdinalIgnoreCase));
+float normal = AutoPbrDefaults.DefaultNormalIntensity;
+float height = AutoPbrDefaults.DefaultHeightIntensity;
+var ignorePlants = args.Any(a => a.Equals("--ignore-plants", StringComparison.OrdinalIgnoreCase));
 
 for (var i = 2; i < args.Length; i++)
 {
@@ -43,14 +43,14 @@ if (!File.Exists(dataPath))
     return 1;
 }
 
-var options = new PbrifyOptions
+var options = new AutoPbrOptions
 {
     FastSpecular = fast,
     NormalIntensity = normal,
     HeightIntensity = height,
     SpecularData = SpecularData.LoadFromFile(dataPath),
     IgnoreTextureKeys = ignorePlants
-        ? new HashSet<string>(PbrifyDefaults.PlantTextureKeys, StringComparer.OrdinalIgnoreCase)
+        ? new HashSet<string>(AutoPbrDefaults.PlantTextureKeys, StringComparer.OrdinalIgnoreCase)
         : new HashSet<string>(StringComparer.OrdinalIgnoreCase)
 };
 

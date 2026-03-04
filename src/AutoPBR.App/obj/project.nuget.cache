@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "8kYjBQ8eMnA=",
+  "dgSpecHash": "8RTiKSfFKeY=",
   "success": true,
-  "projectFilePath": "Z:\\Cursor Projects\\PBRify\\src\\AutoPBR.App\\AutoPBR.App.csproj",
+  "projectFilePath": "Z:\\Cursor Projects\\AutoPBR\\src\\AutoPBR.App\\AutoPBR.App.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\avalonia\\11.3.12\\avalonia.11.3.12.nupkg.sha512",
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\avalonia.angle.windows.natives\\2.1.25547.20250602\\avalonia.angle.windows.natives.2.1.25547.20250602.nupkg.sha512",

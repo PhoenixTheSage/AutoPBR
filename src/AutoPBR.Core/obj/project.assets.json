@@ -92,11 +92,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "Z:\\Cursor Projects\\PBRify\\src\\AutoPBR.Core\\AutoPBR.Core.csproj",
+      "projectUniqueName": "Z:\\Cursor Projects\\AutoPBR\\src\\AutoPBR.Core\\AutoPBR.Core.csproj",
       "projectName": "AutoPBR.Core",
-      "projectPath": "Z:\\Cursor Projects\\PBRify\\src\\AutoPBR.Core\\AutoPBR.Core.csproj",
+      "projectPath": "Z:\\Cursor Projects\\AutoPBR\\src\\AutoPBR.Core\\AutoPBR.Core.csproj",
       "packagesPath": "C:\\Users\\John_Phoenix\\.nuget\\packages\\",
-      "outputPath": "Z:\\Cursor Projects\\PBRify\\src\\AutoPBR.Core\\obj\\",
+      "outputPath": "Z:\\Cursor Projects\\AutoPBR\\src\\AutoPBR.Core\\obj\\",
       "projectStyle": "PackageReference",
       "fallbackFolders": [
         "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"

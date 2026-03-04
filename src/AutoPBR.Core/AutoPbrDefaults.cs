@@ -1,6 +1,6 @@
 namespace AutoPBR.Core;
 
-public static class PbrifyDefaults
+public static class AutoPbrDefaults
 {
     public const float DefaultNormalIntensity = 1f;
     public const float DefaultHeightIntensity = 0.12f;
