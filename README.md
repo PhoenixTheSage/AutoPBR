@@ -4,9 +4,9 @@
 
 - **Specular maps** (`*_s.png`) from diffuse colors using a color→specular lookup table (`textures_data.json`)
 - **Normal maps** (`*_n.png`) from the diffuse texture via a Sobel-based normal map generator
-- **Height maps** (`*_h.png`) and also stores height in the **alpha channel of the normal map**
 
-The original Python version used PySimpleGUI (now paid for some uses). This project is a **.NET 8 / C# port** with:
+
+LaChips PBRify used PySimpleGUI (now paid for some uses). This project is a **.NET 8 / C# port** with:
 
 - A **cross‑platform UI** built on **Avalonia** (`AutoPBR.App`)
 - A **CLI tool** (`AutoPBR.Cli`)
