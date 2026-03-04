@@ -19,11 +19,11 @@ public partial class MainWindow : Window
 
         var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "Select resource pack (.zip)",
+            Title = "Select resource pack (.zip or .jar)",
             AllowMultiple = false,
             FileTypeFilter =
             [
-                new FilePickerFileType("Zip") { Patterns = ["*.zip"] }
+                new FilePickerFileType("Zip / JAR") { Patterns = ["*.zip", "*.jar"] }
             ]
         });
 

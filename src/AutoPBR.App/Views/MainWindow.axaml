@@ -34,7 +34,7 @@
                             <StackPanel Spacing="10">
                                 <TextBlock FontSize="16" FontWeight="SemiBold" Text="Input" />
                                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                                    <TextBox Grid.Column="0" Watermark="Resource pack (.zip)" Text="{Binding PackPath, Mode=TwoWay}" />
+                                    <TextBox Grid.Column="0" Watermark="Resource pack (.zip or .jar)" Text="{Binding PackPath, Mode=TwoWay}" />
                                     <Button Grid.Column="1" Content="Browse…" Click="BrowsePack_Click" />
                                 </Grid>
                             </StackPanel>
@@ -68,7 +68,7 @@
                                     <TextBox Grid.Row="0" Grid.Column="0" Watermark="Output folder" Text="{Binding OutputDirectory, Mode=TwoWay}" />
                                     <Button Grid.Row="0" Grid.Column="1" Content="Browse…" Click="BrowseOutput_Click" />
 
-                                    <TextBox Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" IsReadOnly="True" Watermark="Output zip path" Text="{Binding OutputZipPath}" />
+                                    <TextBox Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" IsReadOnly="True" Watermark="Output path" Text="{Binding OutputZipPath}" />
                                 </Grid>
                             </StackPanel>
                         </Border>

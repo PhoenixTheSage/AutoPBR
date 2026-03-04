@@ -28,7 +28,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty] private bool isBusy;
     [ObservableProperty] private bool isConverting;
-    [ObservableProperty] private string statusText = "Select a resource pack (.zip) and an output folder.";
+    [ObservableProperty] private string statusText = "Select a resource pack (.zip or .jar) and an output folder.";
 
     [ObservableProperty] private double progressValue;
     [ObservableProperty] private double progressMax = 1;
@@ -112,12 +112,19 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        var ext = Path.GetExtension(PackPath);
         var baseName = Path.GetFileNameWithoutExtension(PackPath);
         if (string.IsNullOrWhiteSpace(baseName))
             baseName = "pack";
 
-        var suffix = FastSpecular ? "fast" : "slow";
-        OutputZipPath = Path.Combine(OutputDirectory, $"{baseName}_PBR_{suffix}.zip");
+        // JAR input → JAR output, no suffix (Minecraft built-in pack). ZIP → ZIP with _PBR_{fast|slow} suffix.
+        if (ext.Equals(".jar", StringComparison.OrdinalIgnoreCase))
+            OutputZipPath = Path.Combine(OutputDirectory, baseName + ".jar");
+        else
+        {
+            var suffix = FastSpecular ? "fast" : "slow";
+            OutputZipPath = Path.Combine(OutputDirectory, $"{baseName}_PBR_{suffix}.zip");
+        }
     }
 
     private void ApplyTextureFilter()
@@ -245,7 +252,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanLoadTextures))]
     public async Task LoadTexturesAsync()
     {
-        if (string.IsNullOrWhiteSpace(PackPath) || !File.Exists(PackPath))
+        if (!IsPackPath(PackPath) || !File.Exists(PackPath))
             return;
 
         IsBusy = true;
@@ -304,7 +311,11 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
-    private bool CanLoadTextures() => !IsConverting && !IsBusy && !string.IsNullOrWhiteSpace(PackPath) && File.Exists(PackPath);
+    private static bool IsPackPath(string? path) =>
+        !string.IsNullOrWhiteSpace(path) &&
+        (path!.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".jar", StringComparison.OrdinalIgnoreCase));
+
+    private bool CanLoadTextures() => !IsConverting && !IsBusy && IsPackPath(PackPath) && File.Exists(PackPath);
 
     partial void OnIgnorePlantsChanged(bool value)
     {
@@ -327,7 +338,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanConvert))]
     public async Task ConvertAsync()
     {
-        if (string.IsNullOrWhiteSpace(PackPath) || !File.Exists(PackPath))
+        if (!IsPackPath(PackPath) || !File.Exists(PackPath))
             return;
         if (string.IsNullOrWhiteSpace(OutputZipPath))
             return;
@@ -415,7 +426,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private bool CanConvert() =>
         !IsConverting &&
         !IsBusy &&
-        !string.IsNullOrWhiteSpace(PackPath) &&
+        IsPackPath(PackPath) &&
         File.Exists(PackPath) &&
         !string.IsNullOrWhiteSpace(OutputZipPath);
 

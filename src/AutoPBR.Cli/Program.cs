@@ -8,7 +8,9 @@ static int Usage()
         AutoPBR.Cli
 
         Usage:
-          AutoPBR.Cli <inputPack.zip> <outputPack.zip> [--fast] [--normal <1..3>] [--height <0.01..0.5>] [--ignore-plants]
+          AutoPBR.Cli <input> <output> [--fast] [--normal <1..3>] [--height <0.01..0.5>] [--ignore-plants]
+
+        Input/output: .zip (resource pack) or .jar (Minecraft; opened as zip). JAR in → JAR out (no suffix).
 
         Notes:
           - Specular lookup data is loaded from: <app>/Data/textures_data.json
