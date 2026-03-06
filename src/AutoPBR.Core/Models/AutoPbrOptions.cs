@@ -7,10 +7,19 @@ public sealed class AutoPbrOptions
     public bool FastSpecular { get; init; } = false;
 
     /// <summary>
-    /// When true, write specular texture as LabPBR _s (RGBA: smoothness, F0/metal, porosity/subsurface, emissive).
-    /// When false, use legacy RGB-only encoding.
+    /// When true, use the experimental custom ParallelZipReader for extraction instead of the built-in ZipFile-based extractor.
+    /// Useful for testing parallel decompression; default is false (safer).
     /// </summary>
-    public bool ExperimentalSpecular { get; init; } = false;
+    public bool ExperimentalExtractor { get; init; } = false;
+
+    /// <summary>Scale for dielectric smoothness (R channel). 1 = unchanged; 0.5–1.5 typical.</summary>
+    public float SmoothnessScale { get; init; } = AutoPbrDefaults.DefaultSmoothnessScale;
+
+    /// <summary>Boost for metal smoothness (R channel). 1 = unchanged.</summary>
+    public float MetallicBoost { get; init; } = AutoPbrDefaults.DefaultMetallicBoost;
+
+    /// <summary>Offset added to porosity/subsurface (B channel). Can be negative.</summary>
+    public int PorosityBias { get; init; } = AutoPbrDefaults.DefaultPorosityBias;
 
     /// <summary>
     /// When true, process block/textures (block, blocks folders).

@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "8RTiKSfFKeY=",
+  "dgSpecHash": "qKCdbmEF0B4=",
   "success": true,
   "projectFilePath": "Z:\\Cursor Projects\\AutoPBR\\src\\AutoPBR.App\\AutoPBR.App.csproj",
   "expectedPackageFiles": [
@@ -33,6 +33,7 @@
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\skiasharp.nativeassets.macos\\2.88.9\\skiasharp.nativeassets.macos.2.88.9.nupkg.sha512",
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\skiasharp.nativeassets.webassembly\\2.88.9\\skiasharp.nativeassets.webassembly.2.88.9.nupkg.sha512",
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\skiasharp.nativeassets.win32\\2.88.9\\skiasharp.nativeassets.win32.2.88.9.nupkg.sha512",
+    "C:\\Users\\John_Phoenix\\.nuget\\packages\\system.io.hashing\\9.0.0\\system.io.hashing.9.0.0.nupkg.sha512",
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\system.io.pipelines\\8.0.0\\system.io.pipelines.8.0.0.nupkg.sha512",
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\tmds.dbus.protocol\\0.21.2\\tmds.dbus.protocol.0.21.2.nupkg.sha512"
   ],

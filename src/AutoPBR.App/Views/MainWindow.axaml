@@ -44,7 +44,7 @@
                             <StackPanel Spacing="10">
                                 <TextBlock FontSize="16" FontWeight="SemiBold" Text="Log" />
                                 <Border CornerRadius="6" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="8">
-                                    <ScrollViewer Height="200">
+                                    <ScrollViewer Height="200" Name="LogScrollViewer">
                                         <ItemsControl ItemsSource="{Binding LogLines}">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
@@ -77,7 +77,7 @@
                             <StackPanel Spacing="10">
                                 <TextBlock FontSize="16" FontWeight="SemiBold" Text="Generation settings" />
 
-                                <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="10">
+                                <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="10">
                                     <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Normal strength" />
                                     <Slider Grid.Row="0" Grid.Column="1" Minimum="1" Maximum="3" SmallChange="0.01" LargeChange="0.1"
                                             Value="{Binding NormalIntensity, Mode=TwoWay}" />
@@ -87,6 +87,21 @@
                                     <Slider Grid.Row="1" Grid.Column="1" Minimum="0.01" Maximum="0.5" SmallChange="0.001" LargeChange="0.01"
                                             Value="{Binding HeightIntensity, Mode=TwoWay}" />
                                     <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Text="{Binding HeightIntensity, StringFormat={}{0:0.###}}" />
+
+                                    <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="Smoothness scale" />
+                                    <Slider Grid.Row="2" Grid.Column="1" Minimum="0.5" Maximum="1.5" SmallChange="0.05" LargeChange="0.1"
+                                            Value="{Binding SmoothnessScale, Mode=TwoWay}" />
+                                    <TextBlock Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Text="{Binding SmoothnessScale, StringFormat={}{0:0.##}}" />
+
+                                    <TextBlock Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" Text="Metallic boost" />
+                                    <Slider Grid.Row="3" Grid.Column="1" Minimum="0.5" Maximum="1.5" SmallChange="0.05" LargeChange="0.1"
+                                            Value="{Binding MetallicBoost, Mode=TwoWay}" />
+                                    <TextBlock Grid.Row="3" Grid.Column="2" VerticalAlignment="Center" Text="{Binding MetallicBoost, StringFormat={}{0:0.##}}" />
+
+                                    <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center" Text="Porosity bias" />
+                                    <Slider Grid.Row="4" Grid.Column="1" Minimum="-32" Maximum="32" SmallChange="1" LargeChange="8"
+                                            Value="{Binding PorosityBias, Mode=TwoWay}" />
+                                    <TextBlock Grid.Row="4" Grid.Column="2" VerticalAlignment="Center" Text="{Binding PorosityBias, StringFormat={}{0:0}}" />
                                 </Grid>
 
                                 <StackPanel Orientation="Horizontal" Spacing="16">
@@ -94,7 +109,7 @@
                                     <CheckBox Content="Ignore plants" IsChecked="{Binding IgnorePlants, Mode=TwoWay}" />
                                 </StackPanel>
 
-                                <CheckBox Content="Experimental Specular (LabPBR _s: RGBA — smoothness, F0/metal, porosity/subsurface, emissive)" IsChecked="{Binding ExperimentalSpecular, Mode=TwoWay}" />
+                                <CheckBox Content="Experimental parallel extraction (custom zip reader; may miss files, for testing only)" IsChecked="{Binding ExperimentalExtractor, Mode=TwoWay}" />
 
                                 <TextBlock FontSize="14" FontWeight="SemiBold" Text="Texture types" Margin="0,8,0,0" />
                                 <StackPanel Orientation="Horizontal" Spacing="16">

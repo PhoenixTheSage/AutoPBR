@@ -24,7 +24,10 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private double heightIntensity = AutoPbrDefaults.DefaultHeightIntensity;
     [ObservableProperty] private bool fastSpecular;
     [ObservableProperty] private bool ignorePlants;
-    [ObservableProperty] private bool experimentalSpecular;
+    [ObservableProperty] private bool experimentalExtractor;
+    [ObservableProperty] private double smoothnessScale = AutoPbrDefaults.DefaultSmoothnessScale;
+    [ObservableProperty] private double metallicBoost = AutoPbrDefaults.DefaultMetallicBoost;
+    [ObservableProperty] private double porosityBias = AutoPbrDefaults.DefaultPorosityBias;
     [ObservableProperty] private bool processBlocks = true;
     [ObservableProperty] private bool processItems = true;
     [ObservableProperty] private bool processArmor = true;
@@ -67,7 +70,10 @@ public partial class MainWindowViewModel : ViewModelBase
             HeightIntensity = _settings.HeightIntensity;
             FastSpecular = _settings.FastSpecular;
             IgnorePlants = _settings.IgnorePlants;
-            ExperimentalSpecular = _settings.ExperimentalSpecular;
+            ExperimentalExtractor = _settings.ExperimentalExtractor;
+            SmoothnessScale = _settings.SmoothnessScale;
+            MetallicBoost = _settings.MetallicBoost;
+            PorosityBias = _settings.PorosityBias;
             ColorScheme = string.IsNullOrWhiteSpace(_settings.ColorScheme) ? "Dark" : _settings.ColorScheme;
             ProcessBlocks = _settings.ProcessBlocks;
             ProcessItems = _settings.ProcessItems;
@@ -104,7 +110,10 @@ public partial class MainWindowViewModel : ViewModelBase
 
     partial void OnNormalIntensityChanged(double value) => SaveSettings();
     partial void OnHeightIntensityChanged(double value) => SaveSettings();
-    partial void OnExperimentalSpecularChanged(bool value) => SaveSettings();
+    partial void OnExperimentalExtractorChanged(bool value) => SaveSettings();
+    partial void OnSmoothnessScaleChanged(double value) => SaveSettings();
+    partial void OnMetallicBoostChanged(double value) => SaveSettings();
+    partial void OnPorosityBiasChanged(double value) => SaveSettings();
     partial void OnTextureFilterChanged(string value) => ApplyTextureFilter();
     partial void OnColorSchemeChanged(string value)
     {
@@ -129,14 +138,11 @@ public partial class MainWindowViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(baseName))
             baseName = "pack";
 
-        // JAR input → JAR output, no suffix (Minecraft built-in pack). ZIP → ZIP with _PBR_{fast|slow} suffix.
+        // Always output .zip (separate PBR layer). JAR in → ZIP out; ZIP in → ZIP with _PBR suffix.
         if (ext.Equals(".jar", StringComparison.OrdinalIgnoreCase))
-            OutputZipPath = Path.Combine(OutputDirectory, baseName + ".jar");
+            OutputZipPath = Path.Combine(OutputDirectory, baseName + ".zip");
         else
-        {
-            var suffix = FastSpecular ? "fast" : "slow";
-            OutputZipPath = Path.Combine(OutputDirectory, $"{baseName}_PBR_{suffix}.zip");
-        }
+            OutputZipPath = Path.Combine(OutputDirectory, $"{baseName}_PBR.zip");
     }
 
     private void ApplyTextureFilter()
@@ -160,7 +166,10 @@ public partial class MainWindowViewModel : ViewModelBase
         _settings.HeightIntensity = HeightIntensity;
         _settings.FastSpecular = FastSpecular;
         _settings.IgnorePlants = IgnorePlants;
-        _settings.ExperimentalSpecular = ExperimentalSpecular;
+        _settings.ExperimentalExtractor = ExperimentalExtractor;
+        _settings.SmoothnessScale = SmoothnessScale;
+        _settings.MetallicBoost = MetallicBoost;
+        _settings.PorosityBias = PorosityBias;
         _settings.ColorScheme = ColorScheme;
         _settings.ProcessBlocks = ProcessBlocks;
         _settings.ProcessItems = ProcessItems;
@@ -395,7 +404,10 @@ public partial class MainWindowViewModel : ViewModelBase
                 NormalIntensity = (float)NormalIntensity,
                 HeightIntensity = (float)HeightIntensity,
                 FastSpecular = FastSpecular,
-                ExperimentalSpecular = ExperimentalSpecular,
+                ExperimentalExtractor = ExperimentalExtractor,
+                SmoothnessScale = (float)SmoothnessScale,
+                MetallicBoost = (float)MetallicBoost,
+                PorosityBias = (int)Math.Round(PorosityBias),
                 ProcessBlocks = ProcessBlocks,
                 ProcessItems = ProcessItems,
                 ProcessArmor = ProcessArmor,
@@ -411,14 +423,29 @@ public partial class MainWindowViewModel : ViewModelBase
                 {
                     ProgressMax = Math.Max(1, p.Total);
                     ProgressValue = p.Completed;
+                    if (p.Stage == ConversionStage.Extracting && p.Completed == 0 && p.Total > 0)
+                        LogLines.Add("Extracting...");
+                    if (p.Stage == ConversionStage.Packing && p.Completed == 0 && p.Total > 0)
+                        LogLines.Add("Packing...");
+                    if (!string.IsNullOrEmpty(p.CurrentTextureName))
+                    {
+                        var stageLabel = p.Stage switch
+                        {
+                            ConversionStage.GeneratingSpecular => "Specular",
+                            ConversionStage.GeneratingNormals => "Normals",
+                            ConversionStage.GeneratingHeights => "Heights",
+                            _ => p.Stage.ToString()
+                        };
+                        LogLines.Add($"{stageLabel}: {p.CurrentTextureName}");
+                    }
                     StatusText = p.Stage switch
                     {
-                        ConversionStage.Extracting => "Extracting pack...",
+                        ConversionStage.Extracting => p.Total > 0 ? $"Extracting pack... ({p.Completed}/{p.Total})" : "Extracting pack...",
                         ConversionStage.ScanningTextures => "Scanning textures...",
                         ConversionStage.GeneratingSpecular => $"Specular: {p.CurrentTextureName}",
                         ConversionStage.GeneratingNormals => $"Normals: {p.CurrentTextureName}",
                         ConversionStage.GeneratingHeights => $"Heights: {p.CurrentTextureName}",
-                        ConversionStage.Packing => "Packing output zip...",
+                        ConversionStage.Packing => p.Total > 0 ? $"Packing output zip... ({p.Completed}/{p.Total})" : "Packing output zip...",
                         ConversionStage.Done => "Done.",
                         _ => p.Stage.ToString()
                     };
@@ -426,7 +453,9 @@ public partial class MainWindowViewModel : ViewModelBase
             });
 
             LogLines.Add($"Converting → {OutputZipPath}");
-            await converter.ConvertAsync(PackPath, OutputZipPath, options, prog, _cts.Token);
+            await Task.Run(async () =>
+                await converter.ConvertAsync(PackPath!, OutputZipPath!, options, prog, _cts.Token).ConfigureAwait(false));
+            // Resume on UI thread so we don't get "Call from invalid thread" when updating bindings.
             LogLines.Add("Done.");
         }
         catch (OperationCanceledException)

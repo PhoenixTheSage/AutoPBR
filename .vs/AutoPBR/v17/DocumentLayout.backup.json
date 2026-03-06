@@ -3,6 +3,19 @@
   "WorkspaceRootPath": "Z:\\Cursor Projects\\AutoPBR\\",
   "Documents": [
     {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\John_Phoenix\\AppData\\Local\\Temp\\.vsdbgsrc\\e8c880832176360e621a94f270ff1ebb8ffb5b304f6957d1db65e7930a1431e4\\Dispatcher.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\John_Phoenix\\AppData\\Local\\Temp\\.vsdbgsrc\\99d81807c396b134982f6aa577fea4a4984caf6d8a5c816096c544feda3d4a54\\Button.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\John_Phoenix\\AppData\\Local\\Temp\\.vsdbgsrc\\c9728eba91d4bae7460875ba4b5c78ed82054ab75c19266ae4bdc90641a4626c\\AvaloniaObject.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{E4C3E3EC-9829-4758-A5EB-00A1F6606A1D}|src\\AutoPBR.Core\\AutoPBR.Core.csproj|z:\\cursor projects\\autopbr\\src\\autopbr.core\\data\\textures_data.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}",
+      "RelativeMoniker": "D:0:0:{E4C3E3EC-9829-4758-A5EB-00A1F6606A1D}|src\\AutoPBR.Core\\AutoPBR.Core.csproj|solutionrelative:src\\autopbr.core\\data\\textures_data.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
+    },
+    {
       "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|Z:\\Cursor Projects\\AutoPBR\\README.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
       "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:README.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
     }
@@ -14,11 +27,56 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 0,
+          "SelectedChildIndex": 2,
           "Children": [
             {
               "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "Button.cs",
+              "DocumentMoniker": "C:\\Users\\John_Phoenix\\AppData\\Local\\Temp\\.vsdbgsrc\\99d81807c396b134982f6aa577fea4a4984caf6d8a5c816096c544feda3d4a54\\Button.cs",
+              "ToolTip": "C:\\Users\\John_Phoenix\\AppData\\Local\\Temp\\.vsdbgsrc\\99d81807c396b134982f6aa577fea4a4984caf6d8a5c816096c544feda3d4a54\\Button.cs [Read Only]",
+              "ViewState": "AgIAADYAAAAAAAAAAAD4v0QAAAADAAAAAQAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-03-04T21:19:22.462Z",
+              "EditorCaption": " [Read Only]"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "AvaloniaObject.cs",
+              "DocumentMoniker": "C:\\Users\\John_Phoenix\\AppData\\Local\\Temp\\.vsdbgsrc\\c9728eba91d4bae7460875ba4b5c78ed82054ab75c19266ae4bdc90641a4626c\\AvaloniaObject.cs",
+              "ToolTip": "C:\\Users\\John_Phoenix\\AppData\\Local\\Temp\\.vsdbgsrc\\c9728eba91d4bae7460875ba4b5c78ed82054ab75c19266ae4bdc90641a4626c\\AvaloniaObject.cs [Read Only]",
+              "ViewState": "AgIAAKMAAAAAAAAAAAD4v7EAAAACAAAAAQAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-03-04T21:19:18.025Z",
+              "EditorCaption": " [Read Only]"
+            },
+            {
+              "$type": "Document",
               "DocumentIndex": 0,
+              "Title": "Dispatcher.cs",
+              "DocumentMoniker": "C:\\Users\\John_Phoenix\\AppData\\Local\\Temp\\.vsdbgsrc\\e8c880832176360e621a94f270ff1ebb8ffb5b304f6957d1db65e7930a1431e4\\Dispatcher.cs",
+              "ToolTip": "C:\\Users\\John_Phoenix\\AppData\\Local\\Temp\\.vsdbgsrc\\e8c880832176360e621a94f270ff1ebb8ffb5b304f6957d1db65e7930a1431e4\\Dispatcher.cs",
+              "ViewState": "AgIAANkAAAAAAAAAAAAewOsAAAAYAAAAAQAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-03-04T21:18:06.06Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "textures_data.json",
+              "DocumentMoniker": "Z:\\Cursor Projects\\AutoPBR\\src\\AutoPBR.Core\\Data\\textures_data.json",
+              "RelativeDocumentMoniker": "src\\AutoPBR.Core\\Data\\textures_data.json",
+              "ToolTip": "Z:\\Cursor Projects\\AutoPBR\\src\\AutoPBR.Core\\Data\\textures_data.json",
+              "RelativeToolTip": "src\\AutoPBR.Core\\Data\\textures_data.json",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAABYAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001642|",
+              "WhenOpened": "2026-03-04T20:11:40.698Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
               "Title": "README.md",
               "DocumentMoniker": "Z:\\Cursor Projects\\AutoPBR\\README.md",
               "RelativeDocumentMoniker": "README.md",
@@ -26,8 +84,7 @@
               "RelativeToolTip": "README.md",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAABEAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
-              "WhenOpened": "2026-03-04T09:19:27.549Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-03-04T09:19:27.549Z"
             }
           ]
         }

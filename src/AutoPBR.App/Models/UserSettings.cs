@@ -10,7 +10,10 @@ public sealed class UserSettings
     public double HeightIntensity { get; set; } = AutoPbrDefaults.DefaultHeightIntensity;
     public bool FastSpecular { get; set; }
     public bool IgnorePlants { get; set; }
-    public bool ExperimentalSpecular { get; set; }
+    public bool ExperimentalExtractor { get; set; }
+    public double SmoothnessScale { get; set; } = AutoPbrDefaults.DefaultSmoothnessScale;
+    public double MetallicBoost { get; set; } = AutoPbrDefaults.DefaultMetallicBoost;
+    public double PorosityBias { get; set; } = AutoPbrDefaults.DefaultPorosityBias;
     public string ColorScheme { get; set; } = "Dark";
     public bool ProcessBlocks { get; set; } = true;
     public bool ProcessItems { get; set; } = true;

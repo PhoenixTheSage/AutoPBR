@@ -159,3 +159,4 @@ Z:\Cursor Projects\AutoPBR\src\AutoPBR.App\obj\Debug\net8.0\refint\AutoPBR.App.d
 Z:\Cursor Projects\AutoPBR\src\AutoPBR.App\obj\Debug\net8.0\AutoPBR.App.pdb
 Z:\Cursor Projects\AutoPBR\src\AutoPBR.App\obj\Debug\net8.0\AutoPBR.App.genruntimeconfig.cache
 Z:\Cursor Projects\AutoPBR\src\AutoPBR.App\obj\Debug\net8.0\ref\AutoPBR.App.dll
+Z:\Cursor Projects\AutoPBR\src\AutoPBR.App\bin\Debug\net8.0\System.IO.Hashing.dll

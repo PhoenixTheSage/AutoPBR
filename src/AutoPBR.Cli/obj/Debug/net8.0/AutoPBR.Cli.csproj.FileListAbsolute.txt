@@ -41,3 +41,4 @@ Z:\Cursor Projects\AutoPBR\src\AutoPBR.Cli\obj\Debug\net8.0\refint\AutoPBR.Cli.d
 Z:\Cursor Projects\AutoPBR\src\AutoPBR.Cli\obj\Debug\net8.0\AutoPBR.Cli.pdb
 Z:\Cursor Projects\AutoPBR\src\AutoPBR.Cli\obj\Debug\net8.0\AutoPBR.Cli.genruntimeconfig.cache
 Z:\Cursor Projects\AutoPBR\src\AutoPBR.Cli\obj\Debug\net8.0\ref\AutoPBR.Cli.dll
+Z:\Cursor Projects\AutoPBR\src\AutoPBR.Cli\bin\Debug\net8.0\System.IO.Hashing.dll

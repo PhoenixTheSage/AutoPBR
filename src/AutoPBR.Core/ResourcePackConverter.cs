@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.IO.Compression;
+using System.Text.Json;
 using Colourful;
 using AutoPBR.Core.Models;
 using SixLabors.ImageSharp;
@@ -10,8 +12,111 @@ namespace AutoPBR.Core;
 
 public sealed class ResourcePackConverter
 {
+    /// <summary>Thread count for zip extract/pack: max(1, ProcessorCount - 2).</summary>
+    private static int ZipParallelism => Math.Max(1, Environment.ProcessorCount - 2);
+
+    /// <summary>Thread count for texture conversion (specular, normals): max(1, ProcessorCount - 2).</summary>
+    private static int ConversionParallelism => Math.Max(1, Environment.ProcessorCount - 2);
+
+    /// <summary>LabPBR: G channel &lt;= this value is F0 (dielectric); 230+ = metal.</summary>
+    private const byte LabPbrF0CapDielectric = 229;
+
+    /// <summary>Treat texture as metal if name or relative key contains these substrings (case-insensitive). Includes vanilla and common mod metals (Mythic Metals, Create, Tinkers', Thermal, etc.).</summary>
+    private static readonly string[] MetalSubstrings =
+    [
+        "iron", "gold", "copper", "diamond", "netherite", "armor", "helmet",
+        "adamantite", "mythril", "quadrillum", "silver", "aquarium", "prometheum", "osmium", "bronze", "steel",
+        "durasteel", "hallowed", "celestium", "metallurgium", "palladium", "carmot", "starrite", "platinum",
+        "orichalcum", "manganese", "cobalt", "ardite", "manyullyn", "zinc", "brass", "tin", "lead",
+        "aluminum", "aluminium", "nickel", "invar", "electrum", "chrome", "titanium", "tungsten",
+        "bismuth", "antimony", "cadmium", "iridium", "signalum", "lumium", "enderium", "constantan"
+    ];
+
+    private static bool IsMetalTexture(string name, string relativeKey)
+    {
+        var combined = name + "\0" + relativeKey;
+        foreach (var sub in MetalSubstrings)
+        {
+            if (combined.Contains(sub, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>Precompute per-pixel luminance (0–1) and edge magnitude (0–1) from cropped diffuse for specular heuristics.</summary>
+    private static (float[] luminance, float[] edgeMagnitude, float meanLuminance) BuildLuminanceAndEdge(Image<Rgba32> cropped, int width, int height)
+    {
+        var lum = new float[width * height];
+        cropped.ProcessPixelRows(acc =>
+        {
+            for (var y = 0; y < height; y++)
+            {
+                var row = acc.GetRowSpan(y);
+                for (var x = 0; x < width; x++)
+                {
+                    var p = row[x];
+                    lum[y * width + x] = (p.R * 0.3f + p.G * 0.6f + p.B * 0.1f) / 255f;
+                }
+            }
+        });
+        var sumLum = 0.0;
+        for (var i = 0; i < lum.Length; i++)
+            sumLum += lum[i];
+        var meanLum = (float)(sumLum / lum.Length);
+
+        // VC-Filter: multiple orientation-selective Sobel responses summed to reduce blind zones
+        // (see https://kravtsov-development.medium.com/new-high-quality-edge-detector-6757f35a0ee0)
+        int[,] kx = { { -1, 0, 1 }, { -2, 0, 2 }, { -1, 0, 1 } };
+        int[,] ky = { { -1, -2, -1 }, { 0, 0, 0 }, { 1, 2, 1 } };
+        var gx = new float[width * height];
+        var gy = new float[width * height];
+        for (var y = 0; y < height; y++)
+        for (var x = 0; x < width; x++)
+        {
+            float sx = 0, sy = 0;
+            for (var oy = -1; oy <= 1; oy++)
+            for (var ox = -1; ox <= 1; ox++)
+            {
+                var rx = Reflect(x + ox, width);
+                var ry = Reflect(y + oy, height);
+                var v = lum[ry * width + rx];
+                sx += v * kx[oy + 1, ox + 1];
+                sy += v * ky[oy + 1, ox + 1];
+            }
+            gx[y * width + x] = sx;
+            gy[y * width + x] = sy;
+        }
+
+        // Sum absolute response over 12 orientations (0°, 15°, ..., 165°) for isotropic edge strength
+        const int VcOrientationCount = 12;
+        const float VcAngleStep = MathF.PI / VcOrientationCount;
+        var edge = new float[width * height];
+        for (var i = 0; i < gx.Length; i++)
+        {
+            var gxv = gx[i];
+            var gyv = gy[i];
+            float sum = 0;
+            for (var k = 0; k < VcOrientationCount; k++)
+            {
+                var a = k * VcAngleStep;
+                var r = gxv * MathF.Cos(a) + gyv * MathF.Sin(a);
+                sum += MathF.Abs(r);
+            }
+            edge[i] = sum;
+        }
+        var maxEdge = 0f;
+        for (var i = 0; i < edge.Length; i++)
+            if (edge[i] > maxEdge) maxEdge = edge[i];
+        if (maxEdge > 0f)
+        {
+            for (var i = 0; i < edge.Length; i++)
+                edge[i] = Math.Clamp(edge[i] / maxEdge, 0f, 1f);
+        }
+        return (lum, edge, meanLum);
+    }
+
     /// <summary>
-    /// Pairs of (texture folder name under assets/minecraft/textures, specular-only).
+    /// Pairs of (texture folder name under assets/&lt;namespace&gt;/textures, specular-only).
     /// Specular-only folders (e.g. particle) get only _s; no _n or height.
     /// </summary>
     private static IEnumerable<(string folder, bool specularOnly)> GetEnabledFolders(AutoPbrOptions options)
@@ -32,6 +137,16 @@ public sealed class ResourcePackConverter
             yield return ("particle", true);
     }
 
+    /// <summary>Enumerates asset namespaces (e.g. minecraft, optifine, mod ids) under extractedPackRoot/assets.</summary>
+    private static IEnumerable<string> GetAssetNamespaces(string extractedPackRoot)
+    {
+        var assetsDir = Path.Combine(extractedPackRoot, "assets");
+        if (!Directory.Exists(assetsDir))
+            yield break;
+        foreach (var dir in Directory.EnumerateDirectories(assetsDir))
+            yield return Path.GetFileName(dir);
+    }
+
     public async Task ConvertAsync(
         string inputZipPath,
         string outputZipPath,
@@ -45,16 +160,19 @@ public sealed class ResourcePackConverter
         if (options.SpecularData is null)
             throw new InvalidOperationException("SpecularData is required (load textures_data.json first).");
 
-        progress?.Report(new ConversionProgress(ConversionStage.Extracting, 0, 0));
-
         var tempRoot = Path.Combine(Path.GetTempPath(), "AutoPBR", Guid.NewGuid().ToString("N"));
         var extracted = Path.Combine(tempRoot, "pack_unzipped");
         Directory.CreateDirectory(extracted);
 
         try
         {
-            ZipFile.ExtractToDirectory(inputZipPath, extracted);
-
+            await Task.Run(() =>
+            {
+                if (options.ExperimentalExtractor)
+                    ParallelZipReader.ExtractZip(inputZipPath, extracted, progress, ConversionStage.Extracting, cancellationToken);
+                else
+                    ExtractWithProgress(inputZipPath, extracted, progress, cancellationToken);
+            }).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
 
             progress?.Report(new ConversionProgress(ConversionStage.ScanningTextures, 0, 0));
@@ -68,13 +186,13 @@ public sealed class ResourcePackConverter
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            progress?.Report(new ConversionProgress(ConversionStage.Packing, 0, 0));
+            WritePackMcmeta(extracted);
 
             Directory.CreateDirectory(Path.GetDirectoryName(outputZipPath) ?? ".");
             if (File.Exists(outputZipPath))
                 File.Delete(outputZipPath);
 
-            ZipFile.CreateFromDirectory(extracted, outputZipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+            await Task.Run(() => CreateWithProgress(extracted, outputZipPath, textures, progress, cancellationToken)).ConfigureAwait(false);
             progress?.Report(new ConversionProgress(ConversionStage.Done, 0, 0));
         }
         finally
@@ -83,57 +201,245 @@ public sealed class ResourcePackConverter
         }
     }
 
+    private static void ExtractWithProgress(
+        string inputZipPath,
+        string extracted,
+        IProgress<ConversionProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        List<string> entryNames;
+        using (var archive = ZipFile.OpenRead(inputZipPath))
+            entryNames = archive.Entries.Where(e => !string.IsNullOrEmpty(e.Name)).Select(e => e.FullName).ToList();
+
+        var total = entryNames.Count;
+        progress?.Report(new ConversionProgress(ConversionStage.Extracting, 0, total));
+
+        var completed = 0;
+        var lastReported = -1;
+        var reportLock = new object();
+        void ReportProgress()
+        {
+            var current = Interlocked.Increment(ref completed);
+            lock (reportLock)
+            {
+                if (current <= total && current > lastReported)
+                {
+                    lastReported = current;
+                    progress?.Report(new ConversionProgress(ConversionStage.Extracting, current, total));
+                }
+            }
+        }
+
+        var degree = Math.Min(ZipParallelism, entryNames.Count);
+        if (degree <= 1)
+        {
+            using var archive = ZipFile.OpenRead(inputZipPath);
+            foreach (var fullName in entryNames)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var entry = archive.GetEntry(fullName);
+                if (entry is null) continue;
+                var destPath = Path.Combine(extracted, fullName);
+                var dir = Path.GetDirectoryName(destPath);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+                if (!string.IsNullOrEmpty(entry.Name))
+                    entry.ExtractToFile(destPath, overwrite: true);
+                ReportProgress();
+            }
+            return;
+        }
+
+        var partitionSize = (entryNames.Count + degree - 1) / degree;
+        var partitions = new List<List<string>>(degree);
+        for (var i = 0; i < degree; i++)
+        {
+            var start = i * partitionSize;
+            var count = Math.Min(partitionSize, entryNames.Count - start);
+            if (count > 0)
+                partitions.Add(entryNames.GetRange(start, count));
+        }
+
+        Parallel.ForEach(partitions, new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = cancellationToken }, partition =>
+        {
+            using var archive = ZipFile.OpenRead(inputZipPath);
+            foreach (var fullName in partition)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var entry = archive.GetEntry(fullName);
+                if (entry is null) continue;
+                var destPath = Path.Combine(extracted, fullName);
+                var dir = Path.GetDirectoryName(destPath);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+                if (!string.IsNullOrEmpty(entry.Name))
+                    entry.ExtractToFile(destPath, overwrite: true);
+                ReportProgress();
+            }
+        });
+    }
+
+    /// <summary>Writes pack.mcmeta with description "Generated by AutoPBR", preserving pack_format from source if present.</summary>
+    private static void WritePackMcmeta(string extracted)
+    {
+        var path = Path.Combine(extracted, "pack.mcmeta");
+        var packFormat = 22; // default for recent versions
+        if (File.Exists(path))
+        {
+            try
+            {
+                var json = File.ReadAllText(path);
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("pack", out var pack) &&
+                    pack.TryGetProperty("pack_format", out var pf))
+                    packFormat = pf.GetInt32();
+            }
+            catch { /* keep default */ }
+        }
+        var mcmeta = new Dictionary<string, object>
+        {
+            ["pack"] = new Dictionary<string, object>
+            {
+                ["pack_format"] = packFormat,
+                ["description"] = "Generated by AutoPBR"
+            }
+        };
+        var options = new JsonSerializerOptions { WriteIndented = true };
+        File.WriteAllText(path, JsonSerializer.Serialize(mcmeta, options));
+    }
+
+    private static void CreateWithProgress(
+        string extracted,
+        string outputZipPath,
+        IReadOnlyList<TextureWorkItem> textures,
+        IProgress<ConversionProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var files = new List<string>();
+
+        // Pack metadata: pack.png (when present), pack.mcmeta (always written), license (when present)
+        var packPng = Path.Combine(extracted, "pack.png");
+        if (File.Exists(packPng))
+            files.Add(packPng);
+        var packMcmeta = Path.Combine(extracted, "pack.mcmeta");
+        files.Add(packMcmeta);
+        var licensePath = Path.Combine(extracted, "LICENSE");
+        if (File.Exists(licensePath))
+            files.Add(licensePath);
+        else
+        {
+            var licenseLower = Path.Combine(extracted, "license");
+            if (File.Exists(licenseLower))
+                files.Add(licenseLower);
+        }
+
+        // Only include converted files (normals and specular) in their folder hierarchy
+        foreach (var t in textures)
+        {
+            if (!t.SpecularOnly && File.Exists(t.NormalPath))
+                files.Add(t.NormalPath);
+            if (File.Exists(t.SpecularPath))
+                files.Add(t.SpecularPath);
+        }
+
+        ParallelZipWriter.WriteZip(outputZipPath, files, extracted, progress, ConversionStage.Packing, cancellationToken);
+    }
+
+    /// <summary>Scans for textures under assets/&lt;namespace&gt;/textures (minecraft, optifine, mod ids, etc.).</summary>
     public static IReadOnlyList<TextureWorkItem> ScanTextures(string extractedPackRoot, AutoPbrOptions options)
     {
-        var texturesRoot = Path.Combine(extractedPackRoot, "assets", "minecraft", "textures");
         var results = new List<TextureWorkItem>();
 
-        foreach (var (folder, specularOnly) in GetEnabledFolders(options))
+        foreach (var namespaceName in GetAssetNamespaces(extractedPackRoot))
         {
-            var dir = Path.Combine(texturesRoot, folder);
-            if (!Directory.Exists(dir))
-                continue;
-
-            foreach (var file in Directory.EnumerateFiles(dir, "*.png", SearchOption.AllDirectories))
+            var texturesRoot = Path.Combine(extractedPackRoot, "assets", namespaceName, "textures");
+            if (Directory.Exists(texturesRoot))
             {
-                var fileName = Path.GetFileName(file);
-                if (AutoPbrDefaults.ExcludedFileNames.Contains(fileName))
-                    continue;
-                if (fileName.Contains("sapling", StringComparison.OrdinalIgnoreCase))
-                    continue;
-                if (fileName.Contains("mcmeta", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                var name = Path.GetFileNameWithoutExtension(file);
-                // Skip files that are already PBR maps (_n normal, _s specular, _e emissive).
-                if (name.EndsWith("_n", StringComparison.OrdinalIgnoreCase) ||
-                    name.EndsWith("_s", StringComparison.OrdinalIgnoreCase) ||
-                    name.EndsWith("_e", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                var ext = Path.GetExtension(file);
-                var directoryPath = Path.GetDirectoryName(file) ?? dir;
-
-                var relativePathNoExt = Path.GetRelativePath(
-                    texturesRoot,
-                    Path.Combine(directoryPath, name)
-                ).Replace('/', '\\');
-
-                if (!relativePathNoExt.StartsWith('\\'))
-                    relativePathNoExt = "\\" + relativePathNoExt;
-
-                if (options.IgnoreTextureKeys.Contains(relativePathNoExt))
-                    continue;
-
-                results.Add(new TextureWorkItem
+                foreach (var (folder, specularOnly) in GetEnabledFolders(options))
                 {
-                    FullPath = file,
-                    DirectoryPath = directoryPath,
-                    Name = name,
-                    Extension = ext,
-                    RelativeKey = relativePathNoExt,
-                    SpecularOnly = specularOnly
-                });
+                    var dir = Path.Combine(texturesRoot, folder);
+                    if (!Directory.Exists(dir))
+                        continue;
+
+                    foreach (var file in Directory.EnumerateFiles(dir, "*.png", SearchOption.AllDirectories))
+                    {
+                        var fileName = Path.GetFileName(file);
+                        if (AutoPbrDefaults.ExcludedFileNames.Contains(fileName))
+                            continue;
+                        if (fileName.Contains("sapling", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (fileName.Contains("mcmeta", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        var name = Path.GetFileNameWithoutExtension(file);
+                        if (name.EndsWith("_n", StringComparison.OrdinalIgnoreCase) ||
+                            name.EndsWith("_s", StringComparison.OrdinalIgnoreCase) ||
+                            name.EndsWith("_e", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        var ext = Path.GetExtension(file);
+                        var directoryPath = Path.GetDirectoryName(file) ?? dir;
+
+                        var relativeToTextures = Path.GetRelativePath(
+                            texturesRoot,
+                            Path.Combine(directoryPath, name)
+                        ).Replace('/', '\\');
+                        var relativePathNoExt = "\\" + namespaceName + "\\" + relativeToTextures;
+
+                        if (options.IgnoreTextureKeys.Contains(relativePathNoExt))
+                            continue;
+
+                        results.Add(new TextureWorkItem
+                        {
+                            FullPath = file,
+                            DirectoryPath = directoryPath,
+                            Name = name,
+                            Extension = ext,
+                            RelativeKey = relativePathNoExt,
+                            SpecularOnly = specularOnly
+                        });
+                    }
+                }
+            }
+
+            // Also scan OptiFine-style CTM textures: assets/<namespace>/optifine/ctm/**.png
+            var ctmRoot = Path.Combine(extractedPackRoot, "assets", namespaceName, "optifine", "ctm");
+            if (Directory.Exists(ctmRoot))
+            {
+                foreach (var file in Directory.EnumerateFiles(ctmRoot, "*.png", SearchOption.AllDirectories))
+                {
+                    var fileName = Path.GetFileName(file);
+                    if (fileName.Contains("mcmeta", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var name = Path.GetFileNameWithoutExtension(file);
+                    if (name.EndsWith("_n", StringComparison.OrdinalIgnoreCase) ||
+                        name.EndsWith("_s", StringComparison.OrdinalIgnoreCase) ||
+                        name.EndsWith("_e", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var ext = Path.GetExtension(file);
+                    var directoryPath = Path.GetDirectoryName(file) ?? ctmRoot;
+
+                    var relativeToNamespace = Path.GetRelativePath(
+                        Path.Combine(extractedPackRoot, "assets", namespaceName),
+                        Path.Combine(directoryPath, name)
+                    ).Replace('/', '\\');
+                    var relativePathNoExt = "\\" + namespaceName + "\\" + relativeToNamespace;
+
+                    if (options.IgnoreTextureKeys.Contains(relativePathNoExt))
+                        continue;
+
+                    results.Add(new TextureWorkItem
+                    {
+                        FullPath = file,
+                        DirectoryPath = directoryPath,
+                        Name = name,
+                        Extension = ext,
+                        RelativeKey = relativePathNoExt,
+                        SpecularOnly = false
+                    });
+                }
             }
         }
 
@@ -157,23 +463,20 @@ public sealed class ResourcePackConverter
                 .Build();
 
             var de2000 = new CIEDE2000ColorDifference();
+            var completed = 0;
 
-            for (var i = 0; i < total; i++)
+            Parallel.ForEach(textures, new ParallelOptions { MaxDegreeOfParallelism = ConversionParallelism, CancellationToken = ct }, t =>
             {
-                ct.ThrowIfCancellationRequested();
-                var t = textures[i];
-                progress?.Report(new ConversionProgress(stage, i + 1, total, t.Name));
-
                 var fast = t.Overrides.FastSpecular ?? options.FastSpecular;
                 var rules = t.Overrides.CustomSpecularRules
-                            ?? (options.SpecularData!.ByTextureName.TryGetValue(t.Name, out var list) ? list : null);
+                            ?? (options.SpecularData!.ByTextureName.TryGetValue(t.Name, out var list) ? list : null)
+                            ?? (options.SpecularData.ByTextureName.TryGetValue("*", out var def) ? def : null);
 
                 using var img = Image.Load<Rgba32>(t.DiffusePath);
                 using var cropped = CropToSquare(img, out var size);
                 var width = size;
                 var height = size;
 
-                // Precompute rule Lab colors for accurate mode.
                 List<(SpecularRule Rule, LabColor Lab)>? rulesLab = null;
                 if (!fast && rules is not null)
                 {
@@ -185,93 +488,88 @@ public sealed class ResourcePackConverter
                     }
                 }
 
-                var useLabPbr = options.ExperimentalSpecular;
-                if (useLabPbr)
+                // LabPBR specular only: _s RGBA (smoothness, F0/metal, porosity/subsurface, emissive)
+                var (luminance, edgeMagnitude, meanLuminance) = BuildLuminanceAndEdge(cropped, width, height);
+                var isMetal = IsMetalTexture(t.Name, t.RelativeKey);
+                var nPixels = width * height;
+                var rBuf = new byte[nPixels];
+                var gBuf = new byte[nPixels];
+                var bBuf = new byte[nPixels];
+                var aBuf = new byte[nPixels];
+                if (!cropped.DangerousTryGetSinglePixelMemory(out var inMem))
+                    throw new InvalidOperationException("Expected contiguous pixel memory.");
+                var inSpan = inMem.Span;
+
+                for (var idx = 0; idx < nPixels; idx++)
                 {
-                    using var outImg = new Image<Rgba32>(width, height);
-                    if (!cropped.DangerousTryGetSinglePixelMemory(out var inMem) ||
-                        !outImg.DangerousTryGetSinglePixelMemory(out var outMem))
-                        throw new InvalidOperationException("Expected contiguous pixel memory.");
-                    var inSpan = inMem.Span;
-                    var outSpan = outMem.Span;
-                    for (var idx = 0; idx < width * height; idx++)
+                    var p = inSpan[idx];
+                    var spec = GetSpecularRgba(p, rules, rulesLab, fast, rgbToLab, de2000);
+                    var lum = luminance[idx];
+                    var edge = edgeMagnitude[idx];
+
+                    int rr = spec.r, gg = spec.g, bb = spec.b;
+                    if (isMetal)
                     {
-                        var p = inSpan[idx];
-                        var spec = GetSpecularRgba(p, rules, rulesLab, fast, rgbToLab, de2000);
-                        outSpan[idx] = new Rgba32(spec.r, spec.g, spec.b, spec.a);
+                        rr = (int)Math.Min(255, (int)(spec.r * options.MetallicBoost));
+                        gg = 255;
+                        bb = 0;
                     }
-                    outImg.Save(t.SpecularPath);
+                    else
+                    {
+                        gg = Math.Min(spec.g, LabPbrF0CapDielectric);
+                        rr = (int)Math.Min(255, (int)(spec.r * options.SmoothnessScale));
+                        rr = (int)(rr * (1f - 0.2f * edge));
+                        if (lum > 0.92f && meanLuminance < 0.25f)
+                            rr = Math.Min(rr, 220);
+                        bb = (byte)Math.Clamp(spec.b + options.PorosityBias, 0, 255);
+                    }
+                    rBuf[idx] = (byte)Math.Clamp(rr, 0, 255);
+                    gBuf[idx] = (byte)Math.Clamp(gg, 0, 255);
+                    bBuf[idx] = (byte)bb;
+                    aBuf[idx] = spec.a;
                 }
-                else
+
+                // Per-texture R normalization: remap to 10–200 when there is variation
+                byte minR = 255, maxR = 0;
+                for (var i = 0; i < nPixels; i++)
                 {
-                    using var outImg = new Image<Rgb24>(width, height);
-                    if (!cropped.DangerousTryGetSinglePixelMemory(out var inMem) ||
-                        !outImg.DangerousTryGetSinglePixelMemory(out var outMem))
-                        throw new InvalidOperationException("Expected contiguous pixel memory.");
-                    var inSpan = inMem.Span;
-                    var outSpan = outMem.Span;
-                    for (var idx = 0; idx < width * height; idx++)
-                    {
-                        var p = inSpan[idx];
-                        var spec = GetSpecular(p, rules, rulesLab, fast, rgbToLab, de2000);
-                        outSpan[idx] = new Rgb24(spec.r, spec.g, spec.b);
-                    }
-                    outImg.Save(t.SpecularPath);
+                    var v = rBuf[i];
+                    if (v < minR) minR = v;
+                    if (v > maxR) maxR = v;
                 }
-            }
+                if (maxR > minR)
+                {
+                    for (var i = 0; i < nPixels; i++)
+                        rBuf[i] = (byte)Math.Clamp(10 + (rBuf[i] - minR) * 190 / (maxR - minR), 0, 255);
+                }
+
+                var hasData = false;
+                using (var outImg = new Image<Rgba32>(width, height))
+                {
+                    outImg.ProcessPixelRows(acc =>
+                    {
+                        for (var y = 0; y < height; y++)
+                        {
+                            var row = acc.GetRowSpan(y);
+                            for (var x = 0; x < width; x++)
+                            {
+                                var idx = y * width + x;
+                                var rr = rBuf[idx]; var gg = gBuf[idx]; var bb = bBuf[idx]; var aa = aBuf[idx];
+                                if (rr != 0 || gg != 0 || bb != 0 || aa != 255) hasData = true;
+                                row[x] = new Rgba32(rr, gg, bb, aa);
+                            }
+                        }
+                    });
+                    if (hasData)
+                        outImg.Save(t.SpecularPath);
+                    else if (File.Exists(t.SpecularPath))
+                        File.Delete(t.SpecularPath);
+                }
+
+                var n = Interlocked.Increment(ref completed);
+                progress?.Report(new ConversionProgress(stage, n, total, t.Name));
+            });
         }, ct);
-    }
-
-    private static (byte r, byte g, byte b) GetSpecular(
-        Rgba32 pixel,
-        IReadOnlyList<SpecularRule>? rules,
-        List<(SpecularRule Rule, LabColor Lab)>? rulesLab,
-        bool fast,
-        IColorConverter<RGBColor, LabColor> rgbToLab,
-        CIEDE2000ColorDifference de2000)
-    {
-        if (rules is null || rules.Count == 0)
-            return (0, 0, 0);
-
-        var pr = pixel.R;
-        var pg = pixel.G;
-        var pb = pixel.B;
-
-        var bestIdx = -1;
-        double best = double.MaxValue;
-
-        if (fast)
-        {
-            for (var i = 0; i < rules.Count; i++)
-            {
-                var r = rules[i];
-                var d = FastDistance(pr, pg, pb, r.ColorR, r.ColorG, r.ColorB);
-                if (d < best)
-                {
-                    best = d;
-                    bestIdx = i;
-                }
-            }
-            var bestRule = rules[bestIdx];
-            return (bestRule.SpecR, bestRule.SpecG, bestRule.SpecB);
-        }
-
-        var pixLab = rgbToLab.Convert(RGBColor.FromRGB8Bit(pr, pg, pb));
-        if (rulesLab is null)
-            return (0, 0, 0);
-
-        for (var i = 0; i < rulesLab.Count; i++)
-        {
-            var d = de2000.ComputeDifference(pixLab, rulesLab[i].Lab);
-            if (d < best)
-            {
-                best = d;
-                bestIdx = i;
-            }
-        }
-
-        var rule2 = rulesLab[bestIdx].Rule;
-        return (rule2.SpecR, rule2.SpecG, rule2.SpecB);
     }
 
     /// <summary>
@@ -348,16 +646,12 @@ public sealed class ResourcePackConverter
         return Task.Run(() =>
         {
             var stage = ConversionStage.GeneratingNormals;
-            var total = textures.Count;
+            var toProcess = textures.Where(t => !t.SpecularOnly).ToList();
+            var total = toProcess.Count;
+            var completed = 0;
 
-            for (var i = 0; i < total; i++)
+            Parallel.ForEach(toProcess, new ParallelOptions { MaxDegreeOfParallelism = ConversionParallelism, CancellationToken = ct }, t =>
             {
-                ct.ThrowIfCancellationRequested();
-                var t = textures[i];
-                if (t.SpecularOnly)
-                    continue;
-                progress?.Report(new ConversionProgress(stage, i + 1, total, t.Name));
-
                 using var img = Image.Load<Rgba32>(t.DiffusePath);
                 using var cropped = CropToSquare(img, out var size);
                 var width = size;
@@ -366,8 +660,12 @@ public sealed class ResourcePackConverter
                 var normalIntensity = t.Overrides.NormalIntensity ?? options.NormalIntensity;
                 var normal = GenerateNormalMap(cropped, width, height, normalIntensity, t.Overrides.InvertNormalRed, t.Overrides.InvertNormalGreen);
 
+                // Write normal RGB only here; height/alpha is applied in GenerateHeightsAsync.
                 normal.Save(t.NormalPath);
-            }
+
+                var n = Interlocked.Increment(ref completed);
+                progress?.Report(new ConversionProgress(stage, n, total, t.Name));
+            });
         }, ct);
     }
 
@@ -380,33 +678,29 @@ public sealed class ResourcePackConverter
         return Task.Run(() =>
         {
             var stage = ConversionStage.GeneratingHeights;
-            var total = textures.Count;
+            var toProcess = textures.Where(t => !t.SpecularOnly).ToList();
+            var total = toProcess.Count;
+            var completed = 0;
 
-            for (var i = 0; i < total; i++)
+            Parallel.ForEach(toProcess, new ParallelOptions { MaxDegreeOfParallelism = ConversionParallelism, CancellationToken = ct }, t =>
             {
                 ct.ThrowIfCancellationRequested();
-                var t = textures[i];
-                if (t.SpecularOnly)
-                    continue;
-                progress?.Report(new ConversionProgress(stage, i + 1, total, t.Name));
 
                 using var diffuseImg = Image.Load<Rgba32>(t.DiffusePath);
                 using var croppedDiffuse = CropToSquare(diffuseImg, out var size);
                 var width = size;
-                var squareHeight = size;
+                var height = size;
 
                 var heightIntensity = t.Overrides.HeightIntensity ?? options.HeightIntensity;
                 var brightness = t.Overrides.HeightBrightness ?? AutoPbrDefaults.DefaultHeightBrightness;
-                var heightMap = GenerateHeightMap(croppedDiffuse, width, squareHeight, heightIntensity, brightness, t.Overrides.InvertHeight);
+                var heightMap = GenerateHeightMap(croppedDiffuse, width, height, heightIntensity, brightness, t.Overrides.InvertHeight);
 
-                // Load the previously saved normal, replace alpha.
+                // Apply height data into the normal map alpha channel only (no dedicated _h file).
                 using var normalImg = File.Exists(t.NormalPath)
                     ? Image.Load<Rgba32>(t.NormalPath)
-                    : new Image<Rgba32>(width, squareHeight, new Rgba32(128, 128, 255, 255));
-
+                    : new Image<Rgba32>(width, height, new Rgba32(128, 128, 255, 255));
                 using var croppedNormal = CropToSquare(normalImg, out _);
 
-                // LabPBR: height in normal alpha; linear, 0=25% depth 255=0% depth; min 1 recommended for POM
                 croppedNormal.ProcessPixelRows(acc =>
                 {
                     for (var y = 0; y < heightMap.Height; y++)
@@ -414,6 +708,7 @@ public sealed class ResourcePackConverter
                         var row = acc.GetRowSpan(y);
                         for (var x = 0; x < heightMap.Width; x++)
                         {
+                            // White = highest (255), black = lowest (0); clamp 0 -> 1 to avoid problematic fully-black alpha
                             var a = heightMap[x, y];
                             row[x].A = a == 0 ? (byte)1 : a;
                         }
@@ -421,7 +716,10 @@ public sealed class ResourcePackConverter
                 });
 
                 croppedNormal.Save(t.NormalPath);
-            }
+
+                var n = Interlocked.Increment(ref completed);
+                progress?.Report(new ConversionProgress(stage, n, total, t.Name));
+            });
         }, ct);
     }
 
@@ -440,6 +738,32 @@ public sealed class ResourcePackConverter
                 }
             }
         });
+
+        // Optional: small unsharp mask to enhance form without adding speckle
+        var blurred = new float[width * height];
+        for (var y = 0; y < height; y++)
+        for (var x = 0; x < width; x++)
+        {
+            float sum = 0;
+            var count = 0;
+            for (var oy = -1; oy <= 1; oy++)
+            for (var ox = -1; ox <= 1; ox++)
+            {
+                var rx = Reflect(x + ox, width);
+                var ry = Reflect(y + oy, height);
+                sum += grey[ry * width + rx];
+                count++;
+            }
+            blurred[y * width + x] = sum / count;
+        }
+        const float amount = 0.5f;
+        for (var i = 0; i < grey.Length; i++)
+        {
+            var v = grey[i] + amount * (grey[i] - blurred[i]);
+            if (v < 0) v = 0;
+            if (v > 255) v = 255;
+            grey[i] = v;
+        }
 
         var gx = new float[width * height];
         var gy = new float[width * height];
@@ -465,11 +789,45 @@ public sealed class ResourcePackConverter
             gy[y * width + x] = sy;
         }
 
-        var maxX = gx.Max();
-        var maxY = gy.Max();
-        var maxValue = MathF.Max(maxX, maxY);
-        if (maxValue == 0)
-            maxValue = 1;
+        // VC-Filter magnitude: isotropic edge strength (reduces Sobel blind zones) while we keep direction from (gx, gy)
+        const int VcOrientationCount = 12;
+        const float VcAngleStep = MathF.PI / VcOrientationCount;
+        var vcMag = new float[width * height];
+        for (var i = 0; i < gx.Length; i++)
+        {
+            var gxv = gx[i];
+            var gyv = gy[i];
+            float sum = 0;
+            for (var k = 0; k < VcOrientationCount; k++)
+            {
+                var a = k * VcAngleStep;
+                sum += MathF.Abs(gxv * MathF.Cos(a) + gyv * MathF.Sin(a));
+            }
+            vcMag[i] = sum;
+        }
+
+        // Per-pixel gradient magnitude (direction preserved); enhance with VC so blind zones get stronger edges
+        var gradMag = new float[width * height];
+        for (var i = 0; i < gx.Length; i++)
+        {
+            var gxv = gx[i];
+            var gyv = gy[i];
+            gradMag[i] = MathF.Sqrt(gxv * gxv + gyv * gyv);
+        }
+        var maxGradMag = gradMag.Max();
+        var maxVcMag = vcMag.Max();
+        const float Eps = 1e-6f;
+        if (maxGradMag < Eps) maxGradMag = 1f;
+        if (maxVcMag < Eps) maxVcMag = 1f;
+        // Scale VC magnitude to same range as gradient magnitude, then take max so we never reduce strength
+        var vcScale = maxGradMag / maxVcMag;
+        var maxValue = 0f;
+        for (var i = 0; i < gradMag.Length; i++)
+        {
+            var enhanced = MathF.Max(gradMag[i], vcMag[i] * vcScale);
+            if (enhanced > maxValue) maxValue = enhanced;
+        }
+        if (maxValue < Eps) maxValue = 1f;
 
         var intensity = 1f / normalIntensity;
         var z = intensity;
@@ -482,14 +840,20 @@ public sealed class ResourcePackConverter
                 var row = acc.GetRowSpan(y);
                 for (var x = 0; x < width; x++)
                 {
-                    var nx = gx[y * width + x] / maxValue;
-                    var ny = gy[y * width + x] / maxValue;
+                    var idx = y * width + x;
+                    var gxv = gx[idx];
+                    var gyv = gy[idx];
+                    var mag = gradMag[idx];
+                    var enhancedMag = MathF.Max(mag, vcMag[idx] * vcScale);
+                    // Direction from (-gx, -gy) unchanged; magnitude enhanced by VC-Filter (retain or boost)
+                    var scale = mag >= Eps ? enhancedMag / mag : 0f;
+                    var nx = -gxv * scale / maxValue;
+                    var ny = -gyv * scale / maxValue;
 
                     var len = MathF.Sqrt(nx * nx + ny * ny + z * z);
                     if (len == 0) len = 1;
                     nx /= len;
                     ny /= len;
-                    var nz = z / len;
 
                     // LabPBR: R = normal X, G = normal Y, B = AO (0=100% occlusion, 255=0%); Z reconstructed by shader
                     var r = ToByte(nx);
