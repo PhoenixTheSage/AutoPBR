@@ -59,20 +59,8 @@
                     </StackPanel>
                 </TabItem>
 
-                <TabItem Header="Settings">
+                <TabItem Header="Tune">
                     <StackPanel Margin="0,12,0,0" Spacing="16">
-                        <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
-                            <StackPanel Spacing="10">
-                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Output" />
-                                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="8">
-                                    <TextBox Grid.Row="0" Grid.Column="0" Watermark="Output folder" Text="{Binding OutputDirectory, Mode=TwoWay}" />
-                                    <Button Grid.Row="0" Grid.Column="1" Content="Browse…" Click="BrowseOutput_Click" />
-
-                                    <TextBox Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" IsReadOnly="True" Watermark="Output path" Text="{Binding OutputZipPath}" />
-                                </Grid>
-                            </StackPanel>
-                        </Border>
-
                         <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
                             <StackPanel Spacing="10">
                                 <TextBlock FontSize="16" FontWeight="SemiBold" Text="Generation settings" />
@@ -106,10 +94,13 @@
 
                                 <StackPanel Orientation="Horizontal" Spacing="16">
                                     <CheckBox Content="Fast specular (less accurate)" IsChecked="{Binding FastSpecular, Mode=TwoWay}" />
-                                    <CheckBox Content="Ignore plants" IsChecked="{Binding IgnorePlants, Mode=TwoWay}" />
+                                    <TextBlock VerticalAlignment="Center" Text="Foliage:" />
+                                    <ComboBox Width="140" SelectedItem="{Binding FoliageMode, Mode=TwoWay}">
+                                        <x:String>Ignore All</x:String>
+                                        <x:String>No Height</x:String>
+                                        <x:String>Convert All</x:String>
+                                    </ComboBox>
                                 </StackPanel>
-
-                                <CheckBox Content="Experimental parallel extraction (custom zip reader; may miss files, for testing only)" IsChecked="{Binding ExperimentalExtractor, Mode=TwoWay}" />
 
                                 <TextBlock FontSize="14" FontWeight="SemiBold" Text="Texture types" Margin="0,8,0,0" />
                                 <StackPanel Orientation="Horizontal" Spacing="16">
@@ -117,27 +108,6 @@
                                     <CheckBox Content="Items" IsChecked="{Binding ProcessItems, Mode=TwoWay}" />
                                     <CheckBox Content="Armor (entity)" IsChecked="{Binding ProcessArmor, Mode=TwoWay}" />
                                     <CheckBox Content="Particles (specular only)" IsChecked="{Binding ProcessParticles, Mode=TwoWay}" />
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
-
-                        <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
-                            <StackPanel Spacing="10">
-                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Appearance" />
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <TextBlock VerticalAlignment="Center" Text="Color scheme" />
-                                    <ComboBox Width="220" SelectedItem="{Binding ColorScheme, Mode=TwoWay}">
-                                        <x:String>Dark</x:String>
-                                        <x:String>Blue</x:String>
-                                        <x:String>Green</x:String>
-                                        <x:String>Purple</x:String>
-                                        <x:String>Amber</x:String>
-                                        <x:String>Teal</x:String>
-                                        <x:String>Rose</x:String>
-                                        <x:String>Mono</x:String>
-                                        <x:String>Ocean</x:String>
-                                        <x:String>Sunset</x:String>
-                                    </ComboBox>
                                 </StackPanel>
                             </StackPanel>
                         </Border>
@@ -162,6 +132,66 @@
                                         </ItemsControl>
                                     </ScrollViewer>
                                 </Border>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </TabItem>
+
+                <TabItem Header="Settings">
+                    <StackPanel Margin="0,12,0,0" Spacing="16">
+                        <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
+                            <StackPanel Spacing="10">
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Output" />
+                                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+                                    <TextBox Grid.Row="0" Grid.Column="0" Watermark="Output folder" Text="{Binding OutputDirectory, Mode=TwoWay}" />
+                                    <Button Grid.Row="0" Grid.Column="1" Content="Browse…" Click="BrowseOutput_Click" />
+
+                                    <TextBox Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" IsReadOnly="True" Watermark="Output path" Text="{Binding OutputZipPath}" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
+                            <StackPanel Spacing="10">
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Engine" />
+
+                                <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="10">
+                                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Max threads" />
+                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="{Binding MaxThreadsMax}" SmallChange="1" LargeChange="1"
+                                            TickFrequency="1" IsSnapToTickEnabled="True"
+                                            Value="{Binding MaxThreads, Mode=TwoWay}" />
+                                    <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center"
+                                               Text="{Binding MaxThreads, StringFormat={}{0:0}}" />
+
+                                    <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="Temp folder" />
+                                    <TextBox Grid.Row="1" Grid.Column="1" Margin="0,2,0,0"
+                                             Watermark="Leave empty for system temp"
+                                             Text="{Binding TempDirectory, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Text=" " />
+                                </Grid>
+
+                                <CheckBox Content="Experimental parallel extraction (custom zip reader; may miss files, for testing only)" IsChecked="{Binding ExperimentalExtractor, Mode=TwoWay}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
+                            <StackPanel Spacing="10">
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Appearance" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock VerticalAlignment="Center" Text="Color scheme" />
+                                    <ComboBox Width="220" SelectedItem="{Binding ColorScheme, Mode=TwoWay}">
+                                        <x:String>Dark</x:String>
+                                        <x:String>Blue</x:String>
+                                        <x:String>Green</x:String>
+                                        <x:String>Purple</x:String>
+                                        <x:String>Amber</x:String>
+                                        <x:String>Teal</x:String>
+                                        <x:String>Rose</x:String>
+                                        <x:String>Mono</x:String>
+                                        <x:String>Ocean</x:String>
+                                        <x:String>Sunset</x:String>
+                                    </ComboBox>
+                                </StackPanel>
                             </StackPanel>
                         </Border>
                     </StackPanel>

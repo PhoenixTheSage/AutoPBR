@@ -51,6 +51,7 @@ var options = new AutoPbrOptions
     NormalIntensity = normal,
     HeightIntensity = height,
     SpecularData = SpecularData.LoadFromFile(dataPath),
+    FoliageMode = ignorePlants ? "Ignore All" : "Convert All",
     IgnoreTextureKeys = ignorePlants
         ? new HashSet<string>(AutoPbrDefaults.PlantTextureKeys, StringComparer.OrdinalIgnoreCase)
         : new HashSet<string>(StringComparer.OrdinalIgnoreCase)

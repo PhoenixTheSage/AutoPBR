@@ -27,6 +27,9 @@ public sealed class TextureWorkItem
     /// </summary>
     public bool SpecularOnly { get; init; }
 
+    /// <summary>When true (FoliageMode=NoHeight), normal is written but height is not written to alpha.</summary>
+    public bool IsPlantForNoHeight { get; init; }
+
     public TextureOverrides Overrides { get; } = new();
 
     public string DiffusePath => FullPath;

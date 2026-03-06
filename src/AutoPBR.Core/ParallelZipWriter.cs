@@ -32,6 +32,7 @@ internal static class ParallelZipWriter
 
         Parallel.For(0, files.Count, new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = cancellationToken }, i =>
         {
+            try { Thread.CurrentThread.Name ??= "AutoPBR.Pack"; } catch (InvalidOperationException) { }
             cancellationToken.ThrowIfCancellationRequested();
             var fullPath = files[i];
             var relativePath = Path.GetRelativePath(basePath, fullPath).Replace('\\', '/');

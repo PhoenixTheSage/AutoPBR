@@ -6,7 +6,6 @@ public enum ConversionStage
     ScanningTextures,
     GeneratingSpecular,
     GeneratingNormals,
-    GeneratingHeights,
     Packing,
     Done
 }

@@ -12,6 +12,16 @@ public sealed class AutoPbrOptions
     /// </summary>
     public bool ExperimentalExtractor { get; init; } = false;
 
+    /// <summary>
+    /// Maximum worker threads to use for conversion (specular/normal/height). 0 or less = auto (CPU-2, minimum 1).
+    /// </summary>
+    public int MaxThreads { get; init; } = 0;
+
+    /// <summary>
+    /// Optional base directory for temporary working files. When null or empty, the system temp directory is used.
+    /// </summary>
+    public string? TempDirectory { get; init; }
+
     /// <summary>Scale for dielectric smoothness (R channel). 1 = unchanged; 0.5–1.5 typical.</summary>
     public float SmoothnessScale { get; init; } = AutoPbrDefaults.DefaultSmoothnessScale;
 
@@ -45,6 +55,9 @@ public sealed class AutoPbrOptions
     /// Keys like "\block\stone" (no extension). If a texture's key matches, it is skipped.
     /// </summary>
     public ISet<string> IgnoreTextureKeys { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Foliage handling: "Ignore All", "No Height", or "Convert All".</summary>
+    public string FoliageMode { get; init; } = "Ignore All";
 
     public SpecularData? SpecularData { get; init; }
 }

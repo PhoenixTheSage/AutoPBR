@@ -12,11 +12,23 @@ namespace AutoPBR.Core;
 
 public sealed class ResourcePackConverter
 {
-    /// <summary>Thread count for zip extract/pack: max(1, ProcessorCount - 2).</summary>
-    private static int ZipParallelism => Math.Max(1, Environment.ProcessorCount - 2);
+    private static int GetEffectiveThreads(int requested)
+    {
+        var logical = Math.Max(1, Environment.ProcessorCount);
+        if (requested <= 0)
+            return Math.Max(1, logical - 2);
+        return Math.Clamp(requested, 1, logical);
+    }
 
-    /// <summary>Thread count for texture conversion (specular, normals): max(1, ProcessorCount - 2).</summary>
-    private static int ConversionParallelism => Math.Max(1, Environment.ProcessorCount - 2);
+    /// <summary>Set thread name for debugging (e.g. in Visual Studio Threads window). Name can only be set once per thread.</summary>
+    private static void SetThreadName(string name)
+    {
+        try { Thread.CurrentThread.Name ??= name; }
+        catch (InvalidOperationException) { /* already set */ }
+    }
+
+    private static int GetZipParallelism(AutoPbrOptions options) => GetEffectiveThreads(options.MaxThreads);
+    private static int GetConversionParallelism(AutoPbrOptions options) => GetEffectiveThreads(options.MaxThreads);
 
     /// <summary>LabPBR: G channel &lt;= this value is F0 (dielectric); 230+ = metal.</summary>
     private const byte LabPbrF0CapDielectric = 229;
@@ -41,6 +53,39 @@ public sealed class ResourcePackConverter
                 return true;
         }
         return false;
+    }
+
+    private static bool IsPathUnderPlantOrPlants(string relativePathNoExt)
+    {
+        return relativePathNoExt.Contains("\\plant\\", StringComparison.OrdinalIgnoreCase)
+            || relativePathNoExt.Contains("\\plants\\", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>True for plants that always get no height in "No Height" mode. Grass by name is excluded here; grass gets no height only when it has significant transparency (checked at normal generation).</summary>
+    private static bool IsPlantForNoHeight(string relativePathNoExt, string name, string foliageMode)
+    {
+        if (foliageMode != "No Height") return false;
+        return AutoPbrDefaults.PlantTextureKeys.Contains(relativePathNoExt)
+            || IsPathUnderPlantOrPlants(relativePathNoExt);
+    }
+
+    /// <summary>Same thresholds as Ignore All grass skip: 2D grass sprites have lots of transparency; grass block cubes do not.</summary>
+    private static bool HasSignificantTransparency(Image<Rgba32> cropped)
+    {
+        if (!cropped.DangerousTryGetSinglePixelMemory(out var mem))
+            return false;
+        var span = mem.Span;
+        long sumA = 0;
+        int lowAlphaCount = 0;
+        var n = span.Length;
+        for (var i = 0; i < n; i++)
+        {
+            var a = span[i].A;
+            sumA += a;
+            if (a < 128) lowAlphaCount++;
+        }
+        var meanAlpha = (int)(sumA / n);
+        return meanAlpha < 200 || lowAlphaCount > 0.3 * n;
     }
 
     /// <summary>Precompute per-pixel luminance (0–1) and edge magnitude (0–1) from cropped diffuse for specular heuristics.</summary>
@@ -160,7 +205,10 @@ public sealed class ResourcePackConverter
         if (options.SpecularData is null)
             throw new InvalidOperationException("SpecularData is required (load textures_data.json first).");
 
-        var tempRoot = Path.Combine(Path.GetTempPath(), "AutoPBR", Guid.NewGuid().ToString("N"));
+        var baseTemp = string.IsNullOrWhiteSpace(options.TempDirectory)
+            ? Path.GetTempPath()
+            : options.TempDirectory;
+        var tempRoot = Path.Combine(baseTemp, "AutoPBR", Guid.NewGuid().ToString("N"));
         var extracted = Path.Combine(tempRoot, "pack_unzipped");
         Directory.CreateDirectory(extracted);
 
@@ -171,7 +219,7 @@ public sealed class ResourcePackConverter
                 if (options.ExperimentalExtractor)
                     ParallelZipReader.ExtractZip(inputZipPath, extracted, progress, ConversionStage.Extracting, cancellationToken);
                 else
-                    ExtractWithProgress(inputZipPath, extracted, progress, cancellationToken);
+                    ExtractWithProgress(inputZipPath, extracted, options, progress, cancellationToken);
             }).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -181,8 +229,7 @@ public sealed class ResourcePackConverter
             cancellationToken.ThrowIfCancellationRequested();
 
             await GenerateSpecularAsync(textures, options, progress, cancellationToken).ConfigureAwait(false);
-            await GenerateNormalsAsync(textures, options, progress, cancellationToken).ConfigureAwait(false);
-            await GenerateHeightsAsync(textures, options, progress, cancellationToken).ConfigureAwait(false);
+            await GenerateNormalsAndHeightsAsync(textures, options, progress, cancellationToken).ConfigureAwait(false);
 
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -204,9 +251,11 @@ public sealed class ResourcePackConverter
     private static void ExtractWithProgress(
         string inputZipPath,
         string extracted,
+        AutoPbrOptions options,
         IProgress<ConversionProgress>? progress,
         CancellationToken cancellationToken)
     {
+        SetThreadName("AutoPBR.Extract");
         List<string> entryNames;
         using (var archive = ZipFile.OpenRead(inputZipPath))
             entryNames = archive.Entries.Where(e => !string.IsNullOrEmpty(e.Name)).Select(e => e.FullName).ToList();
@@ -230,7 +279,7 @@ public sealed class ResourcePackConverter
             }
         }
 
-        var degree = Math.Min(ZipParallelism, entryNames.Count);
+        var degree = Math.Min(GetZipParallelism(options), entryNames.Count);
         if (degree <= 1)
         {
             using var archive = ZipFile.OpenRead(inputZipPath);
@@ -262,6 +311,7 @@ public sealed class ResourcePackConverter
 
         Parallel.ForEach(partitions, new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = cancellationToken }, partition =>
         {
+            SetThreadName("AutoPBR.Extract");
             using var archive = ZipFile.OpenRead(inputZipPath);
             foreach (var fullName in partition)
             {
@@ -315,6 +365,7 @@ public sealed class ResourcePackConverter
         IProgress<ConversionProgress>? progress,
         CancellationToken cancellationToken)
     {
+        SetThreadName("AutoPBR.PackMain");
         var files = new List<string>();
 
         // Pack metadata: pack.png (when present), pack.mcmeta (always written), license (when present)
@@ -388,6 +439,8 @@ public sealed class ResourcePackConverter
 
                         if (options.IgnoreTextureKeys.Contains(relativePathNoExt))
                             continue;
+                        if (options.FoliageMode == "Ignore All" && IsPathUnderPlantOrPlants(relativePathNoExt))
+                            continue;
 
                         results.Add(new TextureWorkItem
                         {
@@ -396,7 +449,8 @@ public sealed class ResourcePackConverter
                             Name = name,
                             Extension = ext,
                             RelativeKey = relativePathNoExt,
-                            SpecularOnly = specularOnly
+                            SpecularOnly = specularOnly,
+                            IsPlantForNoHeight = IsPlantForNoHeight(relativePathNoExt, name, options.FoliageMode)
                         });
                     }
                 }
@@ -437,8 +491,50 @@ public sealed class ResourcePackConverter
                         Name = name,
                         Extension = ext,
                         RelativeKey = relativePathNoExt,
-                        SpecularOnly = false
+                        SpecularOnly = false,
+                        IsPlantForNoHeight = false
                     });
+                }
+            }
+
+            // OptiFine plant/plants: only include when not Ignore All; No Height => no height in normal alpha
+            if (options.FoliageMode != "Ignore All")
+            {
+                foreach (var plantFolder in new[] { "plant", "plants" })
+                {
+                    var plantRoot = Path.Combine(extractedPackRoot, "assets", namespaceName, "optifine", plantFolder);
+                    if (!Directory.Exists(plantRoot))
+                        continue;
+                    foreach (var file in Directory.EnumerateFiles(plantRoot, "*.png", SearchOption.AllDirectories))
+                    {
+                        var fileName = Path.GetFileName(file);
+                        if (fileName.Contains("mcmeta", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        var name = Path.GetFileNameWithoutExtension(file);
+                        if (name.EndsWith("_n", StringComparison.OrdinalIgnoreCase) ||
+                            name.EndsWith("_s", StringComparison.OrdinalIgnoreCase) ||
+                            name.EndsWith("_e", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        var ext = Path.GetExtension(file);
+                        var directoryPath = Path.GetDirectoryName(file) ?? plantRoot;
+                        var relativeToNamespace = Path.GetRelativePath(
+                            Path.Combine(extractedPackRoot, "assets", namespaceName),
+                            Path.Combine(directoryPath, name)
+                        ).Replace('/', '\\');
+                        var relativePathNoExt = "\\" + namespaceName + "\\" + relativeToNamespace;
+                        if (options.IgnoreTextureKeys.Contains(relativePathNoExt))
+                            continue;
+                        results.Add(new TextureWorkItem
+                        {
+                            FullPath = file,
+                            DirectoryPath = directoryPath,
+                            Name = name,
+                            Extension = ext,
+                            RelativeKey = relativePathNoExt,
+                            SpecularOnly = false,
+                            IsPlantForNoHeight = options.FoliageMode == "No Height"
+                        });
+                    }
                 }
             }
         }
@@ -465,8 +561,10 @@ public sealed class ResourcePackConverter
             var de2000 = new CIEDE2000ColorDifference();
             var completed = 0;
 
-            Parallel.ForEach(textures, new ParallelOptions { MaxDegreeOfParallelism = ConversionParallelism, CancellationToken = ct }, t =>
+            Parallel.ForEach(textures, new ParallelOptions { MaxDegreeOfParallelism = GetConversionParallelism(options), CancellationToken = ct }, t =>
             {
+                SetThreadName("AutoPBR.Specular");
+                ct.ThrowIfCancellationRequested();
                 var fast = t.Overrides.FastSpecular ?? options.FastSpecular;
                 var rules = t.Overrides.CustomSpecularRules
                             ?? (options.SpecularData!.ByTextureName.TryGetValue(t.Name, out var list) ? list : null)
@@ -476,6 +574,31 @@ public sealed class ResourcePackConverter
                 using var cropped = CropToSquare(img, out var size);
                 var width = size;
                 var height = size;
+
+                // Ignore All: skip grass textures with significant transparency in diffuse
+                if (options.FoliageMode == "Ignore All" &&
+                    (t.Name.Contains("grass", StringComparison.OrdinalIgnoreCase) || t.RelativeKey.Contains("grass", StringComparison.OrdinalIgnoreCase)))
+                {
+                    if (!cropped.DangerousTryGetSinglePixelMemory(out var alphaCheckMem))
+                        throw new InvalidOperationException("Expected contiguous pixel memory.");
+                    var alphaSpan = alphaCheckMem.Span;
+                    long sumA = 0;
+                    int lowAlphaCount = 0;
+                    var pixelCount = width * height;
+                    for (var i = 0; i < pixelCount; i++)
+                    {
+                        var a = alphaSpan[i].A;
+                        sumA += a;
+                        if (a < 128) lowAlphaCount++;
+                    }
+                    var meanAlpha = (int)(sumA / pixelCount);
+                    if (meanAlpha < 200 || lowAlphaCount > 0.3 * pixelCount)
+                    {
+                        var done = Interlocked.Increment(ref completed);
+                        progress?.Report(new ConversionProgress(stage, done, total, t.Name));
+                        return;
+                    }
+                }
 
                 List<(SpecularRule Rule, LabColor Lab)>? rulesLab = null;
                 if (!fast && rules is not null)
@@ -637,7 +760,7 @@ public sealed class ResourcePackConverter
         return cR * cR * (2 + uR / 256.0) + cG * cG * 4 + cB * cB * (2 + (255 - uR) / 256.0);
     }
 
-    private static Task GenerateNormalsAsync(
+    private static Task GenerateNormalsAndHeightsAsync(
         IReadOnlyList<TextureWorkItem> textures,
         AutoPbrOptions options,
         IProgress<ConversionProgress>? progress,
@@ -650,40 +773,9 @@ public sealed class ResourcePackConverter
             var total = toProcess.Count;
             var completed = 0;
 
-            Parallel.ForEach(toProcess, new ParallelOptions { MaxDegreeOfParallelism = ConversionParallelism, CancellationToken = ct }, t =>
+            Parallel.ForEach(toProcess, new ParallelOptions { MaxDegreeOfParallelism = GetConversionParallelism(options), CancellationToken = ct }, t =>
             {
-                using var img = Image.Load<Rgba32>(t.DiffusePath);
-                using var cropped = CropToSquare(img, out var size);
-                var width = size;
-                var height = size;
-
-                var normalIntensity = t.Overrides.NormalIntensity ?? options.NormalIntensity;
-                var normal = GenerateNormalMap(cropped, width, height, normalIntensity, t.Overrides.InvertNormalRed, t.Overrides.InvertNormalGreen);
-
-                // Write normal RGB only here; height/alpha is applied in GenerateHeightsAsync.
-                normal.Save(t.NormalPath);
-
-                var n = Interlocked.Increment(ref completed);
-                progress?.Report(new ConversionProgress(stage, n, total, t.Name));
-            });
-        }, ct);
-    }
-
-    private static Task GenerateHeightsAsync(
-        IReadOnlyList<TextureWorkItem> textures,
-        AutoPbrOptions options,
-        IProgress<ConversionProgress>? progress,
-        CancellationToken ct)
-    {
-        return Task.Run(() =>
-        {
-            var stage = ConversionStage.GeneratingHeights;
-            var toProcess = textures.Where(t => !t.SpecularOnly).ToList();
-            var total = toProcess.Count;
-            var completed = 0;
-
-            Parallel.ForEach(toProcess, new ParallelOptions { MaxDegreeOfParallelism = ConversionParallelism, CancellationToken = ct }, t =>
-            {
+                SetThreadName("AutoPBR.Normals");
                 ct.ThrowIfCancellationRequested();
 
                 using var diffuseImg = Image.Load<Rgba32>(t.DiffusePath);
@@ -691,31 +783,42 @@ public sealed class ResourcePackConverter
                 var width = size;
                 var height = size;
 
+                var normalIntensity = t.Overrides.NormalIntensity ?? options.NormalIntensity;
+                using var normal = GenerateNormalMap(croppedDiffuse, width, height, normalIntensity, t.Overrides.InvertNormalRed, t.Overrides.InvertNormalGreen);
+
                 var heightIntensity = t.Overrides.HeightIntensity ?? options.HeightIntensity;
                 var brightness = t.Overrides.HeightBrightness ?? AutoPbrDefaults.DefaultHeightBrightness;
                 var heightMap = GenerateHeightMap(croppedDiffuse, width, height, heightIntensity, brightness, t.Overrides.InvertHeight);
 
-                // Apply height data into the normal map alpha channel only (no dedicated _h file).
-                using var normalImg = File.Exists(t.NormalPath)
-                    ? Image.Load<Rgba32>(t.NormalPath)
-                    : new Image<Rgba32>(width, height, new Rgba32(128, 128, 255, 255));
-                using var croppedNormal = CropToSquare(normalImg, out _);
+                // No Height mode: skip height for plants (and for grass only when significant transparency, so grass blocks keep height).
+                var skipHeightInAlpha = t.IsPlantForNoHeight;
+                if (!skipHeightInAlpha && options.FoliageMode == "No Height" &&
+                    (t.Name.Contains("grass", StringComparison.OrdinalIgnoreCase) || t.RelativeKey.Contains("grass", StringComparison.OrdinalIgnoreCase)))
+                    skipHeightInAlpha = HasSignificantTransparency(croppedDiffuse);
 
-                croppedNormal.ProcessPixelRows(acc =>
+                // Apply height data into the normal map alpha channel only (no dedicated _h file).
+                normal.ProcessPixelRows(acc =>
                 {
                     for (var y = 0; y < heightMap.Height; y++)
                     {
                         var row = acc.GetRowSpan(y);
                         for (var x = 0; x < heightMap.Width; x++)
                         {
-                            // White = highest (255), black = lowest (0); clamp 0 -> 1 to avoid problematic fully-black alpha
-                            var a = heightMap[x, y];
-                            row[x].A = a == 0 ? (byte)1 : a;
+                            byte a;
+                            if (skipHeightInAlpha)
+                                a = 255;
+                            else
+                            {
+                                // White = highest (255), black = lowest (0); clamp 0 -> 1 to avoid problematic fully-black alpha
+                                var h = heightMap[x, y];
+                                a = h == 0 ? (byte)1 : h;
+                            }
+                            row[x].A = a;
                         }
                     }
                 });
 
-                croppedNormal.Save(t.NormalPath);
+                normal.Save(t.NormalPath);
 
                 var n = Interlocked.Increment(ref completed);
                 progress?.Report(new ConversionProgress(stage, n, total, t.Name));

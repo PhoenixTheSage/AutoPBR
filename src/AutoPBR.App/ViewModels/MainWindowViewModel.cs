@@ -16,6 +16,11 @@ public partial class MainWindowViewModel : ViewModelBase
     private SpecularData? _specularData;
     private readonly UserSettings _settings;
     private bool _loadingSettings;
+    private DateTime _lastLogWriteUtc = DateTime.MinValue;
+    private const int LogWriteIntervalMs = 100;
+    private DateTime _conversionStartUtc;
+    private ConversionStage? _currentStage;
+    private DateTime _stageStartUtc;
 
     [ObservableProperty] private string? packPath;
     [ObservableProperty] private string? outputDirectory;
@@ -23,11 +28,14 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private double normalIntensity = AutoPbrDefaults.DefaultNormalIntensity;
     [ObservableProperty] private double heightIntensity = AutoPbrDefaults.DefaultHeightIntensity;
     [ObservableProperty] private bool fastSpecular;
-    [ObservableProperty] private bool ignorePlants;
+    [ObservableProperty] private string foliageMode = "Ignore All";
     [ObservableProperty] private bool experimentalExtractor;
     [ObservableProperty] private double smoothnessScale = AutoPbrDefaults.DefaultSmoothnessScale;
     [ObservableProperty] private double metallicBoost = AutoPbrDefaults.DefaultMetallicBoost;
     [ObservableProperty] private double porosityBias = AutoPbrDefaults.DefaultPorosityBias;
+    [ObservableProperty] private int maxThreads; // 0 = auto
+    [ObservableProperty] private int maxThreadsMax = Math.Max(1, Environment.ProcessorCount);
+    [ObservableProperty] private string? tempDirectory;
     [ObservableProperty] private bool processBlocks = true;
     [ObservableProperty] private bool processItems = true;
     [ObservableProperty] private bool processArmor = true;
@@ -69,11 +77,13 @@ public partial class MainWindowViewModel : ViewModelBase
             NormalIntensity = _settings.NormalIntensity;
             HeightIntensity = _settings.HeightIntensity;
             FastSpecular = _settings.FastSpecular;
-            IgnorePlants = _settings.IgnorePlants;
+            FoliageMode = string.IsNullOrWhiteSpace(_settings.FoliageMode) ? "Ignore All" : _settings.FoliageMode;
             ExperimentalExtractor = _settings.ExperimentalExtractor;
             SmoothnessScale = _settings.SmoothnessScale;
             MetallicBoost = _settings.MetallicBoost;
             PorosityBias = _settings.PorosityBias;
+            MaxThreads = _settings.MaxThreads;
+            TempDirectory = _settings.TempDirectory;
             ColorScheme = string.IsNullOrWhiteSpace(_settings.ColorScheme) ? "Dark" : _settings.ColorScheme;
             ProcessBlocks = _settings.ProcessBlocks;
             ProcessItems = _settings.ProcessItems;
@@ -114,6 +124,8 @@ public partial class MainWindowViewModel : ViewModelBase
     partial void OnSmoothnessScaleChanged(double value) => SaveSettings();
     partial void OnMetallicBoostChanged(double value) => SaveSettings();
     partial void OnPorosityBiasChanged(double value) => SaveSettings();
+    partial void OnMaxThreadsChanged(int value) => SaveSettings();
+    partial void OnTempDirectoryChanged(string? value) => SaveSettings();
     partial void OnTextureFilterChanged(string value) => ApplyTextureFilter();
     partial void OnColorSchemeChanged(string value)
     {
@@ -165,11 +177,13 @@ public partial class MainWindowViewModel : ViewModelBase
         _settings.NormalIntensity = NormalIntensity;
         _settings.HeightIntensity = HeightIntensity;
         _settings.FastSpecular = FastSpecular;
-        _settings.IgnorePlants = IgnorePlants;
+        _settings.FoliageMode = FoliageMode;
         _settings.ExperimentalExtractor = ExperimentalExtractor;
         _settings.SmoothnessScale = SmoothnessScale;
         _settings.MetallicBoost = MetallicBoost;
         _settings.PorosityBias = PorosityBias;
+        _settings.MaxThreads = MaxThreads;
+        _settings.TempDirectory = TempDirectory;
         _settings.ColorScheme = ColorScheme;
         _settings.ProcessBlocks = ProcessBlocks;
         _settings.ProcessItems = ProcessItems;
@@ -316,7 +330,7 @@ public partial class MainWindowViewModel : ViewModelBase
                 foreach (var k in keys)
                     AllTextureKeys.Add(new TextureKeyItem(k, keepIgnored.Contains(k)));
 
-                if (IgnorePlants)
+                if (FoliageMode == "Ignore All")
                     MarkPlantsIgnored();
 
                 ApplyTextureFilter();
@@ -349,11 +363,10 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private bool CanLoadTextures() => !IsConverting && !IsBusy && IsPackPath(PackPath) && File.Exists(PackPath);
 
-    partial void OnIgnorePlantsChanged(bool value)
+    partial void OnFoliageModeChanged(string value)
     {
-        if (value)
+        if (value == "Ignore All")
             MarkPlantsIgnored();
-
         SaveSettings();
     }
 
@@ -379,6 +392,10 @@ public partial class MainWindowViewModel : ViewModelBase
         IsBusy = true;
         ProgressValue = 0;
         ProgressMax = 1;
+        _lastLogWriteUtc = DateTime.MinValue;
+        _conversionStartUtc = DateTime.UtcNow;
+        _currentStage = null;
+        CancelCommand.NotifyCanExecuteChanged();
 
         _cts = new CancellationTokenSource();
 
@@ -393,7 +410,7 @@ public partial class MainWindowViewModel : ViewModelBase
                 if (item.IsIgnored)
                     ignore.Add(item.Key);
             }
-            if (IgnorePlants)
+            if (FoliageMode == "Ignore All")
             {
                 foreach (var p in AutoPbrDefaults.PlantTextureKeys)
                     ignore.Add(p);
@@ -408,11 +425,14 @@ public partial class MainWindowViewModel : ViewModelBase
                 SmoothnessScale = (float)SmoothnessScale,
                 MetallicBoost = (float)MetallicBoost,
                 PorosityBias = (int)Math.Round(PorosityBias),
+                MaxThreads = MaxThreads,
+                TempDirectory = string.IsNullOrWhiteSpace(TempDirectory) ? null : TempDirectory,
                 ProcessBlocks = ProcessBlocks,
                 ProcessItems = ProcessItems,
                 ProcessArmor = ProcessArmor,
                 ProcessParticles = ProcessParticles,
                 IgnoreTextureKeys = ignore,
+                FoliageMode = FoliageMode,
                 SpecularData = _specularData
             };
 
@@ -421,6 +441,24 @@ public partial class MainWindowViewModel : ViewModelBase
             {
                 Dispatcher.UIThread.Post(() =>
                 {
+                    var now = DateTime.UtcNow;
+                    if (_currentStage.HasValue && _currentStage.Value != p.Stage)
+                    {
+                        var elapsed = (now - _stageStartUtc).TotalSeconds;
+                        var stageName = StageDisplayName(_currentStage.Value);
+                        LogLines.Add($"{stageName} completed in {elapsed:F1} s");
+                    }
+                    if (p.Stage != ConversionStage.Done)
+                    {
+                        _currentStage = p.Stage;
+                        _stageStartUtc = now;
+                    }
+                    else
+                    {
+                        var totalSec = (now - _conversionStartUtc).TotalSeconds;
+                        LogLines.Add($"Total time: {totalSec:F1} s");
+                    }
+
                     ProgressMax = Math.Max(1, p.Total);
                     ProgressValue = p.Completed;
                     if (p.Stage == ConversionStage.Extracting && p.Completed == 0 && p.Total > 0)
@@ -429,14 +467,17 @@ public partial class MainWindowViewModel : ViewModelBase
                         LogLines.Add("Packing...");
                     if (!string.IsNullOrEmpty(p.CurrentTextureName))
                     {
-                        var stageLabel = p.Stage switch
+                        if ((now - _lastLogWriteUtc).TotalMilliseconds >= LogWriteIntervalMs)
                         {
-                            ConversionStage.GeneratingSpecular => "Specular",
-                            ConversionStage.GeneratingNormals => "Normals",
-                            ConversionStage.GeneratingHeights => "Heights",
-                            _ => p.Stage.ToString()
-                        };
-                        LogLines.Add($"{stageLabel}: {p.CurrentTextureName}");
+                            _lastLogWriteUtc = now;
+                            var stageLabel = p.Stage switch
+                            {
+                                ConversionStage.GeneratingSpecular => "Specular",
+                                ConversionStage.GeneratingNormals => "Normals",
+                                _ => p.Stage.ToString()
+                            };
+                            LogLines.Add($"{stageLabel}: {p.CurrentTextureName}");
+                        }
                     }
                     StatusText = p.Stage switch
                     {
@@ -444,7 +485,6 @@ public partial class MainWindowViewModel : ViewModelBase
                         ConversionStage.ScanningTextures => "Scanning textures...",
                         ConversionStage.GeneratingSpecular => $"Specular: {p.CurrentTextureName}",
                         ConversionStage.GeneratingNormals => $"Normals: {p.CurrentTextureName}",
-                        ConversionStage.GeneratingHeights => $"Heights: {p.CurrentTextureName}",
                         ConversionStage.Packing => p.Total > 0 ? $"Packing output zip... ({p.Completed}/{p.Total})" : "Packing output zip...",
                         ConversionStage.Done => "Done.",
                         _ => p.Stage.ToString()
@@ -462,11 +502,15 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             StatusText = "Cancelled.";
             LogLines.Add("Cancelled.");
+            var totalSec = (DateTime.UtcNow - _conversionStartUtc).TotalSeconds;
+            LogLines.Add($"Total time: {totalSec:F1} s");
         }
         catch (Exception ex)
         {
             StatusText = "Conversion failed.";
             LogLines.Add(ex.ToString());
+            var totalSec = (DateTime.UtcNow - _conversionStartUtc).TotalSeconds;
+            LogLines.Add($"Total time: {totalSec:F1} s");
         }
         finally
         {
@@ -475,6 +519,7 @@ public partial class MainWindowViewModel : ViewModelBase
             IsConverting = false;
             IsBusy = false;
             ConvertCommand.NotifyCanExecuteChanged();
+            CancelCommand.NotifyCanExecuteChanged();
             LoadTexturesCommand.NotifyCanExecuteChanged();
         }
     }
@@ -493,4 +538,14 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     private bool CanCancel() => IsConverting;
+
+    private static string StageDisplayName(ConversionStage stage) => stage switch
+    {
+        ConversionStage.Extracting => "Extracting",
+        ConversionStage.ScanningTextures => "Scanning",
+        ConversionStage.GeneratingSpecular => "Specular",
+        ConversionStage.GeneratingNormals => "Normals",
+        ConversionStage.Packing => "Packing",
+        _ => stage.ToString()
+    };
 }
