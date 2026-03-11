@@ -454,3 +454,7 @@ src/AutoPBR.Cli/obj/AutoPBR.Cli.csproj.nuget.dgspec.json
 src/AutoPBR.App/obj/project.nuget.cache
 src/AutoPBR.App/obj/project.assets.json
 src/AutoPBR.App/obj/AutoPBR.App.csproj.nuget.dgspec.json
+src/AutoPBR.Core/obj/project.nuget.cache
+src/AutoPBR.Core/obj/project.assets.json
+src/AutoPBR.Core/obj/AutoPBR.Core.csproj.nuget.g.props
+src/AutoPBR.Core/obj/AutoPBR.Core.csproj.nuget.dgspec.json
