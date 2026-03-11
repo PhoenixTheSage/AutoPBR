@@ -21,7 +21,10 @@ LaChips PBRify used PySimpleGUI (now paid for some uses). This project is a **.N
 
 ### Requirements
 
-- .NET SDK **8.0+**
+- **.NET SDK 8.0+** (to build) and **.NET Runtime 8.0** (to run).
+- **DeepBump GPU (optional):** The "Normals from DeepBump ML" option uses ONNX Runtime with the **CUDA 13** execution provider. The build overlays the [ONNX Runtime CUDA 13 build](https://github.com/microsoft/onnxruntime/releases/tag/v1.24.3). Required **CUDA 13** and **cuDNN 9** runtime DLLs are bundled in **`src/AutoPBR.Core/Data/native/`** and copied to the App/CLI output `runtimes\win-x64\native`. See that folder’s **README.md** for which files to place there (from [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) and [cuDNN](https://developer.nvidia.com/cudnn)); redistribution is allowed under NVIDIA’s licenses when incorporated into your app. If those DLLs are not present, the app falls back to **CPU** for the DeepBump model.
+
+  **NOTE:** If you have an installation failure with CUDA, even with latest drivers, it's necessary to do a clean install of your drivers using DDU. Old installs will trip up the CUDA installer into thinking you are incompatible. You should also make sure to install the latest Visual Studio C++ 14 redistributables. These are available independantly and through the VS Community installer.
 
 ---
 
@@ -67,7 +70,9 @@ The main window lets you:
   - **Porosity bias** (LabPBR B)
 - Toggle:
   - **Fast specular** (approximate color distance)
-  - **Ignore plants**
+  - **Foliage:** Ignore All / No Height / Convert All
+  - **Height from normals (Frankot-Chellappa)** – optional: derive height from the generated normal map via the Frankot-Chellappa algorithm (see [Credits](#credits)) instead of from diffuse luminance
+  - **Normals from DeepBump ML (deepbump256.onnx)** – optional: generate normals from the diffuse using the [DeepBump](https://github.com/HugoTini/DeepBump) ONNX model via **ONNX Runtime**. Place `deepbump256.onnx` (from the DeepBump repo) in the app’s `Data` folder (next to `textures_data.json`). When enabled, this replaces the built-in Sobel/VC normal generation.
   - **Experimental parallel extraction** (custom parallel zip reader)
 - Choose which texture groups to process:
   - **Blocks**, **Items**, **Armor (entity)**, **Particles (specular only)**
@@ -95,9 +100,16 @@ The UI names the output `.zip` after the input pack, with a `_PBR` suffix (e.g. 
 - **Normal and height generation**:
   - Greyscale pre-processing uses a light unsharp mask to better match perceived “form”.
   - Edges are detected with a **VC-filter-inspired multi-orientation gradient** to reduce Sobel blind spots while preserving normal direction.
-  - Height is generated from diffuse brightness and written into the **alpha channel of the normal map**.
+  - Normals are generated from the diffuse (Sobel + VC-filter) or optionally from the **DeepBump ONNX model** (color→normals) when "Normals from DeepBump ML" is enabled and `Data/deepbump256.onnx` is present.
+  - Height is generated from diffuse brightness (or optionally from the normal map via **Frankot-Chellappa** when "Height from normals" is enabled) and written into the **alpha channel of the normal map**.
 - **File discovery**:
   - Scans all asset namespaces under `assets/<namespace>/textures` (vanilla, OptiFine, mod IDs, etc.).
   - Also processes **OptiFine-style CTM** textures under `assets/<namespace>/optifine/ctm/**`.
   - Supports blocks, items, armor/entity textures, and particle textures (specular-only).
+
+---
+
+### Credits
+
+- **DeepBump** ([HugoTini/DeepBump](https://github.com/HugoTini/DeepBump)) – optional **normals** from diffuse use the `deepbump256.onnx` model (color→normals) via **ONNX Runtime**. Optional **height from normals** uses the **Frankot-Chellappa** algorithm (Fourier-domain integration) as in the DeepBump ecosystem. **NormalHeight** ([HugoTini/NormalHeight](https://github.com/HugoTini/NormalHeight)) uses the same algorithm. DeepBump and NormalHeight are licensed under **GPL-3.0**. Attribution and a link to the GPL-3.0 are in `src/AutoPBR.Core/HeightFromNormals/LICENSE-DeepBump.txt`.
 

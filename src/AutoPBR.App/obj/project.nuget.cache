@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "qKCdbmEF0B4=",
+  "dgSpecHash": "QzNjOYQze7I=",
   "success": true,
   "projectFilePath": "Z:\\Cursor Projects\\AutoPBR\\src\\AutoPBR.App\\AutoPBR.App.csproj",
   "expectedPackageFiles": [
@@ -26,7 +26,12 @@
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\harfbuzzsharp.nativeassets.macos\\8.3.1.1\\harfbuzzsharp.nativeassets.macos.8.3.1.1.nupkg.sha512",
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\harfbuzzsharp.nativeassets.webassembly\\8.3.1.1\\harfbuzzsharp.nativeassets.webassembly.8.3.1.1.nupkg.sha512",
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\harfbuzzsharp.nativeassets.win32\\8.3.1.1\\harfbuzzsharp.nativeassets.win32.8.3.1.1.nupkg.sha512",
+    "C:\\Users\\John_Phoenix\\.nuget\\packages\\mathnet.numerics\\5.0.0\\mathnet.numerics.5.0.0.nupkg.sha512",
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\microcom.runtime\\0.11.0\\microcom.runtime.0.11.0.nupkg.sha512",
+    "C:\\Users\\John_Phoenix\\.nuget\\packages\\microsoft.ml.onnxruntime.gpu\\1.24.3\\microsoft.ml.onnxruntime.gpu.1.24.3.nupkg.sha512",
+    "C:\\Users\\John_Phoenix\\.nuget\\packages\\microsoft.ml.onnxruntime.gpu.linux\\1.24.3\\microsoft.ml.onnxruntime.gpu.linux.1.24.3.nupkg.sha512",
+    "C:\\Users\\John_Phoenix\\.nuget\\packages\\microsoft.ml.onnxruntime.gpu.windows\\1.24.3\\microsoft.ml.onnxruntime.gpu.windows.1.24.3.nupkg.sha512",
+    "C:\\Users\\John_Phoenix\\.nuget\\packages\\microsoft.ml.onnxruntime.managed\\1.24.3\\microsoft.ml.onnxruntime.managed.1.24.3.nupkg.sha512",
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\sixlabors.imagesharp\\3.1.12\\sixlabors.imagesharp.3.1.12.nupkg.sha512",
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\skiasharp\\2.88.9\\skiasharp.2.88.9.nupkg.sha512",
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\skiasharp.nativeassets.linux\\2.88.9\\skiasharp.nativeassets.linux.2.88.9.nupkg.sha512",
@@ -35,6 +40,8 @@
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\skiasharp.nativeassets.win32\\2.88.9\\skiasharp.nativeassets.win32.2.88.9.nupkg.sha512",
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\system.io.hashing\\9.0.0\\system.io.hashing.9.0.0.nupkg.sha512",
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\system.io.pipelines\\8.0.0\\system.io.pipelines.8.0.0.nupkg.sha512",
+    "C:\\Users\\John_Phoenix\\.nuget\\packages\\system.memory\\4.5.5\\system.memory.4.5.5.nupkg.sha512",
+    "C:\\Users\\John_Phoenix\\.nuget\\packages\\system.numerics.tensors\\9.0.0\\system.numerics.tensors.9.0.0.nupkg.sha512",
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\tmds.dbus.protocol\\0.21.2\\tmds.dbus.protocol.0.21.2.nupkg.sha512"
   ],
   "logs": []

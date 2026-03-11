@@ -12,6 +12,39 @@
     <Folder Include="Models\" />
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Update="Lang\Resources.resx">
+      <Generator></Generator>
+      <LastGenOutput></LastGenOutput>
+    </EmbeddedResource>
+    <EmbeddedResource Update="Lang\Resources.de.resx">
+      <Generator></Generator>
+    </EmbeddedResource>
+    <EmbeddedResource Update="Lang\Resources.es.resx">
+      <Generator></Generator>
+    </EmbeddedResource>
+    <EmbeddedResource Update="Lang\Resources.fr.resx">
+      <Generator></Generator>
+    </EmbeddedResource>
+    <EmbeddedResource Update="Lang\Resources.pt.resx">
+      <Generator></Generator>
+    </EmbeddedResource>
+    <EmbeddedResource Update="Lang\Resources.ru.resx">
+      <Generator></Generator>
+    </EmbeddedResource>
+    <EmbeddedResource Update="Lang\Resources.ja.resx">
+      <Generator></Generator>
+    </EmbeddedResource>
+    <EmbeddedResource Update="Lang\Resources.zh-Hans.resx">
+      <Generator></Generator>
+    </EmbeddedResource>
+    <EmbeddedResource Update="Lang\Resources.hi.resx">
+      <Generator></Generator>
+    </EmbeddedResource>
+    <EmbeddedResource Update="Lang\Resources.ar.resx">
+      <Generator></Generator>
+    </EmbeddedResource>
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.12" />
@@ -34,5 +67,49 @@
     <Content Include="..\AutoPBR.Core\Data\textures_data.json" Link="Data\textures_data.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="..\AutoPBR.Core\Data\deepbump256.onnx" Link="Data\deepbump256.onnx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\AutoPBR.Core\Data\upscale256.onnx" Link="Data\upscale256.onnx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- CUDA/cuDNN runtime DLLs from Core Data; copied to runtimes\win-x64\native for ONNX GPU -->
+    <Content Include="..\AutoPBR.Core\Data\native\*.dll" Link="runtimes\win-x64\native\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <!-- Move satellite assemblies (de, es, fr, ...) into lang\ so build output is tidy. -->
+  <Target Name="MoveSatellitesToLang" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+    <ItemGroup>
+      <_SatelliteCulture Include="de;es;fr;pt;ru;ja;zh-Hans;hi;ar" />
+    </ItemGroup>
+    <MakeDir Directories="$(OutputPath)lang" />
+    <!-- Remove existing destination so move does not fail with Access denied (e.g. when app is running). -->
+    <RemoveDir Directories="$(OutputPath)lang\%(_SatelliteCulture.Identity)" Condition="Exists('$(OutputPath)lang\%(_SatelliteCulture.Identity)')" />
+    <Exec Command="move /Y &quot;$(OutputPath)%(_SatelliteCulture.Identity)&quot; &quot;$(OutputPath)lang\%(_SatelliteCulture.Identity)&quot;" Condition="Exists('$(OutputPath)%(_SatelliteCulture.Identity)')" />
+  </Target>
+
+  <!-- Overlay ONNX Runtime CUDA 13 native binaries from GitHub release (replaces default CUDA 12 from NuGet). -->
+  <PropertyGroup>
+    <OnnxRuntimeCuda13ZipUrl>https://github.com/microsoft/onnxruntime/releases/download/v1.24.3/onnxruntime-win-x64-gpu_cuda13-1.24.3.zip</OnnxRuntimeCuda13ZipUrl>
+    <OnnxRuntimeCuda13ExtractDir>$(IntermediateOutputPath)onnxruntime_cuda13</OnnxRuntimeCuda13ExtractDir>
+  </PropertyGroup>
+  <!-- Run after build; overlay on Windows when native runtimes exist (use OutDir for correct output path). -->
+  <Target Name="OverlayOnnxRuntimeCuda13" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+    <PropertyGroup>
+      <_OnnxNativeDir>$([System.IO.Path]::Combine('$(OutDir)','runtimes','win-x64','native'))</_OnnxNativeDir>
+    </PropertyGroup>
+    <Message Importance="high" Text="Checking for ONNX Runtime native dir: $(_OnnxNativeDir)" />
+    <PropertyGroup Condition="Exists('$(_OnnxNativeDir)')">
+      <_DoCuda13Overlay>true</_DoCuda13Overlay>
+    </PropertyGroup>
+    <Message Importance="high" Text="Overlaying ONNX Runtime with CUDA 13 build from GitHub releases..." Condition="'$(_DoCuda13Overlay)' == 'true'" />
+    <DownloadFile SourceUrl="$(OnnxRuntimeCuda13ZipUrl)" DestinationFolder="$(IntermediateOutputPath)" SkipUnchangedFiles="true" Condition="'$(_DoCuda13Overlay)' == 'true'" />
+    <Message Importance="high" Text="Extracting CUDA 13 native binaries..." Condition="'$(_DoCuda13Overlay)' == 'true'" />
+    <Exec Command="powershell -NoProfile -Command &quot;Expand-Archive -Path '$(IntermediateOutputPath)onnxruntime-win-x64-gpu_cuda13-1.24.3.zip' -DestinationPath '$(OnnxRuntimeCuda13ExtractDir)' -Force&quot;" Condition="'$(_DoCuda13Overlay)' == 'true'" />
+    <ItemGroup Condition="'$(_DoCuda13Overlay)' == 'true'">
+      <_Cuda13Dlls Include="$(OnnxRuntimeCuda13ExtractDir)\**\*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_Cuda13Dlls)" DestinationFolder="$(_OnnxNativeDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true" Condition="'$(_DoCuda13Overlay)' == 'true'" />
+    <Message Importance="high" Text="ONNX Runtime CUDA 13 native binaries overlay complete." Condition="'$(_DoCuda13Overlay)' == 'true'" />
+  </Target>
 </Project>

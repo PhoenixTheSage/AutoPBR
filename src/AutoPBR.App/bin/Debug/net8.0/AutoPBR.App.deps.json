@@ -18,11 +18,39 @@
         },
         "runtime": {
           "AutoPBR.App.dll": {}
+        },
+        "resources": {
+          "ar/AutoPBR.App.resources.dll": {
+            "locale": "ar"
+          },
+          "de/AutoPBR.App.resources.dll": {
+            "locale": "de"
+          },
+          "es/AutoPBR.App.resources.dll": {
+            "locale": "es"
+          },
+          "fr/AutoPBR.App.resources.dll": {
+            "locale": "fr"
+          },
+          "hi/AutoPBR.App.resources.dll": {
+            "locale": "hi"
+          },
+          "ja/AutoPBR.App.resources.dll": {
+            "locale": "ja"
+          },
+          "pt/AutoPBR.App.resources.dll": {
+            "locale": "pt"
+          },
+          "ru/AutoPBR.App.resources.dll": {
+            "locale": "ru"
+          },
+          "zh-Hans/AutoPBR.App.resources.dll": {
+            "locale": "zh-Hans"
+          }
         }
       },
       "Avalonia/11.3.12": {
         "dependencies": {
-          "Avalonia.BuildServices": "11.3.2",
           "Avalonia.Remote.Protocol": "11.3.12",
           "MicroCom.Runtime": "0.11.0"
         },
@@ -92,7 +120,6 @@
           }
         }
       },
-      "Avalonia.BuildServices/11.3.2": {},
       "Avalonia.Controls.ColorPicker/11.3.12": {
         "dependencies": {
           "Avalonia": "11.3.12",
@@ -187,10 +214,8 @@
           "Avalonia": "11.3.12",
           "HarfBuzzSharp": "8.3.1.1",
           "HarfBuzzSharp.NativeAssets.Linux": "8.3.1.1",
-          "HarfBuzzSharp.NativeAssets.WebAssembly": "8.3.1.1",
           "SkiaSharp": "2.88.9",
-          "SkiaSharp.NativeAssets.Linux": "2.88.9",
-          "SkiaSharp.NativeAssets.WebAssembly": "2.88.9"
+          "SkiaSharp.NativeAssets.Linux": "2.88.9"
         },
         "runtime": {
           "lib/net8.0/Avalonia.Skia.dll": {
@@ -346,7 +371,6 @@
           }
         }
       },
-      "HarfBuzzSharp.NativeAssets.WebAssembly/8.3.1.1": {},
       "HarfBuzzSharp.NativeAssets.Win32/8.3.1.1": {
         "runtimeTargets": {
           "runtimes/win-arm64/native/libHarfBuzzSharp.dll": {
@@ -366,11 +390,111 @@
           }
         }
       },
+      "MathNet.Numerics/5.0.0": {
+        "runtime": {
+          "lib/net6.0/MathNet.Numerics.dll": {
+            "assemblyVersion": "5.0.0.0",
+            "fileVersion": "5.0.0.0"
+          }
+        }
+      },
       "MicroCom.Runtime/0.11.0": {
         "runtime": {
           "lib/net5.0/MicroCom.Runtime.dll": {
             "assemblyVersion": "0.11.0.0",
             "fileVersion": "0.11.0.0"
+          }
+        }
+      },
+      "Microsoft.ML.OnnxRuntime.Gpu/1.24.3": {
+        "dependencies": {
+          "Microsoft.ML.OnnxRuntime.Gpu.Linux": "1.24.3",
+          "Microsoft.ML.OnnxRuntime.Gpu.Windows": "1.24.3",
+          "Microsoft.ML.OnnxRuntime.Managed": "1.24.3"
+        }
+      },
+      "Microsoft.ML.OnnxRuntime.Gpu.Linux/1.24.3": {
+        "dependencies": {
+          "Microsoft.ML.OnnxRuntime.Managed": "1.24.3"
+        },
+        "runtimeTargets": {
+          "runtimes/linux-x64/native/libonnxruntime.so": {
+            "rid": "linux-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          },
+          "runtimes/linux-x64/native/libonnxruntime_providers_cuda.so": {
+            "rid": "linux-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          },
+          "runtimes/linux-x64/native/libonnxruntime_providers_shared.so": {
+            "rid": "linux-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          },
+          "runtimes/linux-x64/native/libonnxruntime_providers_tensorrt.so": {
+            "rid": "linux-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          }
+        }
+      },
+      "Microsoft.ML.OnnxRuntime.Gpu.Windows/1.24.3": {
+        "dependencies": {
+          "Microsoft.ML.OnnxRuntime.Managed": "1.24.3"
+        },
+        "runtimeTargets": {
+          "runtimes/win-x64/native/onnxruntime.dll": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "1.24.26.304"
+          },
+          "runtimes/win-x64/native/onnxruntime.lib": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          },
+          "runtimes/win-x64/native/onnxruntime_providers_cuda.dll": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "1.24.26.304"
+          },
+          "runtimes/win-x64/native/onnxruntime_providers_cuda.lib": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          },
+          "runtimes/win-x64/native/onnxruntime_providers_shared.dll": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "1.24.26.304"
+          },
+          "runtimes/win-x64/native/onnxruntime_providers_shared.lib": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          },
+          "runtimes/win-x64/native/onnxruntime_providers_tensorrt.dll": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "1.24.26.304"
+          },
+          "runtimes/win-x64/native/onnxruntime_providers_tensorrt.lib": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          }
+        }
+      },
+      "Microsoft.ML.OnnxRuntime.Managed/1.24.3": {
+        "dependencies": {
+          "System.Numerics.Tensors": "9.0.0"
+        },
+        "runtime": {
+          "lib/net8.0/Microsoft.ML.OnnxRuntime.dll": {
+            "assemblyVersion": "1.24.3.0",
+            "fileVersion": "1.24.3.0"
           }
         }
       },
@@ -430,7 +554,6 @@
           }
         }
       },
-      "SkiaSharp.NativeAssets.WebAssembly/2.88.9": {},
       "SkiaSharp.NativeAssets.Win32/2.88.9": {
         "runtimeTargets": {
           "runtimes/win-arm64/native/libSkiaSharp.dll": {
@@ -466,6 +589,14 @@
           }
         }
       },
+      "System.Numerics.Tensors/9.0.0": {
+        "runtime": {
+          "lib/net8.0/System.Numerics.Tensors.dll": {
+            "assemblyVersion": "9.0.0.0",
+            "fileVersion": "9.0.24.52809"
+          }
+        }
+      },
       "Tmds.DBus.Protocol/0.21.2": {
         "dependencies": {
           "System.IO.Pipelines": "8.0.0"
@@ -480,6 +611,8 @@
       "AutoPBR.Core/1.0.0": {
         "dependencies": {
           "Colourful": "3.2.0",
+          "MathNet.Numerics": "5.0.0",
+          "Microsoft.ML.OnnxRuntime.Gpu": "1.24.3",
           "SixLabors.ImageSharp": "3.1.12",
           "System.IO.Hashing": "9.0.0"
         },
@@ -511,13 +644,6 @@
       "sha512": "sha512-ZL0VLc4s9rvNNFt19Pxm5UNAkmKNylugAwJPX9ulXZ6JWs/l6XZihPWWTyezaoNOVyEPU8YbURtW7XMAtqXH5A==",
       "path": "avalonia.angle.windows.natives/2.1.25547.20250602",
       "hashPath": "avalonia.angle.windows.natives.2.1.25547.20250602.nupkg.sha512"
-    },
-    "Avalonia.BuildServices/11.3.2": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-qHDToxto1e3hci5YqbG9n0Ty8mlp3zBUN5wT66wKqaDVzXyQ0do3EnRILd4Ke9jpvsktaPpgE0YjEk7hornryQ==",
-      "path": "avalonia.buildservices/11.3.2",
-      "hashPath": "avalonia.buildservices.11.3.2.nupkg.sha512"
     },
     "Avalonia.Controls.ColorPicker/11.3.12": {
       "type": "package",
@@ -638,13 +764,6 @@
       "path": "harfbuzzsharp.nativeassets.macos/8.3.1.1",
       "hashPath": "harfbuzzsharp.nativeassets.macos.8.3.1.1.nupkg.sha512"
     },
-    "HarfBuzzSharp.NativeAssets.WebAssembly/8.3.1.1": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-loJweK2u/mH/3C2zBa0ggJlITIszOkK64HLAZB7FUT670dTg965whLFYHDQo69NmC4+d9UN0icLC9VHidXaVCA==",
-      "path": "harfbuzzsharp.nativeassets.webassembly/8.3.1.1",
-      "hashPath": "harfbuzzsharp.nativeassets.webassembly.8.3.1.1.nupkg.sha512"
-    },
     "HarfBuzzSharp.NativeAssets.Win32/8.3.1.1": {
       "type": "package",
       "serviceable": true,
@@ -652,12 +771,47 @@
       "path": "harfbuzzsharp.nativeassets.win32/8.3.1.1",
       "hashPath": "harfbuzzsharp.nativeassets.win32.8.3.1.1.nupkg.sha512"
     },
+    "MathNet.Numerics/5.0.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-pg1W2VwaEQMAiTpGK840hZgzavnqjlCMTVSbtVCXVyT+7AX4mc1o89SPv4TBlAjhgCOo9c1Y+jZ5m3ti2YgGgA==",
+      "path": "mathnet.numerics/5.0.0",
+      "hashPath": "mathnet.numerics.5.0.0.nupkg.sha512"
+    },
     "MicroCom.Runtime/0.11.0": {
       "type": "package",
       "serviceable": true,
       "sha512": "sha512-MEnrZ3UIiH40hjzMDsxrTyi8dtqB5ziv3iBeeU4bXsL/7NLSal9F1lZKpK+tfBRnUoDSdtcW3KufE4yhATOMCA==",
       "path": "microcom.runtime/0.11.0",
       "hashPath": "microcom.runtime.0.11.0.nupkg.sha512"
+    },
+    "Microsoft.ML.OnnxRuntime.Gpu/1.24.3": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-jOpeC4qjdhM1v7adM8RivTBBr/sfaVHeDW7hLyRYF77sOJGJWji9UWr0KeBi6v/RpldrATxowEet4qlODO5dRw==",
+      "path": "microsoft.ml.onnxruntime.gpu/1.24.3",
+      "hashPath": "microsoft.ml.onnxruntime.gpu.1.24.3.nupkg.sha512"
+    },
+    "Microsoft.ML.OnnxRuntime.Gpu.Linux/1.24.3": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-NNi+oGIHoP9zmGh61drAQrx77inqrImI+CliZLKpEePLF1KAsy6KYGMe7qkLQsyth9W1EEvGp380RZFDTGc+5Q==",
+      "path": "microsoft.ml.onnxruntime.gpu.linux/1.24.3",
+      "hashPath": "microsoft.ml.onnxruntime.gpu.linux.1.24.3.nupkg.sha512"
+    },
+    "Microsoft.ML.OnnxRuntime.Gpu.Windows/1.24.3": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-A13nic8Q9jmX4k+1NvHCzKuRSEl4K+fzRPR84xB8I3aGwwNG399G4OcqcSOmxoelDxkc28JsdXNxV8rrP2fKiQ==",
+      "path": "microsoft.ml.onnxruntime.gpu.windows/1.24.3",
+      "hashPath": "microsoft.ml.onnxruntime.gpu.windows.1.24.3.nupkg.sha512"
+    },
+    "Microsoft.ML.OnnxRuntime.Managed/1.24.3": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-XWyszzywN+uuMEEPzrTYLSKM2TJKOGHsjcq0ZY+AeaqJpPB7xi0OikxXhXTc7fcOJ8K0oqvD0dk86fROm3TaRA==",
+      "path": "microsoft.ml.onnxruntime.managed/1.24.3",
+      "hashPath": "microsoft.ml.onnxruntime.managed.1.24.3.nupkg.sha512"
     },
     "SixLabors.ImageSharp/3.1.12": {
       "type": "package",
@@ -687,13 +841,6 @@
       "path": "skiasharp.nativeassets.macos/2.88.9",
       "hashPath": "skiasharp.nativeassets.macos.2.88.9.nupkg.sha512"
     },
-    "SkiaSharp.NativeAssets.WebAssembly/2.88.9": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-kt06RccBHSnAs2wDYdBSfsjIDbY3EpsOVqnlDgKdgvyuRA8ZFDaHRdWNx1VHjGgYzmnFCGiTJBnXFl5BqGwGnA==",
-      "path": "skiasharp.nativeassets.webassembly/2.88.9",
-      "hashPath": "skiasharp.nativeassets.webassembly.2.88.9.nupkg.sha512"
-    },
     "SkiaSharp.NativeAssets.Win32/2.88.9": {
       "type": "package",
       "serviceable": true,
@@ -714,6 +861,13 @@
       "sha512": "sha512-FHNOatmUq0sqJOkTx+UF/9YK1f180cnW5FVqnQMvYUN0elp6wFzbtPSiqbo1/ru8ICp43JM1i7kKkk6GsNGHlA==",
       "path": "system.io.pipelines/8.0.0",
       "hashPath": "system.io.pipelines.8.0.0.nupkg.sha512"
+    },
+    "System.Numerics.Tensors/9.0.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-hyJB4UlpAi19Xr9AXzu2NuagKC4lPfHObNMEAA0HmqFz2rX7wKgzeYzO/jM/eBHDhnUGFFEjk5cOoJaxqg5J4A==",
+      "path": "system.numerics.tensors/9.0.0",
+      "hashPath": "system.numerics.tensors.9.0.0.nupkg.sha512"
     },
     "Tmds.DBus.Protocol/0.21.2": {
       "type": "package",

@@ -25,11 +25,18 @@ internal static class ParallelZipReader
         string extracted,
         IProgress<ConversionProgress>? progress,
         ConversionStage stage,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<string>? entriesToExtractOnly = null)
     {
         List<(string fullName, long dataOffset, long compressedSize, long uncompressedSize, bool isStored)> entries;
         using (var fs = new FileStream(inputZipPath, FileMode.Open, FileAccess.Read, FileShare.Read))
             entries = ParseZip(fs);
+
+        if (entriesToExtractOnly is { Count: > 0 })
+        {
+            var set = new HashSet<string>(entriesToExtractOnly, StringComparer.OrdinalIgnoreCase);
+            entries = entries.Where(e => set.Contains(e.fullName)).ToList();
+        }
 
         var total = entries.Count;
         progress?.Report(new ConversionProgress(stage, 0, total));

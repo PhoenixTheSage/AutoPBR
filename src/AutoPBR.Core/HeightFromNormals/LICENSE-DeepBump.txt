@@ -1,0 +1,23 @@
+AutoPBR – Height-from-Normals (Frankot-Chellappa) attribution
+================================================================
+
+The optional "Height from normals (DeepBump-style)" feature in AutoPBR implements
+the Frankot-Chellappa algorithm (Fourier-domain integration) to derive a height
+map from a normal map. This approach is used in the DeepBump ecosystem:
+
+  • DeepBump – Normal & height maps generation from single pictures
+    https://github.com/HugoTini/DeepBump
+    License: GPL-3.0
+
+  • NormalHeight – Blender add-on to compute height from normal maps
+    https://github.com/HugoTini/NormalHeight
+    License: GPL-3.0
+
+Our implementation is original C# code based on the published Frankot-Chellappa
+method (Frankot & Chellappa, IEEE PAMI 1988). We credit the DeepBump and
+NormalHeight projects for the application of this method in a normal-map
+workflow.
+
+The full text of the GNU General Public License v3.0 (GPL-3.0) under which
+DeepBump and NormalHeight are distributed is available at:
+  https://www.gnu.org/licenses/gpl-3.0.txt

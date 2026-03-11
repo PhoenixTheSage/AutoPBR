@@ -1,26 +1,46 @@
 using System.Collections.ObjectModel;
+using System.Collections.Concurrent;
+using System.Globalization;
 using System.IO.Compression;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using AutoPBR.App.Lang;
 using AutoPBR.App.Models;
 using AutoPBR.Core;
 using AutoPBR.Core.Models;
 
 namespace AutoPBR.App.ViewModels;
 
-public partial class MainWindowViewModel : ViewModelBase
+public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
 {
     private CancellationTokenSource? _cts;
+    private ScannedArchiveData? _scannedArchiveData;
+    private string? _scannedArchivePath;
+    private readonly ConcurrentDictionary<string, bool?> _pathOverrides = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, bool> _folderVisibilityCache = new(StringComparer.OrdinalIgnoreCase);
     private SpecularData? _specularData;
     private readonly UserSettings _settings;
     private bool _loadingSettings;
     private DateTime _lastLogWriteUtc = DateTime.MinValue;
-    private const int LogWriteIntervalMs = 100;
+    private const int LogWriteIntervalMs = 250;
+    private const int MaxLogLines = 600;
+
+    private void AddLogLine(string line)
+    {
+        LogLines.Add(line);
+        while (LogLines.Count > MaxLogLines)
+            LogLines.RemoveAt(0);
+    }
     private DateTime _conversionStartUtc;
     private ConversionStage? _currentStage;
     private DateTime _stageStartUtc;
+    private string? _statusKey;
+    private object[]? _statusFormatArgs;
 
     [ObservableProperty] private string? packPath;
     [ObservableProperty] private string? outputDirectory;
@@ -29,7 +49,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private double heightIntensity = AutoPbrDefaults.DefaultHeightIntensity;
     [ObservableProperty] private bool fastSpecular;
     [ObservableProperty] private string foliageMode = "Ignore All";
-    [ObservableProperty] private bool experimentalExtractor;
+    [ObservableProperty] private bool useLegacyExtractor;
     [ObservableProperty] private double smoothnessScale = AutoPbrDefaults.DefaultSmoothnessScale;
     [ObservableProperty] private double metallicBoost = AutoPbrDefaults.DefaultMetallicBoost;
     [ObservableProperty] private double porosityBias = AutoPbrDefaults.DefaultPorosityBias;
@@ -39,30 +59,144 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private bool processBlocks = true;
     [ObservableProperty] private bool processItems = true;
     [ObservableProperty] private bool processArmor = true;
+    [ObservableProperty] private bool processEntity = true;
     [ObservableProperty] private bool processParticles = true;
+    [ObservableProperty] private bool useHeightFromNormals;
+    [ObservableProperty] private bool useDeepBumpNormals;
+    [ObservableProperty] private string deepBumpOverlap = "Large";
+    [ObservableProperty] private string normalOperator = nameof(AutoPBR.Core.Models.NormalOperator.SobelVc);
+    [ObservableProperty] private string normalKernelSize = "3";
+    [ObservableProperty] private string normalDerivative = nameof(AutoPBR.Core.Models.NormalDerivative.Luminance);
 
     [ObservableProperty] private bool isBusy;
     [ObservableProperty] private bool isConverting;
-    [ObservableProperty] private string statusText = "Select a resource pack (.zip or .jar) and an output folder.";
+    [ObservableProperty] private string statusText = "";
 
     [ObservableProperty] private double progressValue;
     [ObservableProperty] private double progressMax = 1;
 
     [ObservableProperty] private string? outputZipPath;
 
-    [ObservableProperty] private string textureFilter = "";
+    /// <summary>Search filter for the Resource Explorer tree (Explore tab). Filters nodes by path/name.</summary>
+    [ObservableProperty] private string exploreFilter = "";
 
     [ObservableProperty] private string colorScheme = "Dark";
+    [ObservableProperty] private LanguageOption? selectedLanguage;
+    [ObservableProperty] private FoliageModeOption? selectedFoliageMode;
+    [ObservableProperty] private FoliageModeOption? selectedDeepBumpOverlap;
+    [ObservableProperty] private FoliageModeOption? selectedNormalOperator;
+    [ObservableProperty] private FoliageModeOption? selectedNormalKernelSize;
+    [ObservableProperty] private FoliageModeOption? selectedNormalDerivative;
+    [ObservableProperty] private FoliageModeOption? selectedColorSchemeOption;
     [ObservableProperty] private IBrush windowBackground = Brushes.Transparent;
     [ObservableProperty] private IBrush cardBackground = Brushes.Transparent;
     [ObservableProperty] private IBrush cardBorderBrush = Brushes.Gray;
     [ObservableProperty] private IBrush accentBrush = Brushes.DeepSkyBlue;
     [ObservableProperty] private IBrush foregroundBrush = Brushes.White;
 
-    public ObservableCollection<TextureKeyItem> AllTextureKeys { get; } = new();
-    public ObservableCollection<TextureKeyItem> FilteredTextureKeys { get; } = new();
-
     public ObservableCollection<string> LogLines { get; } = new();
+
+    private static string LogsDirectory =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AutoPBR", "logs");
+
+    /// <summary>Persist the current in-memory log to a file under the logs directory, keeping at most 10 files.</summary>
+    private void SaveLogToFile()
+    {
+        try
+        {
+            Directory.CreateDirectory(LogsDirectory);
+            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            var fileName = $"AutoPBR_{timestamp}.log";
+            var fullPath = Path.Combine(LogsDirectory, fileName);
+            File.WriteAllLines(fullPath, LogLines);
+
+            // Keep only the 10 newest log files.
+            var files = Directory.GetFiles(LogsDirectory, "AutoPBR_*.log")
+                .OrderBy(f => File.GetCreationTimeUtc(f))
+                .ToList();
+            while (files.Count > 10)
+            {
+                var oldest = files[0];
+                files.RemoveAt(0);
+                try { File.Delete(oldest); } catch { /* ignore cleanup errors */ }
+            }
+        }
+        catch
+        {
+            // Logging should never crash the app; ignore IO errors.
+        }
+    }
+
+    /// <summary>Localized strings for bindings; replaced when language changes.</summary>
+    public LocalizedStrings Strings { get; private set; } = null!;
+
+    /// <summary>Foliage options for the dropdown (display name from Strings, value for settings/converter).</summary>
+    public ObservableCollection<FoliageModeOption> FoliageModeOptions { get; } = new();
+
+    /// <summary>DeepBump tile overlap options (Small, Medium, Large). Matches DeepBump --color_to_normals-overlap.</summary>
+    public ObservableCollection<FoliageModeOption> DeepBumpOverlapOptions { get; } = new();
+
+    /// <summary>Normal operator options (Sobel + VC, Scharr + VC).</summary>
+    public ObservableCollection<FoliageModeOption> NormalOperatorOptions { get; } = new();
+
+    /// <summary>Normal kernel size options (3x3, 5x5, 7x7 for Sobel; 3x3,5x5 for Scharr).</summary>
+    public ObservableCollection<FoliageModeOption> NormalKernelSizeOptions { get; } = new();
+
+    /// <summary>Derivative source options: Color, Luminance, Color+Luminance Blend, Color+Luminance Max.</summary>
+    public ObservableCollection<FoliageModeOption> NormalDerivativeOptions { get; } = new();
+
+    /// <summary>Color scheme options for the Appearance dropdown (display name from Resources, value for settings).</summary>
+    public ObservableCollection<FoliageModeOption> ColorSchemeOptions { get; } = new();
+
+    /// <summary>Root of the scanned archive tree for the Explore tab. Null until user clicks Scan or when cleared.</summary>
+    [ObservableProperty]
+    private ArchiveNode? _scannedArchiveRoot;
+
+    public bool HasScannedArchive => ScannedArchiveRoot != null;
+    public bool ShowExploreEmptyMessage => !HasScannedArchive;
+
+    private static readonly ObservableCollection<ArchiveNode> EmptyArchiveNodes = new();
+    public ObservableCollection<ArchiveNode> ScannedArchiveTopLevel => ScannedArchiveRoot?.Children ?? EmptyArchiveNodes;
+
+    /// <summary>Folder we're currently viewing in Explore; null = root. After scan, defaults to "assets" if present.</summary>
+    [ObservableProperty]
+    private ArchiveNode? _focusedArchiveNode;
+
+    /// <summary>Items to show in Explore tree: children of focused folder, or root's children when no focus.</summary>
+    public ObservableCollection<ArchiveNode> ExploreViewItems => FocusedArchiveNode?.Children ?? ScannedArchiveTopLevel;
+
+    /// <summary>Breadcrumb path for Explore (from root to current folder); click to navigate.</summary>
+    public ObservableCollection<ArchiveNode> ExploreBreadcrumb { get; } = new();
+
+    public bool CanGoBackExplore => FocusedArchiveNode != null;
+
+    private void RebuildExploreBreadcrumb()
+    {
+        ExploreBreadcrumb.Clear();
+        if (FocusedArchiveNode is null)
+            return;
+        var path = new List<ArchiveNode>();
+        for (var n = FocusedArchiveNode; n != null && !string.IsNullOrEmpty(n.Name); n = n.Parent)
+            path.Add(n);
+        path.Reverse();
+        foreach (var node in path)
+            ExploreBreadcrumb.Add(node);
+    }
+
+    /// <summary>Languages shown in the Language dropdown (display name, culture code). Top 10 most spoken worldwide.</summary>
+    public ObservableCollection<LanguageOption> SupportedLanguages { get; } = new()
+    {
+        new LanguageOption("English", "en"),
+        new LanguageOption("中文 (简体)", "zh-Hans"),
+        new LanguageOption("Español", "es"),
+        new LanguageOption("हिन्दी", "hi"),
+        new LanguageOption("Français", "fr"),
+        new LanguageOption("العربية", "ar"),
+        new LanguageOption("Português", "pt"),
+        new LanguageOption("Русский", "ru"),
+        new LanguageOption("Deutsch", "de"),
+        new LanguageOption("日本語", "ja"),
+    };
 
     public MainWindowViewModel()
     {
@@ -78,7 +212,7 @@ public partial class MainWindowViewModel : ViewModelBase
             HeightIntensity = _settings.HeightIntensity;
             FastSpecular = _settings.FastSpecular;
             FoliageMode = string.IsNullOrWhiteSpace(_settings.FoliageMode) ? "Ignore All" : _settings.FoliageMode;
-            ExperimentalExtractor = _settings.ExperimentalExtractor;
+            UseLegacyExtractor = _settings.UseLegacyExtractor;
             SmoothnessScale = _settings.SmoothnessScale;
             MetallicBoost = _settings.MetallicBoost;
             PorosityBias = _settings.PorosityBias;
@@ -88,8 +222,30 @@ public partial class MainWindowViewModel : ViewModelBase
             ProcessBlocks = _settings.ProcessBlocks;
             ProcessItems = _settings.ProcessItems;
             ProcessArmor = _settings.ProcessArmor;
+            ProcessEntity = _settings.ProcessEntity;
             ProcessParticles = _settings.ProcessParticles;
+            UseHeightFromNormals = _settings.UseHeightFromNormals;
+            UseDeepBumpNormals = _settings.UseDeepBumpNormals;
+            DeepBumpOverlap = string.IsNullOrWhiteSpace(_settings.DeepBumpOverlap) ? "Large" : _settings.DeepBumpOverlap;
+            NormalOperator = string.IsNullOrWhiteSpace(_settings.NormalOperator)
+                ? nameof(AutoPBR.Core.Models.NormalOperator.SobelVc)
+                : _settings.NormalOperator;
+            NormalKernelSize = string.IsNullOrWhiteSpace(_settings.NormalKernelSize) ? "3" : _settings.NormalKernelSize;
+            NormalDerivative = string.IsNullOrWhiteSpace(_settings.NormalDerivative)
+                ? nameof(AutoPBR.Core.Models.NormalDerivative.Luminance)
+                : _settings.NormalDerivative;
             ApplyColorScheme();
+            var lang = string.IsNullOrWhiteSpace(_settings.Language) ? "en" : _settings.Language;
+            ApplyCulture(lang);
+            Strings = new LocalizedStrings();
+            SelectedLanguage = SupportedLanguages.FirstOrDefault(x => string.Equals(x.CultureCode, _settings.Language, StringComparison.OrdinalIgnoreCase)) ?? SupportedLanguages[0];
+            RefreshFoliageModeOptions();
+            RefreshDeepBumpOverlapOptions();
+            RefreshNormalOperatorOptions();
+            RefreshNormalKernelSizeOptions();
+            RefreshNormalDerivativeOptions();
+            RefreshColorSchemeOptions();
+            SetStatus("Status_SelectPack");
         }
         finally
         {
@@ -97,11 +253,122 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    private void ApplyCulture(string cultureCode)
+    {
+        try
+        {
+            var culture = CultureInfo.GetCultureInfo(cultureCode);
+            Thread.CurrentThread.CurrentUICulture = culture;
+            CultureInfo.CurrentUICulture = culture;
+            Resources.Culture = culture;
+        }
+        catch
+        {
+            Resources.Culture = null;
+        }
+        Strings = new LocalizedStrings();
+        OnPropertyChanged(nameof(Strings));
+        RefreshFoliageModeOptions();
+        RefreshDeepBumpOverlapOptions();
+        RefreshNormalOperatorOptions();
+        RefreshNormalKernelSizeOptions();
+        RefreshNormalDerivativeOptions();
+        RefreshColorSchemeOptions();
+        UpdateStatusText();
+    }
+
+    private void RefreshColorSchemeOptions()
+    {
+        ColorSchemeOptions.Clear();
+        ColorSchemeOptions.Add(new FoliageModeOption(Resources.GetString("ColorSchemeDark"), "Dark"));
+        ColorSchemeOptions.Add(new FoliageModeOption(Resources.GetString("ColorSchemeBlue"), "Blue"));
+        ColorSchemeOptions.Add(new FoliageModeOption(Resources.GetString("ColorSchemeGreen"), "Green"));
+        ColorSchemeOptions.Add(new FoliageModeOption(Resources.GetString("ColorSchemePurple"), "Purple"));
+        ColorSchemeOptions.Add(new FoliageModeOption(Resources.GetString("ColorSchemeAmber"), "Amber"));
+        ColorSchemeOptions.Add(new FoliageModeOption(Resources.GetString("ColorSchemeTeal"), "Teal"));
+        ColorSchemeOptions.Add(new FoliageModeOption(Resources.GetString("ColorSchemeRose"), "Rose"));
+        ColorSchemeOptions.Add(new FoliageModeOption(Resources.GetString("ColorSchemeMono"), "Mono"));
+        ColorSchemeOptions.Add(new FoliageModeOption(Resources.GetString("ColorSchemeOcean"), "Ocean"));
+        ColorSchemeOptions.Add(new FoliageModeOption(Resources.GetString("ColorSchemeSunset"), "Sunset"));
+        SelectedColorSchemeOption = ColorSchemeOptions.FirstOrDefault(x => string.Equals(x.Value, ColorScheme, StringComparison.OrdinalIgnoreCase))
+                                    ?? ColorSchemeOptions[0];
+    }
+
+    private void RefreshDeepBumpOverlapOptions()
+    {
+        DeepBumpOverlapOptions.Clear();
+        DeepBumpOverlapOptions.Add(new FoliageModeOption(Strings.DeepBumpOverlapSmall, "Small"));
+        DeepBumpOverlapOptions.Add(new FoliageModeOption(Strings.DeepBumpOverlapMedium, "Medium"));
+        DeepBumpOverlapOptions.Add(new FoliageModeOption(Strings.DeepBumpOverlapLarge, "Large"));
+        SelectedDeepBumpOverlap = DeepBumpOverlapOptions.FirstOrDefault(x => string.Equals(x.Value, DeepBumpOverlap, StringComparison.OrdinalIgnoreCase)) ?? DeepBumpOverlapOptions[2];
+    }
+
+    private void RefreshFoliageModeOptions()
+    {
+        FoliageModeOptions.Clear();
+        FoliageModeOptions.Add(new FoliageModeOption(Strings.IgnoreAll, "Ignore All"));
+        FoliageModeOptions.Add(new FoliageModeOption(Strings.NoHeight, "No Height"));
+        FoliageModeOptions.Add(new FoliageModeOption(Strings.ConvertAll, "Convert All"));
+        SelectedFoliageMode = FoliageModeOptions.FirstOrDefault(x => string.Equals(x.Value, FoliageMode, StringComparison.OrdinalIgnoreCase)) ?? FoliageModeOptions[0];
+    }
+
+    private void RefreshNormalOperatorOptions()
+    {
+        NormalOperatorOptions.Clear();
+        NormalOperatorOptions.Add(new FoliageModeOption("Sobel + VC (default)", nameof(AutoPBR.Core.Models.NormalOperator.SobelVc)));
+        NormalOperatorOptions.Add(new FoliageModeOption("Scharr + VC (stronger edges)", nameof(AutoPBR.Core.Models.NormalOperator.ScharrVc)));
+        SelectedNormalOperator = NormalOperatorOptions.FirstOrDefault(x => string.Equals(x.Value, NormalOperator, StringComparison.OrdinalIgnoreCase))
+                                 ?? NormalOperatorOptions[0];
+    }
+
+    private void RefreshNormalKernelSizeOptions()
+    {
+        NormalKernelSizeOptions.Clear();
+        var isScharr = string.Equals(NormalOperator, nameof(AutoPBR.Core.Models.NormalOperator.ScharrVc), StringComparison.OrdinalIgnoreCase);
+        NormalKernelSizeOptions.Add(new FoliageModeOption("3x3", "3"));
+        NormalKernelSizeOptions.Add(new FoliageModeOption("5x5", "5"));
+        if (!isScharr)
+            NormalKernelSizeOptions.Add(new FoliageModeOption("7x7", "7"));
+        SelectedNormalKernelSize = NormalKernelSizeOptions.FirstOrDefault(x => string.Equals(x.Value, NormalKernelSize, StringComparison.OrdinalIgnoreCase))
+                                   ?? NormalKernelSizeOptions[0];
+    }
+
+    private void RefreshNormalDerivativeOptions()
+    {
+        NormalDerivativeOptions.Clear();
+        NormalDerivativeOptions.Add(new FoliageModeOption(Resources.GetString("NormalDerivative_Luminance"), nameof(AutoPBR.Core.Models.NormalDerivative.Luminance)));
+        NormalDerivativeOptions.Add(new FoliageModeOption(Resources.GetString("NormalDerivative_Color"), nameof(AutoPBR.Core.Models.NormalDerivative.Color)));
+        NormalDerivativeOptions.Add(new FoliageModeOption(Resources.GetString("NormalDerivative_ColorLuminanceBlend"), nameof(AutoPBR.Core.Models.NormalDerivative.ColorLuminanceBlend)));
+        NormalDerivativeOptions.Add(new FoliageModeOption(Resources.GetString("NormalDerivative_ColorLuminanceMax"), nameof(AutoPBR.Core.Models.NormalDerivative.ColorLuminanceMax)));
+        SelectedNormalDerivative = NormalDerivativeOptions.FirstOrDefault(x => string.Equals(x.Value, NormalDerivative, StringComparison.OrdinalIgnoreCase))
+                                   ?? NormalDerivativeOptions[0];
+    }
+
+    private void SetStatus(string key, params object[] args)
+    {
+        _statusKey = key;
+        _statusFormatArgs = args.Length > 0 ? args : null;
+        UpdateStatusText();
+    }
+
+    private void UpdateStatusText()
+    {
+        if (_statusKey is null)
+        {
+            StatusText = Resources.GetString("Status_SelectPack");
+            return;
+        }
+        StatusText = _statusFormatArgs is null || _statusFormatArgs.Length == 0
+            ? Resources.GetString(_statusKey)
+            : Resources.GetStatusString(_statusKey, _statusFormatArgs);
+    }
+
     partial void OnPackPathChanged(string? value)
     {
+        ClearScannedArchive();
         RecomputeOutputZipPath();
-        LoadTexturesCommand.NotifyCanExecuteChanged();
         ConvertCommand.NotifyCanExecuteChanged();
+        ScanArchiveCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnOutputDirectoryChanged(string? value)
@@ -120,22 +387,94 @@ public partial class MainWindowViewModel : ViewModelBase
 
     partial void OnNormalIntensityChanged(double value) => SaveSettings();
     partial void OnHeightIntensityChanged(double value) => SaveSettings();
-    partial void OnExperimentalExtractorChanged(bool value) => SaveSettings();
+    partial void OnUseLegacyExtractorChanged(bool value) => SaveSettings();
     partial void OnSmoothnessScaleChanged(double value) => SaveSettings();
     partial void OnMetallicBoostChanged(double value) => SaveSettings();
     partial void OnPorosityBiasChanged(double value) => SaveSettings();
     partial void OnMaxThreadsChanged(int value) => SaveSettings();
     partial void OnTempDirectoryChanged(string? value) => SaveSettings();
-    partial void OnTextureFilterChanged(string value) => ApplyTextureFilter();
+    partial void OnExploreFilterChanged(string value) => ApplyExploreFilter();
     partial void OnColorSchemeChanged(string value)
     {
         ApplyColorScheme();
         SaveSettings();
     }
-    partial void OnProcessBlocksChanged(bool value) => SaveSettings();
-    partial void OnProcessItemsChanged(bool value) => SaveSettings();
-    partial void OnProcessArmorChanged(bool value) => SaveSettings();
-    partial void OnProcessParticlesChanged(bool value) => SaveSettings();
+
+    partial void OnSelectedColorSchemeOptionChanged(FoliageModeOption? value)
+    {
+        if (value != null)
+            ColorScheme = value.Value;
+    }
+
+    partial void OnSelectedLanguageChanged(LanguageOption? value)
+    {
+        if (_loadingSettings)
+            return;
+        var code = value?.CultureCode ?? "en";
+        ApplyCulture(code);
+        _settings.Language = code;
+        _settings.Save();
+    }
+    partial void OnProcessBlocksChanged(bool value)
+    {
+        SaveSettings();
+        ApplyTextureTypeOverridesToExplore();
+    }
+    partial void OnProcessItemsChanged(bool value)
+    {
+        SaveSettings();
+        ApplyTextureTypeOverridesToExplore();
+    }
+    partial void OnProcessArmorChanged(bool value)
+    {
+        SaveSettings();
+        ApplyTextureTypeOverridesToExplore();
+    }
+    partial void OnProcessEntityChanged(bool value)
+    {
+        SaveSettings();
+        ApplyTextureTypeOverridesToExplore();
+    }
+    partial void OnProcessParticlesChanged(bool value)
+    {
+        SaveSettings();
+        ApplyTextureTypeOverridesToExplore();
+    }
+    partial void OnUseHeightFromNormalsChanged(bool value) => SaveSettings();
+    partial void OnUseDeepBumpNormalsChanged(bool value) => SaveSettings();
+
+    partial void OnSelectedDeepBumpOverlapChanged(FoliageModeOption? value)
+    {
+        if (_loadingSettings)
+            return;
+        DeepBumpOverlap = value?.Value ?? "Large";
+        SaveSettings();
+    }
+
+    partial void OnSelectedNormalOperatorChanged(FoliageModeOption? value)
+    {
+        if (_loadingSettings)
+            return;
+        NormalOperator = value?.Value ?? nameof(AutoPBR.Core.Models.NormalOperator.SobelVc);
+        RefreshNormalKernelSizeOptions();
+        SaveSettings();
+    }
+
+    partial void OnSelectedNormalKernelSizeChanged(FoliageModeOption? value)
+    {
+        if (_loadingSettings)
+            return;
+        NormalKernelSize = value?.Value ?? "3";
+        SaveSettings();
+    }
+
+    partial void OnSelectedNormalDerivativeChanged(FoliageModeOption? value)
+    {
+        if (_loadingSettings)
+            return;
+        NormalDerivative = value?.Value ?? nameof(AutoPBR.Core.Models.NormalDerivative.Luminance);
+        SaveSettings();
+    }
 
     private void RecomputeOutputZipPath()
     {
@@ -157,17 +496,6 @@ public partial class MainWindowViewModel : ViewModelBase
             OutputZipPath = Path.Combine(OutputDirectory, $"{baseName}_PBR.zip");
     }
 
-    private void ApplyTextureFilter()
-    {
-        FilteredTextureKeys.Clear();
-        var f = (TextureFilter ?? "").Trim();
-        foreach (var item in AllTextureKeys)
-        {
-            if (string.IsNullOrEmpty(f) || item.Key.Contains(f, StringComparison.OrdinalIgnoreCase))
-                FilteredTextureKeys.Add(item);
-        }
-    }
-
     private void SaveSettings()
     {
         if (_loadingSettings)
@@ -178,17 +506,25 @@ public partial class MainWindowViewModel : ViewModelBase
         _settings.HeightIntensity = HeightIntensity;
         _settings.FastSpecular = FastSpecular;
         _settings.FoliageMode = FoliageMode;
-        _settings.ExperimentalExtractor = ExperimentalExtractor;
+        _settings.UseLegacyExtractor = UseLegacyExtractor;
         _settings.SmoothnessScale = SmoothnessScale;
         _settings.MetallicBoost = MetallicBoost;
         _settings.PorosityBias = PorosityBias;
         _settings.MaxThreads = MaxThreads;
         _settings.TempDirectory = TempDirectory;
         _settings.ColorScheme = ColorScheme;
+        _settings.Language = SelectedLanguage?.CultureCode ?? "en";
         _settings.ProcessBlocks = ProcessBlocks;
         _settings.ProcessItems = ProcessItems;
         _settings.ProcessArmor = ProcessArmor;
+        _settings.ProcessEntity = ProcessEntity;
         _settings.ProcessParticles = ProcessParticles;
+        _settings.UseHeightFromNormals = UseHeightFromNormals;
+        _settings.UseDeepBumpNormals = UseDeepBumpNormals;
+        _settings.DeepBumpOverlap = DeepBumpOverlap;
+        _settings.NormalOperator = NormalOperator;
+        _settings.NormalKernelSize = NormalKernelSize;
+        _settings.NormalDerivative = NormalDerivative;
         _settings.Save();
     }
 
@@ -288,96 +624,596 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
-    [RelayCommand(CanExecute = nameof(CanLoadTextures))]
-    public async Task LoadTexturesAsync()
+    private static readonly HashSet<string> TextureTypeFolderNames = new(StringComparer.OrdinalIgnoreCase)
+        { "block", "blocks", "item", "items", "entity", "particle" };
+
+    private static readonly HashSet<string> IgnoredOptifineFolders = new(StringComparer.OrdinalIgnoreCase)
+        { "anim", "colormap", "sky" };
+
+    /// <summary>Enumerate folder paths under .../textures/&lt;type&gt; for type in block, blocks, item, items, entity, particle.</summary>
+    private HashSet<string> GetTextureTypeFolderPaths()
     {
-        if (!IsPackPath(PackPath) || !File.Exists(PackPath))
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (_scannedArchiveData is null)
+            return seen;
+        foreach (var fullPath in _scannedArchiveData.EnumerateAllFilePaths())
+        {
+            var segments = fullPath.Split('/');
+            for (var i = 0; i < segments.Length - 1; i++)
+            {
+                if (!segments[i].Equals("textures", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (i + 1 >= segments.Length)
+                    continue;
+                var typeName = segments[i + 1];
+                if (!TextureTypeFolderNames.Contains(typeName))
+                    continue;
+                var folderPath = string.Join("/", segments.Take(i + 2));
+                seen.Add(folderPath);
+            }
+        }
+        return seen;
+    }
+
+    private bool GetProcessValueForTextureFolder(string folderPath)
+    {
+        var seg = folderPath.Split('/');
+        var last = seg.Length > 0 ? seg[^1] : "";
+        if (last.Equals("block", StringComparison.OrdinalIgnoreCase) || last.Equals("blocks", StringComparison.OrdinalIgnoreCase))
+            return ProcessBlocks;
+        if (last.Equals("item", StringComparison.OrdinalIgnoreCase) || last.Equals("items", StringComparison.OrdinalIgnoreCase))
+            return ProcessItems;
+        if (last.Equals("entity", StringComparison.OrdinalIgnoreCase))
+            return ProcessEntity;
+        if (last.Equals("particle", StringComparison.OrdinalIgnoreCase))
+            return ProcessParticles;
+        return true;
+    }
+
+    /// <summary>Warm up visibility info for the first few levels of folders so tree expansion is smoother.</summary>
+    private void PrewarmFolderVisibilityCache()
+    {
+        var data = _scannedArchiveData;
+        if (data is null)
             return;
 
-        IsBusy = true;
-        StatusText = "Scanning textures in pack...";
-        LogLines.Add($"Scanning: {PackPath}");
+        const int maxDepth = 3;
+        var queue = new Queue<(string path, int depth)>();
+        queue.Enqueue(("", 0));
 
-        var tempRoot = Path.Combine(Path.GetTempPath(), "AutoPBR", "scan", Guid.NewGuid().ToString("N"));
-        var extracted = Path.Combine(tempRoot, "pack_unzipped");
-        Directory.CreateDirectory(extracted);
-
-        try
+        while (queue.Count > 0)
         {
-            await Task.Run(() =>
-            {
-                ZipFile.ExtractToDirectory(PackPath!, extracted);
-            }).ConfigureAwait(false);
+            var (parent, depth) = queue.Dequeue();
+            var children = data.GetChildren(parent);
+            if (children is null)
+                continue;
 
-            var keys = await Task.Run(() =>
+            foreach (var c in children)
             {
-                var scanOpts = new AutoPbrOptions
+                if (!c.IsFolder)
+                    continue;
+
+                // Queue child folders up to maxDepth.
+                if (depth < maxDepth)
+                    queue.Enqueue((c.FullPath, depth + 1));
+
+                // Compute and cache visibility for this folder.
+                if (!_folderVisibilityCache.ContainsKey(c.FullPath))
                 {
-                    ProcessBlocks = ProcessBlocks,
-                    ProcessItems = ProcessItems,
-                    ProcessArmor = ProcessArmor,
-                    ProcessParticles = ProcessParticles
-                };
-                var scan = ResourcePackConverter.ScanTextures(extracted, scanOpts);
-                return scan.Select(t => t.RelativeKey).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
-            }).ConfigureAwait(false);
-
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                var keepIgnored = AllTextureKeys.Where(x => x.IsIgnored).Select(x => x.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-                AllTextureKeys.Clear();
-                foreach (var k in keys)
-                    AllTextureKeys.Add(new TextureKeyItem(k, keepIgnored.Contains(k)));
-
-                if (FoliageMode == "Ignore All")
-                    MarkPlantsIgnored();
-
-                ApplyTextureFilter();
-                StatusText = $"Loaded {AllTextureKeys.Count} textures.";
-            });
+                    var visible = ComputeFolderVisible(data, c.FullPath);
+                    _folderVisibilityCache[c.FullPath] = visible;
+                }
+            }
         }
-        catch (Exception ex)
+    }
+
+    private void ApplyTextureTypeOverridesToExplore()
+    {
+        // Remember where the user is in the tree so we can try to restore it after refresh.
+        var previousFocusPath = FocusedArchiveNode?.FullPath;
+
+        var paths = GetTextureTypeFolderPaths();
+        if (paths.Count == 0)
+            return;
+        _folderVisibilityCache.Clear();
+        foreach (var path in paths)
         {
-            Dispatcher.UIThread.Post(() =>
-            {
-                StatusText = "Failed to scan textures.";
-                LogLines.Add(ex.ToString());
-            });
+            var include = GetProcessValueForTextureFolder(path);
+            _pathOverrides[path] = include;
         }
-        finally
+        NotifyOverrideChangedForPaths(paths);
+        RefreshExploreTreeFilter();
+
+        // Try to restore the previous focused folder if it still exists after filtering.
+        if (!string.IsNullOrEmpty(previousFocusPath))
         {
-            try { Directory.Delete(tempRoot, recursive: true); } catch { /* best-effort */ }
-            Dispatcher.UIThread.Post(() =>
-            {
-                IsBusy = false;
-                LoadTexturesCommand.NotifyCanExecuteChanged();
-                ConvertCommand.NotifyCanExecuteChanged();
-            });
+            var restored = FindNodeByFullPath(previousFocusPath);
+            if (restored is not null)
+                FocusedArchiveNode = restored;
         }
+
+        // Ensure expand/collapse arrows are visible in the current view.
+        PreloadExpandersForCurrentView();
+    }
+
+    /// <summary>Clear all loaded tree children and repopulate from root so visibility filter (no-PNG / full filter) is re-applied.</summary>
+    private void RefreshExploreTreeFilter()
+    {
+        if (ScannedArchiveRoot is null)
+            return;
+        ClearChildrenRecursive(ScannedArchiveRoot);
+        (this as IArchiveNodeHost).EnsureChildrenLoaded(ScannedArchiveRoot);
+        ApplyExploreFilter();
+    }
+
+    /// <summary>Apply Resource Explorer search filter: show nodes whose path/name matches, or that contain a matching descendant.</summary>
+    private void ApplyExploreFilter()
+    {
+        if (ScannedArchiveRoot is null)
+            return;
+        var f = (ExploreFilter ?? "").Trim();
+        ApplyExploreFilterRecursive(ScannedArchiveRoot, f);
+    }
+
+    private static bool ApplyExploreFilterRecursive(ArchiveNode node, string filter)
+    {
+        if (string.IsNullOrEmpty(filter))
+        {
+            node.IsVisibleByFilter = true;
+            foreach (var child in node.Children)
+                ApplyExploreFilterRecursive(child, filter);
+            return true;
+        }
+        bool selfMatch = node.FullPath.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                         || node.Name.Contains(filter, StringComparison.OrdinalIgnoreCase);
+        bool anyChildVisible = false;
+        foreach (var child in node.Children)
+        {
+            if (ApplyExploreFilterRecursive(child, filter))
+                anyChildVisible = true;
+        }
+        node.IsVisibleByFilter = selfMatch || anyChildVisible;
+        return node.IsVisibleByFilter;
+    }
+
+    private static void ClearChildrenRecursive(ArchiveNode node)
+    {
+        foreach (var child in node.Children)
+            ClearChildrenRecursive(child);
+        node.Children.Clear();
+    }
+
+    private void NotifyOverrideChangedForPaths(HashSet<string> paths)
+    {
+        if (paths is null || paths.Count == 0 || ScannedArchiveRoot is null)
+            return;
+        NotifyOverrideChangedRecursive(ScannedArchiveRoot, paths);
+    }
+
+    private static void NotifyOverrideChangedRecursive(ArchiveNode node, HashSet<string> paths)
+    {
+        if (paths.Contains(node.FullPath))
+            node.NotifyOverrideChanged();
+        foreach (var child in node.Children)
+            NotifyOverrideChangedRecursive(child, paths);
     }
 
     private static bool IsPackPath(string? path) =>
         !string.IsNullOrWhiteSpace(path) &&
         (path!.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".jar", StringComparison.OrdinalIgnoreCase));
 
-    private bool CanLoadTextures() => !IsConverting && !IsBusy && IsPackPath(PackPath) && File.Exists(PackPath);
+    private bool CanScanArchive() => !IsConverting && !IsBusy && IsPackPath(PackPath) && File.Exists(PackPath);
 
-    partial void OnFoliageModeChanged(string value)
+    private void ClearScannedArchive()
     {
-        if (value == "Ignore All")
-            MarkPlantsIgnored();
-        SaveSettings();
+        FocusedArchiveNode = null;
+        ScannedArchiveRoot = null;
+        _scannedArchiveData = null;
+        _scannedArchivePath = null;
+        _pathOverrides.Clear();
+        _folderVisibilityCache.Clear();
     }
 
-    private void MarkPlantsIgnored()
+    private bool HaveScanForCurrentPack() =>
+        _scannedArchiveData is not null && _scannedArchivePath is not null && PackPath is not null &&
+        string.Equals(Path.GetFullPath(_scannedArchivePath), Path.GetFullPath(PackPath), StringComparison.OrdinalIgnoreCase);
+
+    bool? IArchiveNodeHost.GetOverride(string fullPath) =>
+        _pathOverrides.TryGetValue(fullPath, out var v) ? v : null;
+
+    void IArchiveNodeHost.SetOverride(string fullPath, bool? value)
     {
-        var plants = new HashSet<string>(AutoPbrDefaults.PlantTextureKeys, StringComparer.OrdinalIgnoreCase);
-        foreach (var item in AllTextureKeys)
+        if (value.HasValue)
+            _pathOverrides[fullPath] = value;
+        else
+            _pathOverrides.TryRemove(fullPath, out _);
+    }
+
+    /// <summary>True if the folder has at least one PNG file in its subtree that is not excluded by the current overrides.</summary>
+    private bool HasVisiblePngUnder(string folderPath)
+    {
+        if (_folderVisibilityCache.TryGetValue(folderPath, out var cached))
+            return cached;
+
+        if (_scannedArchiveData is null)
+            return false;
+
+        // Walk only this folder's subtree via ChildIndex instead of scanning the entire archive.
+        bool visible = ComputeFolderVisible(_scannedArchiveData, folderPath);
+        _folderVisibilityCache[folderPath] = visible;
+        return visible;
+    }
+
+    /// <summary>Internal helper: does folderPath have any PNG in its subtree that is not excluded by current overrides?</summary>
+    private bool ComputeFolderVisible(ScannedArchiveData data, string folderPath)
+    {
+        var queue = new Queue<string>();
+        queue.Enqueue(folderPath);
+        while (queue.Count > 0)
         {
-            if (plants.Contains(item.Key))
-                item.IsIgnored = true;
+            var parent = queue.Dequeue();
+            var children = data.GetChildren(parent);
+            if (children is null)
+                continue;
+            foreach (var c in children)
+            {
+                if (c.IsFolder)
+                {
+                    queue.Enqueue(c.FullPath);
+                }
+                else
+                {
+                    if (GetEffectiveOverrideForPath(c.FullPath) != false)
+                        return true;
+                }
+            }
         }
+        return false;
+    }
+
+    private static bool IsIgnoredOptifineFolder(string fullPath)
+    {
+        // Ignore assets/<namespace>/optifine/{anim,colormap,sky} and everything under them.
+        var segments = fullPath.Split('/');
+        if (segments.Length < 4)
+            return false;
+        if (!segments[0].Equals("assets", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (!segments[2].Equals("optifine", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var typeSegment = segments[3];
+        return IgnoredOptifineFolders.Contains(typeSegment);
+    }
+
+    void IArchiveNodeHost.EnsureChildrenLoaded(ArchiveNode node)
+    {
+        if (_scannedArchiveData is null || node.Children.Count > 0)
+            return;
+        var children = _scannedArchiveData.GetChildren(node.FullPath);
+        if (children is null)
+            return;
+        foreach (var entry in children)
+        {
+            if (entry.IsFolder)
+            {
+                if (IsIgnoredOptifineFolder(entry.FullPath))
+                    continue;
+                if (!HasVisiblePngUnder(entry.FullPath))
+                    continue;
+            }
+            else
+            {
+                if (GetEffectiveOverrideForPath(entry.FullPath) == false)
+                    continue;
+            }
+            var child = new ArchiveNode(entry.Name, entry.FullPath, entry.IsFolder, node, this);
+            node.Children.Add(child);
+        }
+        ApplyExploreFilter();
+    }
+
+    /// <summary>Ensure that all folders currently shown in the Explore view have their children loaded, so expand arrows are visible.</summary>
+    private void PreloadExpandersForCurrentView()
+    {
+        if (ScannedArchiveRoot is null)
+            return;
+        var host = (IArchiveNodeHost)this;
+        var roots = FocusedArchiveNode?.Children ?? ScannedArchiveRoot.Children;
+        foreach (var node in roots)
+        {
+            if (node.IsFolder)
+                host.EnsureChildrenLoaded(node);
+        }
+    }
+
+    private static ArchiveNode? FindChildByName(ArchiveNode parent, string name)
+    {
+        foreach (var c in parent.Children)
+        {
+            if (c.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                return c;
+        }
+        return null;
+    }
+
+    /// <summary>Find a node by its archive FullPath, starting from the root, loading intermediate children as needed.</summary>
+    private ArchiveNode? FindNodeByFullPath(string fullPath)
+    {
+        if (ScannedArchiveRoot is null)
+            return null;
+        if (string.IsNullOrEmpty(fullPath))
+            return ScannedArchiveRoot;
+
+        var host = (IArchiveNodeHost)this;
+        var current = ScannedArchiveRoot;
+        var segments = fullPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var segment in segments)
+        {
+            host.EnsureChildrenLoaded(current);
+            ArchiveNode? next = null;
+            foreach (var child in current.Children)
+            {
+                if (child.Name.Equals(segment, StringComparison.OrdinalIgnoreCase))
+                {
+                    next = child;
+                    break;
+                }
+            }
+            if (next is null)
+                return null;
+            current = next;
+        }
+
+        return current;
+    }
+
+    [RelayCommand(CanExecute = nameof(CanGoBackExplore))]
+    private void GoBackExplore()
+    {
+        if (FocusedArchiveNode is null)
+            return;
+        var parent = FocusedArchiveNode.Parent;
+        if (parent is null || string.IsNullOrEmpty(parent.Name))
+            FocusedArchiveNode = null;
+        else
+            FocusedArchiveNode = parent;
+    }
+
+    [RelayCommand]
+    private void GoToBreadcrumb(ArchiveNode? node)
+    {
+        if (node != null)
+            FocusedArchiveNode = node;
+    }
+
+    [RelayCommand]
+    private void EnterFolder(ArchiveNode? node)
+    {
+        if (node is { IsFolder: true })
+            FocusedArchiveNode = node;
+    }
+
+    private void ExpandAllInSubtree(ArchiveNode node, bool expand)
+    {
+        node.IsExpanded = expand;
+        foreach (var c in node.Children)
+            ExpandAllInSubtree(c, expand);
+    }
+
+    [RelayCommand]
+    private void ExploreExpandAll()
+    {
+        if (ScannedArchiveRoot is null)
+            return;
+        var root = FocusedArchiveNode ?? ScannedArchiveRoot;
+        ExpandAllInSubtree(root, true);
+    }
+
+    [RelayCommand]
+    private void ExploreCollapseAll()
+    {
+        if (ScannedArchiveRoot is null)
+            return;
+        var root = FocusedArchiveNode ?? ScannedArchiveRoot;
+        ExpandAllInSubtree(root, false);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanScanArchive))]
+    public async Task ScanArchiveAsync()
+    {
+        if (!IsPackPath(PackPath) || !File.Exists(PackPath))
+            return;
+        IsBusy = true;
+        ScanArchiveCommand.NotifyCanExecuteChanged();
+        ProgressValue = 0;
+        ProgressMax = 1;
+        SetStatus("Status_ScanningTexturesInPack");
+        AddLogLine(Resources.GetStatusString("Log_ScanningArchive", PackPath ?? ""));
+        var scanProgress = new Progress<(int completed, int total)>(p =>
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                ProgressMax = Math.Max(1, p.total);
+                ProgressValue = p.completed;
+                SetStatus("Status_ScanningPackProgress", p.completed, p.total);
+            });
+        });
+        try
+        {
+            var data = await Task.Run(() => BuildArchiveIndex(PackPath!, scanProgress)).ConfigureAwait(false);
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                _scannedArchiveData = data;
+                _scannedArchivePath = PackPath;
+                var root = new ArchiveNode("", "", true, null, this);
+                (this as IArchiveNodeHost).EnsureChildrenLoaded(root);
+                ScannedArchiveRoot = root;
+                ApplyTextureTypeOverridesToExplore();
+                FocusedArchiveNode = FindChildByName(root, "assets");
+                PreloadExpandersForCurrentView();
+                SetStatus("Status_LoadedTextures", data.FileCount);
+                AddLogLine(Resources.GetStatusString("Log_ArchiveContentsLoaded", data.FileCount));
+            });
+            // Prewarm folder visibility cache for top-level subtrees in the background.
+            Task.Run(PrewarmFolderVisibilityCache);
+        }
+        catch (Exception ex)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                SetStatus("Status_FailedToScan");
+                AddLogLine(ex.ToString());
+            });
+        }
+        finally
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                IsBusy = false;
+                ScanArchiveCommand.NotifyCanExecuteChanged();
+                ConvertCommand.NotifyCanExecuteChanged();
+            });
+        }
+    }
+
+    /// <summary>Build a lightweight index (path -> immediate children) and file count. Only .png files are indexed; only entry names are read.</summary>
+    private static ScannedArchiveData BuildArchiveIndex(string zipPath, IProgress<(int completed, int total)>? progress = null)
+    {
+        var childLists = new Dictionary<string, List<ArchiveChildEntry>>(StringComparer.OrdinalIgnoreCase);
+        var fileCount = 0;
+        using var zip = ZipFile.OpenRead(zipPath);
+        var entries = zip.Entries.ToList();
+        var total = entries.Count;
+        var completed = 0;
+        foreach (var entry in entries)
+        {
+            var full = entry.FullName.TrimEnd('/');
+            if (string.IsNullOrEmpty(full))
+            {
+                progress?.Report((completed, total));
+                completed++;
+                continue;
+            }
+            var isEntryFolder = entry.FullName.EndsWith('/');
+            if (!isEntryFolder && !full.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+            {
+                progress?.Report((completed, total));
+                completed++;
+                continue;
+            }
+            var segments = full.Split('/');
+            var current = "";
+            for (var i = 0; i < segments.Length; i++)
+            {
+                var segment = segments[i];
+                var isLast = i == segments.Length - 1;
+                var isFile = isLast && !isEntryFolder;
+                var path = current.Length == 0 ? segment : current + "/" + segment;
+                var parentPath = current;
+                if (!childLists.TryGetValue(parentPath, out var siblingList))
+                {
+                    siblingList = new List<ArchiveChildEntry>();
+                    childLists[parentPath] = siblingList;
+                }
+                if (siblingList.Exists(c => c.FullPath.Equals(path, StringComparison.OrdinalIgnoreCase)))
+                {
+                    current = path;
+                    continue;
+                }
+                siblingList.Add(new ArchiveChildEntry(segment, path, !isFile));
+                if (isFile)
+                    fileCount++;
+                current = path;
+            }
+            progress?.Report((completed, total));
+            completed++;
+        }
+        var index = childLists.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<ArchiveChildEntry>)kv.Value.AsReadOnly(), StringComparer.OrdinalIgnoreCase);
+        return new ScannedArchiveData(index, fileCount);
+    }
+
+    /// <summary>Convert archive path to converter texture key (e.g. assets/minecraft/textures/block/stone.png -> \minecraft\block\stone).</summary>
+    private static string? ArchivePathToTextureKey(string fullPath)
+    {
+        var parts = fullPath.Replace('\\', '/').Split('/');
+        if (parts.Length < 4 || !parts[0].Equals("assets", StringComparison.OrdinalIgnoreCase))
+            return null;
+        var ns = parts[1];
+        if (parts[2].Equals("textures", StringComparison.OrdinalIgnoreCase))
+        {
+            var after = string.Join("\\", parts.Skip(3));
+            var noExt = Path.ChangeExtension(after, null) ?? after;
+            return "\\" + ns + "\\" + noExt;
+        }
+        if (parts[2].Equals("optifine", StringComparison.OrdinalIgnoreCase))
+        {
+            var after = string.Join("\\", parts.Skip(3));
+            var noExt = Path.ChangeExtension(after, null) ?? after;
+            return "\\" + ns + "\\optifine\\" + noExt;
+        }
+        return null;
+    }
+
+    /// <summary>Collect force-include and force-exclude from path overrides and merge into the ignore set. Most specific path wins.</summary>
+    private void ApplyExploreOverridesToIgnoreSet(HashSet<string> ignore)
+    {
+        if (_scannedArchiveData is null)
+            return;
+        foreach (var fullPath in _scannedArchiveData.EnumerateAllFilePaths())
+        {
+            var key = ArchivePathToTextureKey(fullPath);
+            if (key is null)
+                continue;
+            var effective = GetEffectiveOverrideForPath(fullPath);
+            if (!effective.HasValue)
+                continue;
+            if (effective.Value)
+                ignore.Remove(key);
+            else
+                ignore.Add(key);
+        }
+    }
+
+    private bool? GetEffectiveOverrideForPath(string fullPath)
+    {
+        var path = fullPath;
+        while (!string.IsNullOrEmpty(path))
+        {
+            if (_pathOverrides.TryGetValue(path, out var v) && v.HasValue)
+                return v;
+            var slash = path.LastIndexOf('/');
+            if (slash < 0)
+                break;
+            path = path[..slash];
+        }
+        return null;
+    }
+
+    partial void OnScannedArchiveRootChanged(ArchiveNode? value)
+    {
+        OnPropertyChanged(nameof(HasScannedArchive));
+        OnPropertyChanged(nameof(ShowExploreEmptyMessage));
+        OnPropertyChanged(nameof(ScannedArchiveTopLevel));
+    }
+
+    partial void OnFocusedArchiveNodeChanged(ArchiveNode? value)
+    {
+        if (value is { IsFolder: true })
+            (this as IArchiveNodeHost).EnsureChildrenLoaded(value);
+        PreloadExpandersForCurrentView();
+        OnPropertyChanged(nameof(ExploreViewItems));
+        OnPropertyChanged(nameof(CanGoBackExplore));
+        RebuildExploreBreadcrumb();
+        GoBackExploreCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnSelectedFoliageModeChanged(FoliageModeOption? value)
+    {
+        if (_loadingSettings)
+            return;
+        FoliageMode = value?.Value ?? "Ignore All";
+        SaveSettings();
     }
 
     [RelayCommand(CanExecute = nameof(CanConvert))]
@@ -401,27 +1237,64 @@ public partial class MainWindowViewModel : ViewModelBase
 
         try
         {
-            StatusText = "Loading specular data...";
+            SetStatus("Status_LoadingSpecularData");
             _specularData ??= SpecularData.LoadFromFile(Path.Combine(AppContext.BaseDirectory, "Data", "textures_data.json"));
 
             var ignore = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var item in AllTextureKeys)
-            {
-                if (item.IsIgnored)
-                    ignore.Add(item.Key);
-            }
             if (FoliageMode == "Ignore All")
             {
                 foreach (var p in AutoPbrDefaults.PlantTextureKeys)
                     ignore.Add(p);
             }
+            ApplyExploreOverridesToIgnoreSet(ignore);
+
+            if (!HaveScanForCurrentPack())
+            {
+                AddLogLine(Resources.GetString("Log_ScanningPackForExtraction"));
+                var scanProg = new Progress<(int completed, int total)>(p =>
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        ProgressMax = Math.Max(1, p.total);
+                        ProgressValue = p.completed;
+                        SetStatus("Status_ScanningPackProgress", p.completed, p.total);
+                    }));
+                var scanData = await Task.Run(() => BuildArchiveIndex(PackPath!, scanProg));
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    _scannedArchiveData = scanData;
+                    _scannedArchivePath = PackPath;
+                });
+                AddLogLine(Resources.GetStatusString("Log_IndexedPngEntries", scanData.FileCount));
+            }
+
+            IReadOnlyList<string>? entriesToExtractOnly = null;
+            if (_scannedArchiveData is not null)
+            {
+                var list = _scannedArchiveData.EnumerateAllFilePaths().ToList();
+                list.Add("pack.mcmeta");
+                entriesToExtractOnly = list;
+                AddLogLine(Resources.GetString("Log_ExtractingOnlyPng"));
+            }
+
+            var op = Enum.TryParse<AutoPBR.Core.Models.NormalOperator>(NormalOperator, ignoreCase: true, out var parsedOp)
+                ? parsedOp
+                : AutoPBR.Core.Models.NormalOperator.SobelVc;
+            var ks = NormalKernelSize switch
+            {
+                "5" => AutoPBR.Core.Models.NormalKernelSize.K5,
+                "7" => AutoPBR.Core.Models.NormalKernelSize.K7,
+                _ => AutoPBR.Core.Models.NormalKernelSize.K3
+            };
+            var deriv = Enum.TryParse<AutoPBR.Core.Models.NormalDerivative>(NormalDerivative, ignoreCase: true, out var parsedDeriv)
+                ? parsedDeriv
+                : AutoPBR.Core.Models.NormalDerivative.Luminance;
 
             var options = new AutoPbrOptions
             {
                 NormalIntensity = (float)NormalIntensity,
                 HeightIntensity = (float)HeightIntensity,
                 FastSpecular = FastSpecular,
-                ExperimentalExtractor = ExperimentalExtractor,
+                UseLegacyExtractor = UseLegacyExtractor,
                 SmoothnessScale = (float)SmoothnessScale,
                 MetallicBoost = (float)MetallicBoost,
                 PorosityBias = (int)Math.Round(PorosityBias),
@@ -429,11 +1302,19 @@ public partial class MainWindowViewModel : ViewModelBase
                 TempDirectory = string.IsNullOrWhiteSpace(TempDirectory) ? null : TempDirectory,
                 ProcessBlocks = ProcessBlocks,
                 ProcessItems = ProcessItems,
-                ProcessArmor = ProcessArmor,
+                ProcessArmor = ProcessEntity,
                 ProcessParticles = ProcessParticles,
                 IgnoreTextureKeys = ignore,
                 FoliageMode = FoliageMode,
-                SpecularData = _specularData
+                UseHeightFromNormals = UseHeightFromNormals,
+                UseDeepBumpNormals = UseDeepBumpNormals,
+                DeepBumpModelPath = UseDeepBumpNormals ? Path.Combine(AppContext.BaseDirectory, "Data", "deepbump256.onnx") : null,
+                DeepBumpOverlap = DeepBumpOverlap,
+                NormalOperator = op,
+                NormalKernelSize = ks,
+                NormalDerivative = deriv,
+                SpecularData = _specularData,
+                EntriesToExtractOnly = entriesToExtractOnly
             };
 
             var converter = new ResourcePackConverter();
@@ -445,8 +1326,8 @@ public partial class MainWindowViewModel : ViewModelBase
                     if (_currentStage.HasValue && _currentStage.Value != p.Stage)
                     {
                         var elapsed = (now - _stageStartUtc).TotalSeconds;
-                        var stageName = StageDisplayName(_currentStage.Value);
-                        LogLines.Add($"{stageName} completed in {elapsed:F1} s");
+                        var stageName = GetStageDisplayName(_currentStage.Value);
+                        AddLogLine(Resources.GetStatusString("Log_StageCompleted", stageName, elapsed));
                     }
                     if (p.Stage != ConversionStage.Done)
                     {
@@ -456,71 +1337,73 @@ public partial class MainWindowViewModel : ViewModelBase
                     else
                     {
                         var totalSec = (now - _conversionStartUtc).TotalSeconds;
-                        LogLines.Add($"Total time: {totalSec:F1} s");
+                        AddLogLine(Resources.GetStatusString("Log_TotalTime", totalSec));
                     }
 
                     ProgressMax = Math.Max(1, p.Total);
                     ProgressValue = p.Completed;
+                    if (!string.IsNullOrEmpty(p.InfoMessage))
+                        AddLogLine(p.InfoMessage);
                     if (p.Stage == ConversionStage.Extracting && p.Completed == 0 && p.Total > 0)
-                        LogLines.Add("Extracting...");
+                        AddLogLine(Resources.GetString("Log_Extracting"));
                     if (p.Stage == ConversionStage.Packing && p.Completed == 0 && p.Total > 0)
-                        LogLines.Add("Packing...");
+                        AddLogLine(Resources.GetString("Log_Packing"));
                     if (!string.IsNullOrEmpty(p.CurrentTextureName))
                     {
                         if ((now - _lastLogWriteUtc).TotalMilliseconds >= LogWriteIntervalMs)
                         {
                             _lastLogWriteUtc = now;
-                            var stageLabel = p.Stage switch
-                            {
-                                ConversionStage.GeneratingSpecular => "Specular",
-                                ConversionStage.GeneratingNormals => "Normals",
-                                _ => p.Stage.ToString()
-                            };
-                            LogLines.Add($"{stageLabel}: {p.CurrentTextureName}");
+                            var stageLabel = GetStageDisplayName(p.Stage);
+                            AddLogLine(Resources.GetStatusString("Log_StageCurrent", stageLabel, p.CurrentTextureName));
                         }
                     }
-                    StatusText = p.Stage switch
+                    (_statusKey, _statusFormatArgs) = p.Stage switch
                     {
-                        ConversionStage.Extracting => p.Total > 0 ? $"Extracting pack... ({p.Completed}/{p.Total})" : "Extracting pack...",
-                        ConversionStage.ScanningTextures => "Scanning textures...",
-                        ConversionStage.GeneratingSpecular => $"Specular: {p.CurrentTextureName}",
-                        ConversionStage.GeneratingNormals => $"Normals: {p.CurrentTextureName}",
-                        ConversionStage.Packing => p.Total > 0 ? $"Packing output zip... ({p.Completed}/{p.Total})" : "Packing output zip...",
-                        ConversionStage.Done => "Done.",
-                        _ => p.Stage.ToString()
+                        ConversionStage.Extracting => p.Total > 0 ? ("Status_ExtractingPackProgress", new object[] { p.Completed, p.Total }) : ("Status_ExtractingPack", null),
+                        ConversionStage.ScanningTextures => ("Status_ScanningTextures", null),
+                        ConversionStage.GeneratingSpecular => ("Status_SpecularCurrent", new object[] { p.CurrentTextureName ?? "" }),
+                        ConversionStage.GeneratingNormals => ("Status_NormalsCurrent", new object[] { p.CurrentTextureName ?? "" }),
+                        ConversionStage.Packing => p.Total > 0 ? ("Status_PackingOutputProgress", new object[] { p.Completed, p.Total }) : ("Status_PackingOutput", null),
+                        ConversionStage.Done => ("Status_Done", null),
+                        _ => (_statusKey, _statusFormatArgs)
                     };
+                    UpdateStatusText();
                 });
             });
 
-            LogLines.Add($"Converting → {OutputZipPath}");
+            AddLogLine(Resources.GetStatusString("Log_Converting", OutputZipPath ?? ""));
             await Task.Run(async () =>
                 await converter.ConvertAsync(PackPath!, OutputZipPath!, options, prog, _cts.Token).ConfigureAwait(false));
             // Resume on UI thread so we don't get "Call from invalid thread" when updating bindings.
-            LogLines.Add("Done.");
+            AddLogLine(Resources.GetString("Log_Done"));
         }
         catch (OperationCanceledException)
         {
-            StatusText = "Cancelled.";
-            LogLines.Add("Cancelled.");
+            SetStatus("Status_Cancelled");
+            AddLogLine(Resources.GetString("Log_Cancelled"));
             var totalSec = (DateTime.UtcNow - _conversionStartUtc).TotalSeconds;
-            LogLines.Add($"Total time: {totalSec:F1} s");
+            AddLogLine(Resources.GetStatusString("Log_TotalTime", totalSec));
         }
         catch (Exception ex)
         {
-            StatusText = "Conversion failed.";
-            LogLines.Add(ex.ToString());
+            SetStatus("Status_ConversionFailed");
+            AddLogLine(ex.ToString());
             var totalSec = (DateTime.UtcNow - _conversionStartUtc).TotalSeconds;
-            LogLines.Add($"Total time: {totalSec:F1} s");
+            AddLogLine(Resources.GetStatusString("Log_TotalTime", totalSec));
         }
         finally
         {
+            // Persist the log for this conversion run.
+            SaveLogToFile();
+
             _cts?.Dispose();
             _cts = null;
             IsConverting = false;
             IsBusy = false;
+            ClearScannedArchive();
             ConvertCommand.NotifyCanExecuteChanged();
             CancelCommand.NotifyCanExecuteChanged();
-            LoadTexturesCommand.NotifyCanExecuteChanged();
+            ScanArchiveCommand.NotifyCanExecuteChanged();
         }
     }
 
@@ -539,13 +1422,17 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private bool CanCancel() => IsConverting;
 
-    private static string StageDisplayName(ConversionStage stage) => stage switch
+    private static string GetStageDisplayName(ConversionStage stage)
     {
-        ConversionStage.Extracting => "Extracting",
-        ConversionStage.ScanningTextures => "Scanning",
-        ConversionStage.GeneratingSpecular => "Specular",
-        ConversionStage.GeneratingNormals => "Normals",
-        ConversionStage.Packing => "Packing",
-        _ => stage.ToString()
-    };
+        var key = stage switch
+        {
+            ConversionStage.Extracting => "Log_StageExtracting",
+            ConversionStage.ScanningTextures => "Log_StageScanning",
+            ConversionStage.GeneratingSpecular => "Log_StageSpecular",
+            ConversionStage.GeneratingNormals => "Log_StageNormals",
+            ConversionStage.Packing => "Log_StagePacking",
+            _ => null
+        };
+        return key != null ? Resources.GetString(key) : stage.ToString();
+    }
 }

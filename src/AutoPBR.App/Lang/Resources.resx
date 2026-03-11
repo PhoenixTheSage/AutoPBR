@@ -1,0 +1,445 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" msdata:Ordinal="5" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="ColorScheme" xml:space="preserve">
+    <value>Color scheme</value>
+  </data>
+  <data name="ColorSchemeDark" xml:space="preserve">
+    <value>Dark</value>
+  </data>
+  <data name="ColorSchemeBlue" xml:space="preserve">
+    <value>Blue</value>
+  </data>
+  <data name="ColorSchemeGreen" xml:space="preserve">
+    <value>Green</value>
+  </data>
+  <data name="ColorSchemePurple" xml:space="preserve">
+    <value>Purple</value>
+  </data>
+  <data name="ColorSchemeAmber" xml:space="preserve">
+    <value>Amber</value>
+  </data>
+  <data name="ColorSchemeTeal" xml:space="preserve">
+    <value>Teal</value>
+  </data>
+  <data name="ColorSchemeRose" xml:space="preserve">
+    <value>Rose</value>
+  </data>
+  <data name="ColorSchemeMono" xml:space="preserve">
+    <value>Mono</value>
+  </data>
+  <data name="ColorSchemeOcean" xml:space="preserve">
+    <value>Ocean</value>
+  </data>
+  <data name="ColorSchemeSunset" xml:space="preserve">
+    <value>Sunset</value>
+  </data>
+  <data name="Language" xml:space="preserve">
+    <value>Language</value>
+  </data>
+  <data name="Appearance" xml:space="preserve">
+    <value>Appearance</value>
+  </data>
+  <data name="AppTitle" xml:space="preserve">
+    <value>AutoPBR</value>
+  </data>
+  <data name="AppSubtitle" xml:space="preserve">
+    <value>Convert a Minecraft resource pack to a PBR-friendly pack (specular + normal + height).</value>
+  </data>
+  <data name="TabConvert" xml:space="preserve">
+    <value>Convert</value>
+  </data>
+  <data name="TabScan" xml:space="preserve">
+    <value>Scan</value>
+  </data>
+  <data name="TabExplore" xml:space="preserve">
+    <value>Explore</value>
+  </data>
+  <data name="ScanButton" xml:space="preserve">
+    <value>Scan</value>
+  </data>
+  <data name="ExploreArchiveContents" xml:space="preserve">
+    <value>Archive contents</value>
+  </data>
+  <data name="ResourceExplorer" xml:space="preserve">
+    <value>Resource Explorer</value>
+  </data>
+  <data name="ExploreEmptyMessage" xml:space="preserve">
+    <value>Scan a pack on the Scan tab to explore its contents.</value>
+  </data>
+  <data name="ExploreExpandAll" xml:space="preserve">
+    <value>Expand all</value>
+  </data>
+  <data name="ExploreCollapseAll" xml:space="preserve">
+    <value>Collapse all</value>
+  </data>
+  <data name="ExploreBack" xml:space="preserve">
+    <value>Back</value>
+  </data>
+  <data name="ExploreFocusAssets" xml:space="preserve">
+    <value>assets</value>
+  </data>
+  <data name="TabTune" xml:space="preserve">
+    <value>Tune</value>
+  </data>
+  <data name="TabSettings" xml:space="preserve">
+    <value>Settings</value>
+  </data>
+  <data name="Input" xml:space="preserve">
+    <value>Input</value>
+  </data>
+  <data name="ResourcePackWatermark" xml:space="preserve">
+    <value>Resource pack (.zip or .jar)</value>
+  </data>
+  <data name="Browse" xml:space="preserve">
+    <value>Browse…</value>
+  </data>
+  <data name="Log" xml:space="preserve">
+    <value>Log</value>
+  </data>
+  <data name="Log_Scanning" xml:space="preserve">
+    <value>Scanning: {0}</value>
+  </data>
+  <data name="Log_ScanningArchive" xml:space="preserve">
+    <value>Scanning archive: {0}</value>
+  </data>
+  <data name="Log_ArchiveContentsLoaded" xml:space="preserve">
+    <value>Archive contents loaded ({0} entries).</value>
+  </data>
+  <data name="Log_ScanningPackForExtraction" xml:space="preserve">
+    <value>Scanning pack for extraction list...</value>
+  </data>
+  <data name="Log_IndexedPngEntries" xml:space="preserve">
+    <value>Indexed {0} .png entries; will extract only those + pack.mcmeta.</value>
+  </data>
+  <data name="Log_ExtractingOnlyPng" xml:space="preserve">
+    <value>Extracting only .png textures + pack.mcmeta.</value>
+  </data>
+  <data name="Log_StageCompleted" xml:space="preserve">
+    <value>{0} completed in {1:F1} s</value>
+  </data>
+  <data name="Log_TotalTime" xml:space="preserve">
+    <value>Total time: {0:F1} s</value>
+  </data>
+  <data name="Log_Extracting" xml:space="preserve">
+    <value>Extracting...</value>
+  </data>
+  <data name="Log_Packing" xml:space="preserve">
+    <value>Packing...</value>
+  </data>
+  <data name="Log_StageCurrent" xml:space="preserve">
+    <value>{0}: {1}</value>
+  </data>
+  <data name="Log_Converting" xml:space="preserve">
+    <value>Converting → {0}</value>
+  </data>
+  <data name="Log_Done" xml:space="preserve">
+    <value>Done.</value>
+  </data>
+  <data name="Log_Cancelled" xml:space="preserve">
+    <value>Cancelled.</value>
+  </data>
+  <data name="Log_StageExtracting" xml:space="preserve">
+    <value>Extracting</value>
+  </data>
+  <data name="Log_StageScanning" xml:space="preserve">
+    <value>Scanning</value>
+  </data>
+  <data name="Log_StageSpecular" xml:space="preserve">
+    <value>Specular</value>
+  </data>
+  <data name="Log_StageNormals" xml:space="preserve">
+    <value>Normals</value>
+  </data>
+  <data name="Log_StagePacking" xml:space="preserve">
+    <value>Packing</value>
+  </data>
+  <data name="GenerationSettings" xml:space="preserve">
+    <value>Generation settings</value>
+  </data>
+  <data name="NormalStrength" xml:space="preserve">
+    <value>Normal strength</value>
+  </data>
+  <data name="NormalStrengthTooltip" xml:space="preserve">
+    <value>Strength of the normal map gradient. Higher = more pronounced surface relief.</value>
+  </data>
+  <data name="HeightStrength" xml:space="preserve">
+    <value>Height strength</value>
+  </data>
+  <data name="HeightStrengthTooltip" xml:space="preserve">
+    <value>Exponent for height-from-brightness. Higher = more contrast in the height map.</value>
+  </data>
+  <data name="Derivative" xml:space="preserve">
+    <value>Derivative</value>
+  </data>
+  <data name="NormalDerivative_Luminance" xml:space="preserve">
+    <value>Luminance</value>
+  </data>
+  <data name="NormalDerivative_Color" xml:space="preserve">
+    <value>Color</value>
+  </data>
+  <data name="NormalDerivative_ColorLuminanceBlend" xml:space="preserve">
+    <value>Color + Luminance Blend</value>
+  </data>
+  <data name="NormalDerivative_ColorLuminanceMax" xml:space="preserve">
+    <value>Color + Luminance Max</value>
+  </data>
+  <data name="SmoothnessScale" xml:space="preserve">
+    <value>Smoothness scale</value>
+  </data>
+  <data name="SmoothnessScaleTooltip" xml:space="preserve">
+    <value>Scales the specular smoothness (R channel) for non-metal textures.</value>
+  </data>
+  <data name="MetallicBoost" xml:space="preserve">
+    <value>Metallic boost</value>
+  </data>
+  <data name="MetallicBoostTooltip" xml:space="preserve">
+    <value>Scales the specular response for textures detected as metal.</value>
+  </data>
+  <data name="PorosityBias" xml:space="preserve">
+    <value>Porosity bias</value>
+  </data>
+  <data name="PorosityBiasTooltip" xml:space="preserve">
+    <value>Offset added to the porosity/subsurface channel (LabPBR B). Can be negative.</value>
+  </data>
+  <data name="FastSpecular" xml:space="preserve">
+    <value>Fast specular</value>
+  </data>
+  <data name="FastSpecularTooltip" xml:space="preserve">
+    <value>Use approximate RGB distance for specular matching. Faster but less accurate than full color difference.</value>
+  </data>
+  <data name="Foliage" xml:space="preserve">
+    <value>Foliage:</value>
+  </data>
+  <data name="FoliageTooltip" xml:space="preserve">
+    <value>Ignore All: skip plant textures. No Height: convert plants but no height in normal alpha. Convert All: process plants like everything else.</value>
+  </data>
+  <data name="IgnoreAll" xml:space="preserve">
+    <value>Ignore All</value>
+  </data>
+  <data name="NoHeight" xml:space="preserve">
+    <value>No Height</value>
+  </data>
+  <data name="ConvertAll" xml:space="preserve">
+    <value>Convert All</value>
+  </data>
+  <data name="HeightFromNormals" xml:space="preserve">
+    <value>Height from normals</value>
+  </data>
+  <data name="HeightFromNormalsTooltip" xml:space="preserve">
+    <value>Derive height from the generated normal map (Frankot-Chellappa) instead of from diffuse brightness. Keeps height consistent with normals.</value>
+  </data>
+  <data name="NormalsFromDeepBump" xml:space="preserve">
+    <value>Normals from DeepBump ML</value>
+  </data>
+  <data name="NormalsFromDeepBumpTooltip" xml:space="preserve">
+    <value>Generate normals from the diffuse using the DeepBump ONNX model (deepbump256.onnx). Replaces the built-in Sobel/VC normal generation.</value>
+  </data>
+  <data name="DeepBumpOverlap" xml:space="preserve">
+    <value>Tile overlap</value>
+  </data>
+  <data name="DeepBumpOverlapTooltip" xml:space="preserve">
+    <value>Larger overlap reduces tile seams but is slower. Large is recommended for best quality.</value>
+  </data>
+  <data name="DeepBumpOverlapSmall" xml:space="preserve">
+    <value>Small</value>
+  </data>
+  <data name="DeepBumpOverlapMedium" xml:space="preserve">
+    <value>Medium</value>
+  </data>
+  <data name="DeepBumpOverlapLarge" xml:space="preserve">
+    <value>Large</value>
+  </data>
+  <data name="TextureTypes" xml:space="preserve">
+    <value>Texture types</value>
+  </data>
+  <data name="Blocks" xml:space="preserve">
+    <value>Blocks</value>
+  </data>
+  <data name="BlocksTooltip" xml:space="preserve">
+    <value>Process textures in block and blocks folders.</value>
+  </data>
+  <data name="Items" xml:space="preserve">
+    <value>Items</value>
+  </data>
+  <data name="ItemsTooltip" xml:space="preserve">
+    <value>Process textures in item and items folders.</value>
+  </data>
+  <data name="Armor" xml:space="preserve">
+    <value>Armor</value>
+  </data>
+  <data name="ArmorTooltip" xml:space="preserve">
+    <value>Process textures in the entity folder (armor, etc.).</value>
+  </data>
+  <data name="Entity" xml:space="preserve">
+    <value>Entity</value>
+  </data>
+  <data name="EntityTooltip" xml:space="preserve">
+    <value>Process textures in entity folders.</value>
+  </data>
+  <data name="Particles" xml:space="preserve">
+    <value>Particles</value>
+  </data>
+  <data name="ParticlesTooltip" xml:space="preserve">
+    <value>Process particle textures. Only specular maps are generated (no normal or height).</value>
+  </data>
+  <data name="FilterWatermark" xml:space="preserve">
+    <value>Filter (e.g. \block\stone)</value>
+  </data>
+  <data name="Output" xml:space="preserve">
+    <value>Output</value>
+  </data>
+  <data name="OutputFolderWatermark" xml:space="preserve">
+    <value>Output folder</value>
+  </data>
+  <data name="OutputPathWatermark" xml:space="preserve">
+    <value>Output path</value>
+  </data>
+  <data name="Engine" xml:space="preserve">
+    <value>Engine</value>
+  </data>
+  <data name="MaxThreads" xml:space="preserve">
+    <value>Max threads</value>
+  </data>
+  <data name="MaxThreadsTooltip" xml:space="preserve">
+    <value>Worker threads for conversion. 0 = auto (typically CPU count minus 2).</value>
+  </data>
+  <data name="TempFolder" xml:space="preserve">
+    <value>Temp folder</value>
+  </data>
+  <data name="TempFolderTooltip" xml:space="preserve">
+    <value>Folder for temporary extraction during conversion. Empty = system temp.</value>
+  </data>
+  <data name="TempFolderWatermark" xml:space="preserve">
+    <value>Leave empty for system temp</value>
+  </data>
+  <data name="CustomThreadedExtraction" xml:space="preserve">
+    <value>Custom Threaded Extraction</value>
+  </data>
+  <data name="CustomThreadedExtractionTooltip" xml:space="preserve">
+    <value>Faster extraction on multi-core systems using parallel deflate decompression.</value>
+  </data>
+  <data name="UseLegacyExtractor" xml:space="preserve">
+    <value>Use legacy extractor</value>
+  </data>
+  <data name="UseLegacyExtractorTooltip" xml:space="preserve">
+    <value>Use the older ZipFile-based extractor instead of the default parallel one. Only if you hit issues with exotic zip formats.</value>
+  </data>
+  <data name="Cancel" xml:space="preserve">
+    <value>Cancel</value>
+  </data>
+  <data name="Convert" xml:space="preserve">
+    <value>Convert</value>
+  </data>
+  <data name="UIThemeTooltip" xml:space="preserve">
+    <value>UI theme and accent color.</value>
+  </data>
+  <data name="UILanguageTooltip" xml:space="preserve">
+    <value>UI language.</value>
+  </data>
+  <data name="Status_SelectPack" xml:space="preserve">
+    <value>Select a resource pack (.zip or .jar) and an output folder.</value>
+  </data>
+  <data name="Status_ScanningTexturesInPack" xml:space="preserve">
+    <value>Scanning textures in pack...</value>
+  </data>
+  <data name="Status_ScanningPackProgress" xml:space="preserve">
+    <value>Scanning pack... ({0}/{1})</value>
+  </data>
+  <data name="Status_LoadedTextures" xml:space="preserve">
+    <value>Loaded {0} textures.</value>
+  </data>
+  <data name="Status_FailedToScan" xml:space="preserve">
+    <value>Failed to scan textures.</value>
+  </data>
+  <data name="Status_LoadingSpecularData" xml:space="preserve">
+    <value>Loading specular data...</value>
+  </data>
+  <data name="Status_ExtractingPack" xml:space="preserve">
+    <value>Extracting pack...</value>
+  </data>
+  <data name="Status_ExtractingPackProgress" xml:space="preserve">
+    <value>Extracting pack... ({0}/{1})</value>
+  </data>
+  <data name="Status_ScanningTextures" xml:space="preserve">
+    <value>Scanning textures...</value>
+  </data>
+  <data name="Status_SpecularCurrent" xml:space="preserve">
+    <value>Specular: {0}</value>
+  </data>
+  <data name="Status_NormalsCurrent" xml:space="preserve">
+    <value>Normals: {0}</value>
+  </data>
+  <data name="Status_PackingOutput" xml:space="preserve">
+    <value>Packing output zip...</value>
+  </data>
+  <data name="Status_PackingOutputProgress" xml:space="preserve">
+    <value>Packing output zip... ({0}/{1})</value>
+  </data>
+  <data name="Status_Done" xml:space="preserve">
+    <value>Done.</value>
+  </data>
+  <data name="Status_Cancelled" xml:space="preserve">
+    <value>Cancelled.</value>
+  </data>
+  <data name="Status_ConversionFailed" xml:space="preserve">
+    <value>Conversion failed.</value>
+  </data>
+</root>

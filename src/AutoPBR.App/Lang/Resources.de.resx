@@ -1,0 +1,335 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" msdata:Ordinal="5" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="ColorScheme" xml:space="preserve">
+    <value>Farbschema</value>
+  </data>
+  <data name="ColorSchemeDark" xml:space="preserve"><value>Dunkel</value></data>
+  <data name="ColorSchemeBlue" xml:space="preserve"><value>Blau</value></data>
+  <data name="ColorSchemeGreen" xml:space="preserve"><value>Grün</value></data>
+  <data name="ColorSchemePurple" xml:space="preserve"><value>Lila</value></data>
+  <data name="ColorSchemeAmber" xml:space="preserve"><value>Bernstein</value></data>
+  <data name="ColorSchemeTeal" xml:space="preserve"><value>Türkis</value></data>
+  <data name="ColorSchemeRose" xml:space="preserve"><value>Rose</value></data>
+  <data name="ColorSchemeMono" xml:space="preserve"><value>Mono</value></data>
+  <data name="ColorSchemeOcean" xml:space="preserve"><value>Ozean</value></data>
+  <data name="ColorSchemeSunset" xml:space="preserve"><value>Sonnenuntergang</value></data>
+  <data name="Language" xml:space="preserve">
+    <value>Sprache</value>
+  </data>
+  <data name="Appearance" xml:space="preserve">
+    <value>Darstellung</value>
+  </data>
+  <data name="AppTitle" xml:space="preserve">
+    <value>AutoPBR</value>
+  </data>
+  <data name="AppSubtitle" xml:space="preserve">
+    <value>Konvertiert ein Minecraft-Ressourcenpaket in ein PBR-freundliches Paket (Specular + Normal + Height).</value>
+  </data>
+  <data name="TabConvert" xml:space="preserve">
+    <value>Konvertieren</value>
+  </data>
+  <data name="TabScan" xml:space="preserve"><value>Scannen</value></data>
+  <data name="TabExplore" xml:space="preserve"><value>Durchsuchen</value></data>
+  <data name="ScanButton" xml:space="preserve"><value>Scannen</value></data>
+  <data name="ExploreArchiveContents" xml:space="preserve"><value>Paketinhalt</value></data>
+  <data name="ResourceExplorer" xml:space="preserve"><value>Ressourcen-Explorer</value></data>
+  <data name="ExploreEmptyMessage" xml:space="preserve"><value>Scannen Sie auf der Scannen-Registerkarte ein Paket, um den Inhalt anzuzeigen.</value></data>
+  <data name="ExploreExpandAll" xml:space="preserve"><value>Alle erweitern</value></data>
+  <data name="ExploreCollapseAll" xml:space="preserve"><value>Alle reduzieren</value></data>
+  <data name="ExploreBack" xml:space="preserve"><value>Zurück</value></data>
+  <data name="ExploreFocusAssets" xml:space="preserve"><value>assets</value></data>
+  <data name="TabTune" xml:space="preserve">
+    <value>Anpassen</value>
+  </data>
+  <data name="TabSettings" xml:space="preserve">
+    <value>Einstellungen</value>
+  </data>
+  <data name="Input" xml:space="preserve">
+    <value>Eingabe</value>
+  </data>
+  <data name="ResourcePackWatermark" xml:space="preserve">
+    <value>Ressourcenpaket (.zip oder .jar)</value>
+  </data>
+  <data name="Browse" xml:space="preserve">
+    <value>Durchsuchen…</value>
+  </data>
+  <data name="Log" xml:space="preserve">
+    <value>Protokoll</value>
+  </data>
+  <data name="Log_Scanning" xml:space="preserve"><value>Scannen: {0}</value></data>
+  <data name="Log_ScanningArchive" xml:space="preserve"><value>Archiv wird gescannt: {0}</value></data>
+  <data name="Log_ArchiveContentsLoaded" xml:space="preserve"><value>Archivinhalt geladen ({0} Einträge).</value></data>
+  <data name="Log_ScanningPackForExtraction" xml:space="preserve"><value>Paket wird für Extraktionsliste gescannt...</value></data>
+  <data name="Log_IndexedPngEntries" xml:space="preserve"><value>{0} .png-Einträge indexiert; es werden nur diese + pack.mcmeta extrahiert.</value></data>
+  <data name="Log_ExtractingOnlyPng" xml:space="preserve"><value>Nur .png-Texturen + pack.mcmeta werden extrahiert.</value></data>
+  <data name="Log_StageCompleted" xml:space="preserve"><value>{0} abgeschlossen in {1:F1} s</value></data>
+  <data name="Log_TotalTime" xml:space="preserve"><value>Gesamtzeit: {0:F1} s</value></data>
+  <data name="Log_Extracting" xml:space="preserve"><value>Extrahieren...</value></data>
+  <data name="Log_Packing" xml:space="preserve"><value>Packen...</value></data>
+  <data name="Log_StageCurrent" xml:space="preserve"><value>{0}: {1}</value></data>
+  <data name="Log_Converting" xml:space="preserve"><value>Konvertieren → {0}</value></data>
+  <data name="Log_Done" xml:space="preserve"><value>Fertig.</value></data>
+  <data name="Log_Cancelled" xml:space="preserve"><value>Abgebrochen.</value></data>
+  <data name="Log_StageExtracting" xml:space="preserve"><value>Extrahieren</value></data>
+  <data name="Log_StageScanning" xml:space="preserve"><value>Scannen</value></data>
+  <data name="Log_StageSpecular" xml:space="preserve"><value>Specular</value></data>
+  <data name="Log_StageNormals" xml:space="preserve"><value>Normalen</value></data>
+  <data name="Log_StagePacking" xml:space="preserve"><value>Packen</value></data>
+  <data name="GenerationSettings" xml:space="preserve">
+    <value>Erzeugungseinstellungen</value>
+  </data>
+  <data name="NormalStrength" xml:space="preserve">
+    <value>Normalen-Stärke</value>
+  </data>
+  <data name="NormalStrengthTooltip" xml:space="preserve">
+    <value>Stärke des Normalen-Map-Verlaufs. Höher = ausgeprägtere Oberflächenreliefs.</value>
+  </data>
+  <data name="HeightStrength" xml:space="preserve">
+    <value>Höhen-Stärke</value>
+  </data>
+  <data name="HeightStrengthTooltip" xml:space="preserve">
+    <value>Exponent für Höhe aus Helligkeit. Höher = mehr Kontrast in der Höhenkarte.</value>
+  </data>
+  <data name="Derivative" xml:space="preserve">
+    <value>Ableitung</value>
+  </data>
+  <data name="NormalDerivative_Luminance" xml:space="preserve">
+    <value>Luminanz</value>
+  </data>
+  <data name="NormalDerivative_Color" xml:space="preserve">
+    <value>Farbe</value>
+  </data>
+  <data name="NormalDerivative_ColorLuminanceBlend" xml:space="preserve">
+    <value>Farbe + Luminanz (Mischung)</value>
+  </data>
+  <data name="NormalDerivative_ColorLuminanceMax" xml:space="preserve">
+    <value>Farbe + Luminanz (Max)</value>
+  </data>
+  <data name="SmoothnessScale" xml:space="preserve">
+    <value>Glättungsmaßstab</value>
+  </data>
+  <data name="SmoothnessScaleTooltip" xml:space="preserve">
+    <value>Skaliert die Specular-Glätte (R-Kanal) für Nicht-Metall-Texturen.</value>
+  </data>
+  <data name="MetallicBoost" xml:space="preserve">
+    <value>Metall-Aufwertung</value>
+  </data>
+  <data name="MetallicBoostTooltip" xml:space="preserve">
+    <value>Skaliert die Specular-Reaktion für als Metall erkannte Texturen.</value>
+  </data>
+  <data name="PorosityBias" xml:space="preserve">
+    <value>Porositäts-Versatz</value>
+  </data>
+  <data name="PorosityBiasTooltip" xml:space="preserve">
+    <value>Zu den Porositäts-/Subsurface-Kanal (LabPBR B) addierter Versatz. Kann negativ sein.</value>
+  </data>
+  <data name="FastSpecular" xml:space="preserve">
+    <value>Schnelles Specular</value>
+  </data>
+  <data name="FastSpecularTooltip" xml:space="preserve">
+    <value>Ungefähre RGB-Distanz für Specular-Abgleich. Schneller, aber weniger genau.</value>
+  </data>
+  <data name="Foliage" xml:space="preserve">
+    <value>Vegetation:</value>
+  </data>
+  <data name="FoliageTooltip" xml:space="preserve">
+    <value>Ignore All: Pflanzen überspringen. No Height: Pflanzen ohne Höhe. Convert All: alles konvertieren.</value>
+  </data>
+  <data name="IgnoreAll" xml:space="preserve">
+    <value>Alle ignorieren</value>
+  </data>
+  <data name="NoHeight" xml:space="preserve">
+    <value>Keine Höhe</value>
+  </data>
+  <data name="ConvertAll" xml:space="preserve">
+    <value>Alles konvertieren</value>
+  </data>
+  <data name="HeightFromNormals" xml:space="preserve">
+    <value>Höhe aus Normalen</value>
+  </data>
+  <data name="HeightFromNormalsTooltip" xml:space="preserve">
+    <value>Höhe aus der erzeugten Normalen-Map (Frankot-Chellappa) statt aus Helligkeit.</value>
+  </data>
+  <data name="NormalsFromDeepBump" xml:space="preserve">
+    <value>Normalen per DeepBump ML</value>
+  </data>
+  <data name="NormalsFromDeepBumpTooltip" xml:space="preserve">
+    <value>Normalen aus der Diffusen mit dem DeepBump-ONNX-Modell erzeugen.</value>
+  </data>
+  <data name="DeepBumpOverlap" xml:space="preserve">
+    <value>Kachelüberlappung</value>
+  </data>
+  <data name="DeepBumpOverlapTooltip" xml:space="preserve">
+    <value>Größere Überlappung reduziert Kachelnähte, ist aber langsamer. Groß für beste Qualität.</value>
+  </data>
+  <data name="DeepBumpOverlapSmall" xml:space="preserve">
+    <value>Klein</value>
+  </data>
+  <data name="DeepBumpOverlapMedium" xml:space="preserve">
+    <value>Mittel</value>
+  </data>
+  <data name="DeepBumpOverlapLarge" xml:space="preserve">
+    <value>Groß</value>
+  </data>
+  <data name="TextureTypes" xml:space="preserve">
+    <value>Texturtypen</value>
+  </data>
+  <data name="Blocks" xml:space="preserve">
+    <value>Blöcke</value>
+  </data>
+  <data name="BlocksTooltip" xml:space="preserve">
+    <value>Texturen in block/blocks-Ordnern verarbeiten.</value>
+  </data>
+  <data name="Items" xml:space="preserve">
+    <value>Gegenstände</value>
+  </data>
+  <data name="ItemsTooltip" xml:space="preserve">
+    <value>Texturen in item/items-Ordnern verarbeiten.</value>
+  </data>
+  <data name="Armor" xml:space="preserve">
+    <value>Rüstung</value>
+  </data>
+  <data name="ArmorTooltip" xml:space="preserve">
+    <value>Texturen im entity-Ordner (Rüstung usw.) verarbeiten.</value>
+  </data>
+  <data name="Entity" xml:space="preserve">
+    <value>Entität</value>
+  </data>
+  <data name="EntityTooltip" xml:space="preserve">
+    <value>Texturen in entity-Ordnern verarbeiten.</value>
+  </data>
+  <data name="Particles" xml:space="preserve">
+    <value>Partikel</value>
+  </data>
+  <data name="ParticlesTooltip" xml:space="preserve">
+    <value>Partikeltexturen. Nur Specular-Maps werden erzeugt.</value>
+  </data>
+  <data name="FilterWatermark" xml:space="preserve">
+    <value>Filter (z. B. \block\stone)</value>
+  </data>
+  <data name="Output" xml:space="preserve">
+    <value>Ausgabe</value>
+  </data>
+  <data name="OutputFolderWatermark" xml:space="preserve">
+    <value>Ausgabeordner</value>
+  </data>
+  <data name="OutputPathWatermark" xml:space="preserve">
+    <value>Ausgabepfad</value>
+  </data>
+  <data name="Engine" xml:space="preserve">
+    <value>Engine</value>
+  </data>
+  <data name="MaxThreads" xml:space="preserve">
+    <value>Max. Threads</value>
+  </data>
+  <data name="MaxThreadsTooltip" xml:space="preserve">
+    <value>Arbeits-Threads für die Konvertierung. 0 = automatisch.</value>
+  </data>
+  <data name="TempFolder" xml:space="preserve">
+    <value>Temp-Ordner</value>
+  </data>
+  <data name="TempFolderTooltip" xml:space="preserve">
+    <value>Ordner für temporäre Extraktion. Leer = System-Temp.</value>
+  </data>
+  <data name="TempFolderWatermark" xml:space="preserve">
+    <value>Leer = System-Temp</value>
+  </data>
+  <data name="CustomThreadedExtraction" xml:space="preserve">
+    <value>Parallele Entpackung</value>
+  </data>
+  <data name="CustomThreadedExtractionTooltip" xml:space="preserve">
+    <value>Schnellere Extraktion durch parallele Deflate-Dekompression.</value>
+  </data>
+  <data name="UseLegacyExtractor" xml:space="preserve">
+    <value>Legacy-Extractor verwenden</value>
+  </data>
+  <data name="UseLegacyExtractorTooltip" xml:space="preserve">
+    <value>Statt des parallelen Standard-Extractors den älteren ZipFile-Extractor verwenden. Nur bei Problemen mit exotischen Zip-Formaten aktivieren.</value>
+  </data>
+  <data name="Cancel" xml:space="preserve">
+    <value>Abbrechen</value>
+  </data>
+  <data name="Convert" xml:space="preserve">
+    <value>Konvertieren</value>
+  </data>
+  <data name="UIThemeTooltip" xml:space="preserve">
+    <value>UI-Thema und Akzentfarbe.</value>
+  </data>
+  <data name="UILanguageTooltip" xml:space="preserve">
+    <value>Sprache der Oberfläche.</value>
+  </data>
+  <data name="Status_SelectPack" xml:space="preserve"><value>Ressourcenpaket (.zip oder .jar) und Ausgabeordner wählen.</value></data>
+  <data name="Status_ScanningTexturesInPack" xml:space="preserve"><value>Scanne Texturen im Paket...</value></data>
+  <data name="Status_ScanningPackProgress" xml:space="preserve"><value>Scanne Paket... ({0}/{1})</value></data>
+  <data name="Status_LoadedTextures" xml:space="preserve"><value>{0} Texturen geladen.</value></data>
+  <data name="Status_FailedToScan" xml:space="preserve"><value>Texturen konnten nicht gescannt werden.</value></data>
+  <data name="Status_LoadingSpecularData" xml:space="preserve"><value>Lade Specular-Daten...</value></data>
+  <data name="Status_ExtractingPack" xml:space="preserve"><value>Paket wird entpackt...</value></data>
+  <data name="Status_ExtractingPackProgress" xml:space="preserve"><value>Paket wird entpackt... ({0}/{1})</value></data>
+  <data name="Status_ScanningTextures" xml:space="preserve"><value>Scanne Texturen...</value></data>
+  <data name="Status_SpecularCurrent" xml:space="preserve"><value>Specular: {0}</value></data>
+  <data name="Status_NormalsCurrent" xml:space="preserve"><value>Normalen: {0}</value></data>
+  <data name="Status_PackingOutput" xml:space="preserve"><value>Erstelle Ausgabe-Zip...</value></data>
+  <data name="Status_PackingOutputProgress" xml:space="preserve"><value>Erstelle Ausgabe-Zip... ({0}/{1})</value></data>
+  <data name="Status_Done" xml:space="preserve"><value>Fertig.</value></data>
+  <data name="Status_Cancelled" xml:space="preserve"><value>Abgebrochen.</value></data>
+  <data name="Status_ConversionFailed" xml:space="preserve"><value>Konvertierung fehlgeschlagen.</value></data>
+</root>

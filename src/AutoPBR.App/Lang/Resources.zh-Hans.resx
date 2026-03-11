@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" msdata:Ordinal="5" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="ColorScheme" xml:space="preserve">
+    <value>配色方案</value>
+  </data>
+  <data name="ColorSchemeDark" xml:space="preserve"><value>深色</value></data>
+  <data name="ColorSchemeBlue" xml:space="preserve"><value>蓝色</value></data>
+  <data name="ColorSchemeGreen" xml:space="preserve"><value>绿色</value></data>
+  <data name="ColorSchemePurple" xml:space="preserve"><value>紫色</value></data>
+  <data name="ColorSchemeAmber" xml:space="preserve"><value>琥珀色</value></data>
+  <data name="ColorSchemeTeal" xml:space="preserve"><value>蓝绿色</value></data>
+  <data name="ColorSchemeRose" xml:space="preserve"><value>玫瑰色</value></data>
+  <data name="ColorSchemeMono" xml:space="preserve"><value>单色</value></data>
+  <data name="ColorSchemeOcean" xml:space="preserve"><value>海洋</value></data>
+  <data name="ColorSchemeSunset" xml:space="preserve"><value>日落</value></data>
+  <data name="Language" xml:space="preserve">
+    <value>语言</value>
+  </data>
+  <data name="Appearance" xml:space="preserve">
+    <value>外观</value>
+  </data>
+  <data name="AppTitle" xml:space="preserve"><value>AutoPBR</value></data>
+  <data name="AppSubtitle" xml:space="preserve"><value>将 Minecraft 资源包转换为 PBR 友好包（高光 + 法线 + 高度）。</value></data>
+  <data name="TabConvert" xml:space="preserve"><value>转换</value></data>
+  <data name="TabScan" xml:space="preserve"><value>扫描</value></data>
+  <data name="TabExplore" xml:space="preserve"><value>浏览</value></data>
+  <data name="ScanButton" xml:space="preserve"><value>扫描</value></data>
+  <data name="ExploreArchiveContents" xml:space="preserve"><value>包内容</value></data>
+  <data name="ResourceExplorer" xml:space="preserve"><value>资源管理器</value></data>
+  <data name="ExploreEmptyMessage" xml:space="preserve"><value>请在“扫描”选项卡中扫描包以浏览其内容。</value></data>
+  <data name="ExploreExpandAll" xml:space="preserve"><value>全部展开</value></data>
+  <data name="ExploreCollapseAll" xml:space="preserve"><value>全部折叠</value></data>
+  <data name="ExploreBack" xml:space="preserve"><value>返回</value></data>
+  <data name="ExploreFocusAssets" xml:space="preserve"><value>assets</value></data>
+  <data name="TabTune" xml:space="preserve"><value>调整</value></data>
+  <data name="TabSettings" xml:space="preserve"><value>设置</value></data>
+  <data name="Input" xml:space="preserve"><value>输入</value></data>
+  <data name="ResourcePackWatermark" xml:space="preserve"><value>资源包（.zip 或 .jar）</value></data>
+  <data name="Browse" xml:space="preserve"><value>浏览…</value></data>
+  <data name="Log" xml:space="preserve"><value>日志</value></data>
+  <data name="Log_Scanning" xml:space="preserve"><value>正在扫描：{0}</value></data>
+  <data name="Log_ScanningArchive" xml:space="preserve"><value>正在扫描归档：{0}</value></data>
+  <data name="Log_ArchiveContentsLoaded" xml:space="preserve"><value>已加载归档内容（{0} 项）。</value></data>
+  <data name="Log_ScanningPackForExtraction" xml:space="preserve"><value>正在为提取列表扫描包…</value></data>
+  <data name="Log_IndexedPngEntries" xml:space="preserve"><value>已索引 {0} 个 .png 项；将仅提取这些 + pack.mcmeta。</value></data>
+  <data name="Log_ExtractingOnlyPng" xml:space="preserve"><value>仅提取 .png 纹理 + pack.mcmeta。</value></data>
+  <data name="Log_StageCompleted" xml:space="preserve"><value>{0} 在 {1:F1} 秒内完成</value></data>
+  <data name="Log_TotalTime" xml:space="preserve"><value>总时间：{0:F1} 秒</value></data>
+  <data name="Log_Extracting" xml:space="preserve"><value>正在提取…</value></data>
+  <data name="Log_Packing" xml:space="preserve"><value>正在打包…</value></data>
+  <data name="Log_StageCurrent" xml:space="preserve"><value>{0}：{1}</value></data>
+  <data name="Log_Converting" xml:space="preserve"><value>正在转换 → {0}</value></data>
+  <data name="Log_Done" xml:space="preserve"><value>完成。</value></data>
+  <data name="Log_Cancelled" xml:space="preserve"><value>已取消。</value></data>
+  <data name="Log_StageExtracting" xml:space="preserve"><value>提取</value></data>
+  <data name="Log_StageScanning" xml:space="preserve"><value>扫描</value></data>
+  <data name="Log_StageSpecular" xml:space="preserve"><value>高光</value></data>
+  <data name="Log_StageNormals" xml:space="preserve"><value>法线</value></data>
+  <data name="Log_StagePacking" xml:space="preserve"><value>打包</value></data>
+  <data name="GenerationSettings" xml:space="preserve"><value>生成设置</value></data>
+  <data name="NormalStrength" xml:space="preserve"><value>法线强度</value></data>
+  <data name="NormalStrengthTooltip" xml:space="preserve"><value>法线贴图梯度强度。越高 = 表面凹凸越明显。</value></data>
+  <data name="HeightStrength" xml:space="preserve"><value>高度强度</value></data>
+  <data name="HeightStrengthTooltip" xml:space="preserve"><value>亮度转高度的指数。越高 = 高度图对比度越大。</value></data>
+  <data name="Derivative" xml:space="preserve"><value>导数</value></data>
+  <data name="NormalDerivative_Luminance" xml:space="preserve"><value>亮度</value></data>
+  <data name="NormalDerivative_Color" xml:space="preserve"><value>颜色</value></data>
+  <data name="NormalDerivative_ColorLuminanceBlend" xml:space="preserve"><value>颜色 + 亮度（混合）</value></data>
+  <data name="NormalDerivative_ColorLuminanceMax" xml:space="preserve"><value>颜色 + 亮度（最大）</value></data>
+  <data name="SmoothnessScale" xml:space="preserve"><value>平滑度缩放</value></data>
+  <data name="SmoothnessScaleTooltip" xml:space="preserve"><value>缩放非金属纹理的高光平滑度（R 通道）。</value></data>
+  <data name="MetallicBoost" xml:space="preserve"><value>金属增强</value></data>
+  <data name="MetallicBoostTooltip" xml:space="preserve"><value>缩放被识别为金属的纹理的高光响应。</value></data>
+  <data name="PorosityBias" xml:space="preserve"><value>孔隙度偏移</value></data>
+  <data name="PorosityBiasTooltip" xml:space="preserve"><value>孔隙/次表面通道（LabPBR B）的偏移量。可为负。</value></data>
+  <data name="FastSpecular" xml:space="preserve"><value>快速高光</value></data>
+  <data name="FastSpecularTooltip" xml:space="preserve"><value>使用近似 RGB 距离进行高光匹配。更快但精度较低。</value></data>
+  <data name="Foliage" xml:space="preserve"><value>植被：</value></data>
+  <data name="FoliageTooltip" xml:space="preserve"><value>全部忽略：跳过植物。无高度：植物无高度。全部转换：全部处理。</value></data>
+  <data name="IgnoreAll" xml:space="preserve"><value>全部忽略</value></data>
+  <data name="NoHeight" xml:space="preserve"><value>无高度</value></data>
+  <data name="ConvertAll" xml:space="preserve"><value>全部转换</value></data>
+  <data name="HeightFromNormals" xml:space="preserve"><value>从法线生成高度</value></data>
+  <data name="HeightFromNormalsTooltip" xml:space="preserve"><value>从生成的法线图（Frankot-Chellappa）导出高度，而非亮度。</value></data>
+  <data name="NormalsFromDeepBump" xml:space="preserve"><value>DeepBump ML 法线</value></data>
+  <data name="NormalsFromDeepBumpTooltip" xml:space="preserve"><value>使用 DeepBump ONNX 模型从漫反射生成法线。替代内置 Sobel/VC。</value></data>
+  <data name="DeepBumpOverlap" xml:space="preserve"><value>瓦片重叠</value></data>
+  <data name="DeepBumpOverlapTooltip" xml:space="preserve"><value>重叠越大接缝越少但越慢。推荐大以获得最佳质量。</value></data>
+  <data name="DeepBumpOverlapSmall" xml:space="preserve"><value>小</value></data>
+  <data name="DeepBumpOverlapMedium" xml:space="preserve"><value>中</value></data>
+  <data name="DeepBumpOverlapLarge" xml:space="preserve"><value>大</value></data>
+  <data name="TextureTypes" xml:space="preserve"><value>纹理类型</value></data>
+  <data name="Blocks" xml:space="preserve"><value>方块</value></data>
+  <data name="BlocksTooltip" xml:space="preserve"><value>处理 block 和 blocks 文件夹中的纹理。</value></data>
+  <data name="Items" xml:space="preserve"><value>物品</value></data>
+  <data name="ItemsTooltip" xml:space="preserve"><value>处理 item 和 items 文件夹中的纹理。</value></data>
+  <data name="Armor" xml:space="preserve"><value>盔甲</value></data>
+  <data name="ArmorTooltip" xml:space="preserve"><value>处理 entity 文件夹中的纹理（盔甲等）。</value></data>
+  <data name="Entity" xml:space="preserve"><value>实体</value></data>
+  <data name="EntityTooltip" xml:space="preserve"><value>处理 entity 文件夹中的纹理。</value></data>
+  <data name="Particles" xml:space="preserve"><value>粒子</value></data>
+  <data name="ParticlesTooltip" xml:space="preserve"><value>处理粒子纹理。仅生成高光贴图。</value></data>
+  <data name="FilterWatermark" xml:space="preserve"><value>筛选（例如 \block\stone）</value></data>
+  <data name="Output" xml:space="preserve"><value>输出</value></data>
+  <data name="OutputFolderWatermark" xml:space="preserve"><value>输出文件夹</value></data>
+  <data name="OutputPathWatermark" xml:space="preserve"><value>输出路径</value></data>
+  <data name="Engine" xml:space="preserve"><value>引擎</value></data>
+  <data name="MaxThreads" xml:space="preserve"><value>最大线程数</value></data>
+  <data name="MaxThreadsTooltip" xml:space="preserve"><value>转换工作线程。0 = 自动。</value></data>
+  <data name="TempFolder" xml:space="preserve"><value>临时文件夹</value></data>
+  <data name="TempFolderTooltip" xml:space="preserve"><value>转换时临时解压目录。空 = 系统临时目录。</value></data>
+  <data name="TempFolderWatermark" xml:space="preserve"><value>留空为系统临时目录</value></data>
+  <data name="CustomThreadedExtraction" xml:space="preserve"><value>自定义多线程解压</value></data>
+  <data name="CustomThreadedExtractionTooltip" xml:space="preserve"><value>使用并行 deflate 解压加快解压速度。</value></data>
+  <data name="UseLegacyExtractor" xml:space="preserve"><value>使用旧版解压器</value></data>
+  <data name="UseLegacyExtractorTooltip" xml:space="preserve"><value>使用旧的基于 ZipFile 的解压器替代默认的并行解压器。仅在遇到特殊 zip 格式问题时启用。</value></data>
+  <data name="Cancel" xml:space="preserve"><value>取消</value></data>
+  <data name="Convert" xml:space="preserve"><value>转换</value></data>
+  <data name="UIThemeTooltip" xml:space="preserve"><value>界面主题与强调色。</value></data>
+  <data name="UILanguageTooltip" xml:space="preserve"><value>界面语言。</value></data>
+  <data name="Status_SelectPack" xml:space="preserve"><value>请选择资源包（.zip 或 .jar）和输出文件夹。</value></data>
+  <data name="Status_ScanningTexturesInPack" xml:space="preserve"><value>正在扫描包内纹理…</value></data>
+  <data name="Status_ScanningPackProgress" xml:space="preserve"><value>正在扫描包… ({0}/{1})</value></data>
+  <data name="Status_LoadedTextures" xml:space="preserve"><value>已加载 {0} 个纹理。</value></data>
+  <data name="Status_FailedToScan" xml:space="preserve"><value>扫描纹理失败。</value></data>
+  <data name="Status_LoadingSpecularData" xml:space="preserve"><value>正在加载高光数据…</value></data>
+  <data name="Status_ExtractingPack" xml:space="preserve"><value>正在解压包…</value></data>
+  <data name="Status_ExtractingPackProgress" xml:space="preserve"><value>正在解压包…（{0}/{1}）</value></data>
+  <data name="Status_ScanningTextures" xml:space="preserve"><value>正在扫描纹理…</value></data>
+  <data name="Status_SpecularCurrent" xml:space="preserve"><value>高光：{0}</value></data>
+  <data name="Status_NormalsCurrent" xml:space="preserve"><value>法线：{0}</value></data>
+  <data name="Status_PackingOutput" xml:space="preserve"><value>正在打包输出 zip…</value></data>
+  <data name="Status_PackingOutputProgress" xml:space="preserve"><value>正在打包输出 zip…（{0}/{1}）</value></data>
+  <data name="Status_Done" xml:space="preserve"><value>完成。</value></data>
+  <data name="Status_Cancelled" xml:space="preserve"><value>已取消。</value></data>
+  <data name="Status_ConversionFailed" xml:space="preserve"><value>转换失败。</value></data>
+</root>

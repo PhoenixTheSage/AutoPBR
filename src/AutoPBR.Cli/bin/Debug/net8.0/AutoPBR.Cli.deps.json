@@ -22,6 +22,106 @@
           }
         }
       },
+      "MathNet.Numerics/5.0.0": {
+        "runtime": {
+          "lib/net6.0/MathNet.Numerics.dll": {
+            "assemblyVersion": "5.0.0.0",
+            "fileVersion": "5.0.0.0"
+          }
+        }
+      },
+      "Microsoft.ML.OnnxRuntime.Gpu/1.24.3": {
+        "dependencies": {
+          "Microsoft.ML.OnnxRuntime.Gpu.Linux": "1.24.3",
+          "Microsoft.ML.OnnxRuntime.Gpu.Windows": "1.24.3",
+          "Microsoft.ML.OnnxRuntime.Managed": "1.24.3"
+        }
+      },
+      "Microsoft.ML.OnnxRuntime.Gpu.Linux/1.24.3": {
+        "dependencies": {
+          "Microsoft.ML.OnnxRuntime.Managed": "1.24.3"
+        },
+        "runtimeTargets": {
+          "runtimes/linux-x64/native/libonnxruntime.so": {
+            "rid": "linux-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          },
+          "runtimes/linux-x64/native/libonnxruntime_providers_cuda.so": {
+            "rid": "linux-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          },
+          "runtimes/linux-x64/native/libonnxruntime_providers_shared.so": {
+            "rid": "linux-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          },
+          "runtimes/linux-x64/native/libonnxruntime_providers_tensorrt.so": {
+            "rid": "linux-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          }
+        }
+      },
+      "Microsoft.ML.OnnxRuntime.Gpu.Windows/1.24.3": {
+        "dependencies": {
+          "Microsoft.ML.OnnxRuntime.Managed": "1.24.3"
+        },
+        "runtimeTargets": {
+          "runtimes/win-x64/native/onnxruntime.dll": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "1.24.26.304"
+          },
+          "runtimes/win-x64/native/onnxruntime.lib": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          },
+          "runtimes/win-x64/native/onnxruntime_providers_cuda.dll": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "1.24.26.304"
+          },
+          "runtimes/win-x64/native/onnxruntime_providers_cuda.lib": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          },
+          "runtimes/win-x64/native/onnxruntime_providers_shared.dll": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "1.24.26.304"
+          },
+          "runtimes/win-x64/native/onnxruntime_providers_shared.lib": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          },
+          "runtimes/win-x64/native/onnxruntime_providers_tensorrt.dll": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "1.24.26.304"
+          },
+          "runtimes/win-x64/native/onnxruntime_providers_tensorrt.lib": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          }
+        }
+      },
+      "Microsoft.ML.OnnxRuntime.Managed/1.24.3": {
+        "dependencies": {
+          "System.Numerics.Tensors": "9.0.0"
+        },
+        "runtime": {
+          "lib/net8.0/Microsoft.ML.OnnxRuntime.dll": {
+            "assemblyVersion": "1.24.3.0",
+            "fileVersion": "1.24.3.0"
+          }
+        }
+      },
       "SixLabors.ImageSharp/3.1.12": {
         "runtime": {
           "lib/net6.0/SixLabors.ImageSharp.dll": {
@@ -38,9 +138,19 @@
           }
         }
       },
+      "System.Numerics.Tensors/9.0.0": {
+        "runtime": {
+          "lib/net8.0/System.Numerics.Tensors.dll": {
+            "assemblyVersion": "9.0.0.0",
+            "fileVersion": "9.0.24.52809"
+          }
+        }
+      },
       "AutoPBR.Core/1.0.0": {
         "dependencies": {
           "Colourful": "3.2.0",
+          "MathNet.Numerics": "5.0.0",
+          "Microsoft.ML.OnnxRuntime.Gpu": "1.24.3",
           "SixLabors.ImageSharp": "3.1.12",
           "System.IO.Hashing": "9.0.0"
         },
@@ -66,6 +176,41 @@
       "path": "colourful/3.2.0",
       "hashPath": "colourful.3.2.0.nupkg.sha512"
     },
+    "MathNet.Numerics/5.0.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-pg1W2VwaEQMAiTpGK840hZgzavnqjlCMTVSbtVCXVyT+7AX4mc1o89SPv4TBlAjhgCOo9c1Y+jZ5m3ti2YgGgA==",
+      "path": "mathnet.numerics/5.0.0",
+      "hashPath": "mathnet.numerics.5.0.0.nupkg.sha512"
+    },
+    "Microsoft.ML.OnnxRuntime.Gpu/1.24.3": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-jOpeC4qjdhM1v7adM8RivTBBr/sfaVHeDW7hLyRYF77sOJGJWji9UWr0KeBi6v/RpldrATxowEet4qlODO5dRw==",
+      "path": "microsoft.ml.onnxruntime.gpu/1.24.3",
+      "hashPath": "microsoft.ml.onnxruntime.gpu.1.24.3.nupkg.sha512"
+    },
+    "Microsoft.ML.OnnxRuntime.Gpu.Linux/1.24.3": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-NNi+oGIHoP9zmGh61drAQrx77inqrImI+CliZLKpEePLF1KAsy6KYGMe7qkLQsyth9W1EEvGp380RZFDTGc+5Q==",
+      "path": "microsoft.ml.onnxruntime.gpu.linux/1.24.3",
+      "hashPath": "microsoft.ml.onnxruntime.gpu.linux.1.24.3.nupkg.sha512"
+    },
+    "Microsoft.ML.OnnxRuntime.Gpu.Windows/1.24.3": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-A13nic8Q9jmX4k+1NvHCzKuRSEl4K+fzRPR84xB8I3aGwwNG399G4OcqcSOmxoelDxkc28JsdXNxV8rrP2fKiQ==",
+      "path": "microsoft.ml.onnxruntime.gpu.windows/1.24.3",
+      "hashPath": "microsoft.ml.onnxruntime.gpu.windows.1.24.3.nupkg.sha512"
+    },
+    "Microsoft.ML.OnnxRuntime.Managed/1.24.3": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-XWyszzywN+uuMEEPzrTYLSKM2TJKOGHsjcq0ZY+AeaqJpPB7xi0OikxXhXTc7fcOJ8K0oqvD0dk86fROm3TaRA==",
+      "path": "microsoft.ml.onnxruntime.managed/1.24.3",
+      "hashPath": "microsoft.ml.onnxruntime.managed.1.24.3.nupkg.sha512"
+    },
     "SixLabors.ImageSharp/3.1.12": {
       "type": "package",
       "serviceable": true,
@@ -79,6 +224,13 @@
       "sha512": "sha512-seeO8icDfED/Qwl9PDFUx2Gf/7xv7dPsMnw5PnRwNZuz4EWMpy0wIVohC4MfCcTIoJgp+KUrWG4WH3NPSusQOA==",
       "path": "system.io.hashing/9.0.0",
       "hashPath": "system.io.hashing.9.0.0.nupkg.sha512"
+    },
+    "System.Numerics.Tensors/9.0.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-hyJB4UlpAi19Xr9AXzu2NuagKC4lPfHObNMEAA0HmqFz2rX7wKgzeYzO/jM/eBHDhnUGFFEjk5cOoJaxqg5J4A==",
+      "path": "system.numerics.tensors/9.0.0",
+      "hashPath": "system.numerics.tensors.9.0.0.nupkg.sha512"
     },
     "AutoPBR.Core/1.0.0": {
       "type": "project",

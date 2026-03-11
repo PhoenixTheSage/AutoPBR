@@ -8,12 +8,21 @@
 
   <ItemGroup>
     <PackageReference Include="Colourful" Version="3.2.0" />
+    <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
+    <!-- 1.24.x with CUDA 13.1.x. GPU needs CUDA Toolkit 13.1.x (e.g. 13.1.1) installed (cublasLt64_13.dll etc.); else falls back to CPU. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.24.3" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     <PackageReference Include="System.IO.Hashing" Version="9.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <Content Include="Data\textures_data.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Data\deepbump256.onnx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Data\upscale256.onnx">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

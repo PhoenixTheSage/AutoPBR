@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Text.Json;
 using Colourful;
+using AutoPBR.Core.HeightFromNormals;
 using AutoPBR.Core.Models;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Advanced;
@@ -216,10 +217,10 @@ public sealed class ResourcePackConverter
         {
             await Task.Run(() =>
             {
-                if (options.ExperimentalExtractor)
-                    ParallelZipReader.ExtractZip(inputZipPath, extracted, progress, ConversionStage.Extracting, cancellationToken);
-                else
+                if (options.UseLegacyExtractor)
                     ExtractWithProgress(inputZipPath, extracted, options, progress, cancellationToken);
+                else
+                    ParallelZipReader.ExtractZip(inputZipPath, extracted, progress, ConversionStage.Extracting, cancellationToken, options.EntriesToExtractOnly);
             }).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -257,8 +258,16 @@ public sealed class ResourcePackConverter
     {
         SetThreadName("AutoPBR.Extract");
         List<string> entryNames;
-        using (var archive = ZipFile.OpenRead(inputZipPath))
-            entryNames = archive.Entries.Where(e => !string.IsNullOrEmpty(e.Name)).Select(e => e.FullName).ToList();
+        var extractOnly = options.EntriesToExtractOnly;
+        if (extractOnly is { Count: > 0 })
+        {
+            entryNames = extractOnly.ToList();
+        }
+        else
+        {
+            using (var archive = ZipFile.OpenRead(inputZipPath))
+                entryNames = archive.Entries.Where(e => !string.IsNullOrEmpty(e.Name)).Select(e => e.FullName).ToList();
+        }
 
         var total = entryNames.Count;
         progress?.Report(new ConversionProgress(ConversionStage.Extracting, 0, total));
@@ -772,6 +781,12 @@ public sealed class ResourcePackConverter
             var toProcess = textures.Where(t => !t.SpecularOnly).ToList();
             var total = toProcess.Count;
             var completed = 0;
+            using var deepBumpGenerator = options.UseDeepBumpNormals && !string.IsNullOrWhiteSpace(options.DeepBumpModelPath)
+                ? DeepBumpNormalsGenerator.TryCreate(options.DeepBumpModelPath!)
+                : null;
+
+            if (deepBumpGenerator != null && !deepBumpGenerator.IsUsingGpu)
+                progress?.Report(new ConversionProgress(ConversionStage.GeneratingNormals, 0, total, null, "DeepBump: CUDA not available, using CPU."));
 
             Parallel.ForEach(toProcess, new ParallelOptions { MaxDegreeOfParallelism = GetConversionParallelism(options), CancellationToken = ct }, t =>
             {
@@ -783,12 +798,58 @@ public sealed class ResourcePackConverter
                 var width = size;
                 var height = size;
 
-                var normalIntensity = t.Overrides.NormalIntensity ?? options.NormalIntensity;
-                using var normal = GenerateNormalMap(croppedDiffuse, width, height, normalIntensity, t.Overrides.InvertNormalRed, t.Overrides.InvertNormalGreen);
+                Image<Rgba32> normal;
+                if (deepBumpGenerator != null)
+                {
+                    var overlap = options.DeepBumpOverlap switch
+                    {
+                        "Small" => DeepBumpNormalsGenerator.Overlap.Small,
+                        "Medium" => DeepBumpNormalsGenerator.Overlap.Medium,
+                        "Large" => DeepBumpNormalsGenerator.Overlap.Large,
+                        _ => DeepBumpNormalsGenerator.Overlap.Large
+                    };
+                    Image<Rgba32> diffuseForNormals = croppedDiffuse;
+                    // Upscaling disabled for testing - DeepBump receives original-size diffuse
+                    // using var upscaledDiffuse = (width < 256 || height < 256) ? UpscaleForDeepBump(croppedDiffuse, width, height) : null;
+                    // if (upscaledDiffuse != null)
+                    //     diffuseForNormals = upscaledDiffuse;
+                    normal = deepBumpGenerator.Generate(diffuseForNormals, overlap);
+                    // if (upscaledDiffuse != null)
+                    // {
+                    //     var resized = ResizeNormalTo(normal, width, height);
+                    //     normal.Dispose();
+                    //     normal = resized;
+                    // }
+                }
+                else
+                {
+                    var normalIntensity = t.Overrides.NormalIntensity ?? options.NormalIntensity;
+                    normal = GenerateNormalMap(
+                        croppedDiffuse,
+                        width,
+                        height,
+                        normalIntensity,
+                        t.Overrides.InvertNormalRed,
+                        t.Overrides.InvertNormalGreen,
+                        options.NormalOperator,
+                        options.NormalKernelSize,
+                        options.NormalDerivative);
+                }
+                using (normal)
+                {
 
-                var heightIntensity = t.Overrides.HeightIntensity ?? options.HeightIntensity;
-                var brightness = t.Overrides.HeightBrightness ?? AutoPbrDefaults.DefaultHeightBrightness;
-                var heightMap = GenerateHeightMap(croppedDiffuse, width, height, heightIntensity, brightness, t.Overrides.InvertHeight);
+                HeightMap heightMap;
+                if (options.UseHeightFromNormals)
+                {
+                    var (w, h, data) = FrankotChellappaHeight.FromNormalMap(normal);
+                    heightMap = new HeightMap { Width = w, Height = h, Data = data };
+                }
+                else
+                {
+                    var heightIntensity = t.Overrides.HeightIntensity ?? options.HeightIntensity;
+                    var brightness = t.Overrides.HeightBrightness ?? AutoPbrDefaults.DefaultHeightBrightness;
+                    heightMap = GenerateHeightMap(croppedDiffuse, width, height, heightIntensity, brightness, t.Overrides.InvertHeight);
+                }
 
                 // No Height mode: skip height for plants (and for grass only when significant transparency, so grass blocks keep height).
                 var skipHeightInAlpha = t.IsPlantForNoHeight;
@@ -819,6 +880,7 @@ public sealed class ResourcePackConverter
                 });
 
                 normal.Save(t.NormalPath);
+                }
 
                 var n = Interlocked.Increment(ref completed);
                 progress?.Report(new ConversionProgress(stage, n, total, t.Name));
@@ -826,9 +888,19 @@ public sealed class ResourcePackConverter
         }, ct);
     }
 
-    private static Image<Rgba32> GenerateNormalMap(Image<Rgba32> cropped, int width, int height, float normalIntensity, bool invertR, bool invertG)
+    private static Image<Rgba32> GenerateNormalMap(
+        Image<Rgba32> cropped,
+        int width,
+        int height,
+        float normalIntensity,
+        bool invertR,
+        bool invertG,
+        NormalOperator normalOperator = NormalOperator.SobelVc,
+        NormalKernelSize kernelSize = NormalKernelSize.K3,
+        NormalDerivative derivativeMode = NormalDerivative.Luminance)
     {
-        var grey = new float[width * height];
+        var n = width * height;
+        var grey = new float[n];
         cropped.ProcessPixelRows(acc =>
         {
             for (var y = 0; y < height; y++)
@@ -837,59 +909,91 @@ public sealed class ResourcePackConverter
                 for (var x = 0; x < width; x++)
                 {
                     var p = row[x];
-                    grey[y * width + x] = p.R * 0.3f + p.G * 0.6f + p.B * 0.1f;
+                    grey[y * width + x] = (p.R * 0.3f + p.G * 0.6f + p.B * 0.1f) / 255f;
                 }
             }
         });
 
-        // Optional: small unsharp mask to enhance form without adding speckle
-        var blurred = new float[width * height];
-        for (var y = 0; y < height; y++)
-        for (var x = 0; x < width; x++)
+        // Optional unsharp for luminance (used when derivative uses luminance)
+        if (derivativeMode is NormalDerivative.Luminance or NormalDerivative.ColorLuminanceBlend or NormalDerivative.ColorLuminanceMax)
         {
-            float sum = 0;
-            var count = 0;
-            for (var oy = -1; oy <= 1; oy++)
-            for (var ox = -1; ox <= 1; ox++)
+            var blurred = new float[n];
+            for (var y = 0; y < height; y++)
+            for (var x = 0; x < width; x++)
             {
-                var rx = Reflect(x + ox, width);
-                var ry = Reflect(y + oy, height);
-                sum += grey[ry * width + rx];
-                count++;
+                float sum = 0;
+                var count = 0;
+                for (var oy = -1; oy <= 1; oy++)
+                for (var ox = -1; ox <= 1; ox++)
+                {
+                    var rx = Reflect(x + ox, width);
+                    var ry = Reflect(y + oy, height);
+                    sum += grey[ry * width + rx];
+                    count++;
+                }
+                blurred[y * width + x] = sum / count;
             }
-            blurred[y * width + x] = sum / count;
-        }
-        const float amount = 0.5f;
-        for (var i = 0; i < grey.Length; i++)
-        {
-            var v = grey[i] + amount * (grey[i] - blurred[i]);
-            if (v < 0) v = 0;
-            if (v > 255) v = 255;
-            grey[i] = v;
-        }
-
-        var gx = new float[width * height];
-        var gy = new float[width * height];
-
-        // Sobel kernels.
-        int[,] kx = { { -1, 0, 1 }, { -2, 0, 2 }, { -1, 0, 1 } };
-        int[,] ky = { { -1, -2, -1 }, { 0, 0, 0 }, { 1, 2, 1 } };
-
-        for (var y = 0; y < height; y++)
-        for (var x = 0; x < width; x++)
-        {
-            float sx = 0, sy = 0;
-            for (var oy = -1; oy <= 1; oy++)
-            for (var ox = -1; ox <= 1; ox++)
+            const float amount = 0.5f;
+            for (var i = 0; i < n; i++)
             {
-                var rx = Reflect(x + ox, width);
-                var ry = Reflect(y + oy, height);
-                var v = grey[ry * width + rx];
-                sx += v * kx[oy + 1, ox + 1];
-                sy += v * ky[oy + 1, ox + 1];
+                var v = grey[i] + amount * (grey[i] - blurred[i]);
+                grey[i] = Math.Clamp(v, 0f, 1f);
             }
-            gx[y * width + x] = sx;
-            gy[y * width + x] = sy;
+        }
+
+        CreateGradientKernels(normalOperator, kernelSize, out var kx, out var ky, out var radius);
+
+        var gx = new float[n];
+        var gy = new float[n];
+
+        switch (derivativeMode)
+        {
+            case NormalDerivative.Luminance:
+                ComputeGradients(grey, width, height, kx, ky, radius, gx, gy);
+                break;
+            case NormalDerivative.Color:
+                ComputeColorGradients(cropped, width, height, kx, ky, radius, gx, gy);
+                break;
+            case NormalDerivative.ColorLuminanceBlend:
+                {
+                    var gxL = new float[n];
+                    var gyL = new float[n];
+                    var gxC = new float[n];
+                    var gyC = new float[n];
+                    ComputeGradients(grey, width, height, kx, ky, radius, gxL, gyL);
+                    ComputeColorGradients(cropped, width, height, kx, ky, radius, gxC, gyC);
+                    for (var i = 0; i < n; i++)
+                    {
+                        gx[i] = 0.5f * gxL[i] + 0.5f * gxC[i];
+                        gy[i] = 0.5f * gyL[i] + 0.5f * gyC[i];
+                    }
+                }
+                break;
+            case NormalDerivative.ColorLuminanceMax:
+                {
+                    var gxL = new float[n];
+                    var gyL = new float[n];
+                    var gxC = new float[n];
+                    var gyC = new float[n];
+                    ComputeGradients(grey, width, height, kx, ky, radius, gxL, gyL);
+                    ComputeColorGradients(cropped, width, height, kx, ky, radius, gxC, gyC);
+                    for (var i = 0; i < n; i++)
+                    {
+                        var magL = MathF.Sqrt(gxL[i] * gxL[i] + gyL[i] * gyL[i]);
+                        var magC = MathF.Sqrt(gxC[i] * gxC[i] + gyC[i] * gyC[i]);
+                        if (magL >= magC)
+                        {
+                            gx[i] = gxL[i];
+                            gy[i] = gyL[i];
+                        }
+                        else
+                        {
+                            gx[i] = gxC[i];
+                            gy[i] = gyC[i];
+                        }
+                    }
+                }
+                break;
         }
 
         // VC-Filter magnitude: isotropic edge strength (reduces Sobel blind zones) while we keep direction from (gx, gy)
@@ -972,6 +1076,185 @@ public sealed class ResourcePackConverter
         });
 
         return outImg;
+    }
+
+    private static void ComputeGradients(
+        float[] scalar,
+        int width,
+        int height,
+        float[,] kx,
+        float[,] ky,
+        int radius,
+        float[] gxOut,
+        float[] gyOut)
+    {
+        for (var y = 0; y < height; y++)
+        for (var x = 0; x < width; x++)
+        {
+            float sx = 0, sy = 0;
+            for (var oy = -radius; oy <= radius; oy++)
+            for (var ox = -radius; ox <= radius; ox++)
+            {
+                var rx = Reflect(x + ox, width);
+                var ry = Reflect(y + oy, height);
+                var v = scalar[ry * width + rx];
+                sx += v * kx[oy + radius, ox + radius];
+                sy += v * ky[oy + radius, ox + radius];
+            }
+            gxOut[y * width + x] = sx;
+            gyOut[y * width + x] = sy;
+        }
+    }
+
+    /// <summary>Compute gradients from RGB: at each pixel use (gx, gy) from the channel with largest gradient magnitude.</summary>
+    private static void ComputeColorGradients(
+        Image<Rgba32> img,
+        int width,
+        int height,
+        float[,] kx,
+        float[,] ky,
+        int radius,
+        float[] gxOut,
+        float[] gyOut)
+    {
+        var n = width * height;
+        var r = new float[n];
+        var g = new float[n];
+        var b = new float[n];
+        img.ProcessPixelRows(acc =>
+        {
+            for (var y = 0; y < height; y++)
+            {
+                var row = acc.GetRowSpan(y);
+                for (var x = 0; x < width; x++)
+                {
+                    var p = row[x];
+                    var i = y * width + x;
+                    r[i] = p.R / 255f;
+                    g[i] = p.G / 255f;
+                    b[i] = p.B / 255f;
+                }
+            }
+        });
+        var gxR = new float[n];
+        var gyR = new float[n];
+        var gxG = new float[n];
+        var gyG = new float[n];
+        var gxB = new float[n];
+        var gyB = new float[n];
+        ComputeGradients(r, width, height, kx, ky, radius, gxR, gyR);
+        ComputeGradients(g, width, height, kx, ky, radius, gxG, gyG);
+        ComputeGradients(b, width, height, kx, ky, radius, gxB, gyB);
+        for (var i = 0; i < n; i++)
+        {
+            var magR = MathF.Sqrt(gxR[i] * gxR[i] + gyR[i] * gyR[i]);
+            var magG = MathF.Sqrt(gxG[i] * gxG[i] + gyG[i] * gyG[i]);
+            var magB = MathF.Sqrt(gxB[i] * gxB[i] + gyB[i] * gyB[i]);
+            if (magR >= magG && magR >= magB)
+            {
+                gxOut[i] = gxR[i];
+                gyOut[i] = gyR[i];
+            }
+            else if (magG >= magB)
+            {
+                gxOut[i] = gxG[i];
+                gyOut[i] = gyG[i];
+            }
+            else
+            {
+                gxOut[i] = gxB[i];
+                gyOut[i] = gyB[i];
+            }
+        }
+    }
+
+    /// <summary>
+    /// Build Sobel- or Scharr-like gradient kernels for the requested size. For 3x3, uses classic integer kernels.
+    /// For larger sizes, builds 1D binomial smoothing and central-difference derivative, then forms separable 2D kernels.
+    /// </summary>
+    private static void CreateGradientKernels(
+        NormalOperator op,
+        NormalKernelSize size,
+        out float[,] kx,
+        out float[,] ky,
+        out int radius)
+    {
+        var n = (int)size;
+        if (op == NormalOperator.ScharrVc && n > 5)
+            n = 5; // clamp Scharr to 5x5 max
+        if (n < 3) n = 3;
+        if (n % 2 == 0) n++; // ensure odd
+        radius = n / 2;
+
+        if (n == 3)
+        {
+            if (op == NormalOperator.ScharrVc)
+            {
+                kx = new float[3, 3] { { -3, 0, 3 }, { -10, 0, 10 }, { -3, 0, 3 } };
+                ky = new float[3, 3] { { -3, -10, -3 }, { 0, 0, 0 }, { 3, 10, 3 } };
+            }
+            else
+            {
+                kx = new float[3, 3] { { -1, 0, 1 }, { -2, 0, 2 }, { -1, 0, 1 } };
+                ky = new float[3, 3] { { -1, -2, -1 }, { 0, 0, 0 }, { 1, 2, 1 } };
+            }
+            radius = 1;
+            return;
+        }
+
+        // 1D binomial smoothing kernel (Pascal row).
+        var smooth = new float[n];
+        smooth[0] = 1;
+        for (var i = 1; i < n; i++)
+        {
+            smooth[i] = 1;
+            for (var j = i - 1; j > 0; j--)
+                smooth[j] = smooth[j] + smooth[j - 1];
+        }
+        var smoothSum = smooth.Sum();
+        if (smoothSum > 0)
+        {
+            for (var i = 0; i < n; i++)
+                smooth[i] /= smoothSum;
+        }
+
+        // Central-difference derivative kernel.
+        var center = radius;
+        var deriv = new float[n];
+        for (var i = 0; i < n; i++)
+        {
+            var pos = i - center;
+            deriv[i] = pos * smooth[i];
+        }
+
+        // Scharr-style: emphasize near-center samples a bit more.
+        if (op == NormalOperator.ScharrVc)
+        {
+            for (var i = 0; i < n; i++)
+            {
+                var pos = Math.Abs(i - center);
+                var boost = pos == 0 ? 0.5f : pos == 1 ? 1.5f : 1f;
+                deriv[i] *= boost;
+            }
+        }
+
+        // Normalize derivative kernel.
+        var derivSum = deriv.Sum(v => Math.Abs(v));
+        if (derivSum > 0)
+        {
+            for (var i = 0; i < n; i++)
+                deriv[i] /= derivSum;
+        }
+
+        // Separable 2D kernels.
+        kx = new float[n, n];
+        ky = new float[n, n];
+        for (var y = 0; y < n; y++)
+        for (var x = 0; x < n; x++)
+        {
+            kx[y, x] = smooth[y] * deriv[x];
+            ky[y, x] = deriv[y] * smooth[x];
+        }
     }
 
     private static byte ToByte(float v)
@@ -1058,6 +1341,50 @@ public sealed class ResourcePackConverter
             return img.Clone();
 
         return img.Clone(ctx => ctx.Crop(new SixLabors.ImageSharp.Rectangle(0, 0, s, s)));
+    }
+
+    /// <summary>Upscale diffuse to at least 256 on each dimension with nearest-neighbor for DeepBump (pixel-art friendly).</summary>
+    private static Image<Rgba32> UpscaleForDeepBump(Image<Rgba32> img, int width, int height)
+    {
+        if (width >= 256 && height >= 256)
+            return img.Clone();
+        var scale = Math.Max(256.0 / width, 256.0 / height);
+        var targetW = (int)Math.Ceiling(width * scale);
+        var targetH = (int)Math.Ceiling(height * scale);
+        return img.Clone(ctx => ctx.Resize(targetW, targetH, KnownResamplers.NearestNeighbor));
+    }
+
+    /// <summary>Resize normal map to target size and re-normalize each pixel so blended normals remain unit length.</summary>
+    private static Image<Rgba32> ResizeNormalTo(Image<Rgba32> normal, int targetW, int targetH)
+    {
+        var resized = normal.Clone(ctx => ctx.Resize(targetW, targetH));
+        NormalizeNormalMapInPlace(resized);
+        return resized;
+    }
+
+    private static void NormalizeNormalMapInPlace(Image<Rgba32> img)
+    {
+        img.ProcessPixelRows(acc =>
+        {
+            for (var y = 0; y < acc.Height; y++)
+            {
+                var row = acc.GetRowSpan(y);
+                for (var x = 0; x < acc.Width; x++)
+                {
+                    var p = row[x];
+                    var nx = (p.R / 255f) * 2f - 1f;
+                    var ny = (p.G / 255f) * 2f - 1f;
+                    var nz = MathF.Sqrt(MathF.Max(0f, 1f - nx * nx - ny * ny));
+                    var len = MathF.Sqrt(nx * nx + ny * ny + nz * nz);
+                    if (len < 1e-6f) len = 1f;
+                    row[x] = new Rgba32(
+                        (byte)Math.Clamp((int)((nx / len * 0.5f + 0.5f) * 255f), 0, 255),
+                        (byte)Math.Clamp((int)((ny / len * 0.5f + 0.5f) * 255f), 0, 255),
+                        (byte)Math.Clamp((int)((nz / len * 0.5f + 0.5f) * 255f), 0, 255),
+                        p.A);
+                }
+            }
+        });
     }
 }
 

@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" msdata:Ordinal="5" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="ColorScheme" xml:space="preserve">
+    <value>रंग योजना</value>
+  </data>
+  <data name="ColorSchemeDark" xml:space="preserve"><value>डार्क</value></data>
+  <data name="ColorSchemeBlue" xml:space="preserve"><value>नीला</value></data>
+  <data name="ColorSchemeGreen" xml:space="preserve"><value>हरा</value></data>
+  <data name="ColorSchemePurple" xml:space="preserve"><value>पर्पल</value></data>
+  <data name="ColorSchemeAmber" xml:space="preserve"><value>एम्बर</value></data>
+  <data name="ColorSchemeTeal" xml:space="preserve"><value>टील</value></data>
+  <data name="ColorSchemeRose" xml:space="preserve"><value>रोज़</value></data>
+  <data name="ColorSchemeMono" xml:space="preserve"><value>मोनो</value></data>
+  <data name="ColorSchemeOcean" xml:space="preserve"><value>ओशन</value></data>
+  <data name="ColorSchemeSunset" xml:space="preserve"><value>सनसेट</value></data>
+  <data name="Language" xml:space="preserve">
+    <value>भाषा</value>
+  </data>
+  <data name="Appearance" xml:space="preserve">
+    <value>दिखावट</value>
+  </data>
+  <data name="AppTitle" xml:space="preserve"><value>AutoPBR</value></data>
+  <data name="AppSubtitle" xml:space="preserve"><value>Minecraft रिसोर्स पैक को PBR-अनुकूल पैक (specular + normal + height) में बदलें।</value></data>
+  <data name="TabConvert" xml:space="preserve"><value>कन्वर्ट करें</value></data>
+  <data name="TabScan" xml:space="preserve"><value>स्कैन</value></data>
+  <data name="TabExplore" xml:space="preserve"><value>एक्सप्लोर</value></data>
+  <data name="ScanButton" xml:space="preserve"><value>स्कैन</value></data>
+  <data name="ExploreArchiveContents" xml:space="preserve"><value>पैक सामग्री</value></data>
+  <data name="ResourceExplorer" xml:space="preserve"><value>संसाधन एक्सप्लोरर</value></data>
+  <data name="ExploreEmptyMessage" xml:space="preserve"><value>सामग्री देखने के लिए स्कैन टैब पर पैक स्कैन करें।</value></data>
+  <data name="ExploreExpandAll" xml:space="preserve"><value>सभी विस्तार करें</value></data>
+  <data name="ExploreCollapseAll" xml:space="preserve"><value>सभी संक्षिप्त करें</value></data>
+  <data name="ExploreBack" xml:space="preserve"><value>वापस</value></data>
+  <data name="ExploreFocusAssets" xml:space="preserve"><value>assets</value></data>
+  <data name="TabTune" xml:space="preserve"><value>ट्यून करें</value></data>
+  <data name="TabSettings" xml:space="preserve"><value>सेटिंग्स</value></data>
+  <data name="Input" xml:space="preserve"><value>इनपुट</value></data>
+  <data name="ResourcePackWatermark" xml:space="preserve"><value>रिसोर्स पैक (.zip या .jar)</value></data>
+  <data name="Browse" xml:space="preserve"><value>ब्राउज़…</value></data>
+  <data name="Log" xml:space="preserve"><value>लॉग</value></data>
+  <data name="Log_Scanning" xml:space="preserve"><value>स्कैन हो रहा है: {0}</value></data>
+  <data name="Log_ScanningArchive" xml:space="preserve"><value>आर्काइव स्कैन हो रहा है: {0}</value></data>
+  <data name="Log_ArchiveContentsLoaded" xml:space="preserve"><value>आर्काइव सामग्री लोड हुई ({0} एंट्री)।</value></data>
+  <data name="Log_ScanningPackForExtraction" xml:space="preserve"><value>एक्सट्रैक्शन लिस्ट के लिए पैक स्कैन हो रहा है...</value></data>
+  <data name="Log_IndexedPngEntries" xml:space="preserve"><value>{0} .png एंट्री इंडेक्स हुई; सिर्फ ये + pack.mcmeta एक्सट्रैक्ट होंगी।</value></data>
+  <data name="Log_ExtractingOnlyPng" xml:space="preserve"><value>सिर्फ .png टेक्सचर + pack.mcmeta एक्सट्रैक्ट हो रहे हैं।</value></data>
+  <data name="Log_StageCompleted" xml:space="preserve"><value>{0} {1:F1} s में पूरा हुआ</value></data>
+  <data name="Log_TotalTime" xml:space="preserve"><value>कुल समय: {0:F1} s</value></data>
+  <data name="Log_Extracting" xml:space="preserve"><value>एक्सट्रैक्ट हो रहा है...</value></data>
+  <data name="Log_Packing" xml:space="preserve"><value>पैक हो रहा है...</value></data>
+  <data name="Log_StageCurrent" xml:space="preserve"><value>{0}: {1}</value></data>
+  <data name="Log_Converting" xml:space="preserve"><value>कन्वर्ट हो रहा है → {0}</value></data>
+  <data name="Log_Done" xml:space="preserve"><value>हो गया।</value></data>
+  <data name="Log_Cancelled" xml:space="preserve"><value>कैंसिल किया।</value></data>
+  <data name="Log_StageExtracting" xml:space="preserve"><value>एक्सट्रैक्ट</value></data>
+  <data name="Log_StageScanning" xml:space="preserve"><value>स्कैन</value></data>
+  <data name="Log_StageSpecular" xml:space="preserve"><value>स्पेक्युलर</value></data>
+  <data name="Log_StageNormals" xml:space="preserve"><value>नॉर्मल</value></data>
+  <data name="Log_StagePacking" xml:space="preserve"><value>पैक</value></data>
+  <data name="GenerationSettings" xml:space="preserve"><value>जनरेशन सेटिंग्स</value></data>
+  <data name="NormalStrength" xml:space="preserve"><value>नॉर्मल स्ट्रेंथ</value></data>
+  <data name="NormalStrengthTooltip" xml:space="preserve"><value>नॉर्मल मैप ग्रेडिएंट की ताकत। ज्यादा = ज्यादा रिलीफ।</value></data>
+  <data name="HeightStrength" xml:space="preserve"><value>हाइट स्ट्रेंथ</value></data>
+  <data name="HeightStrengthTooltip" xml:space="preserve"><value>ब्राइटनेस से हाइट का एक्सपोनेंट। ज्यादा = हाइट मैप में ज्यादा कॉन्ट्रास्ट।</value></data>
+  <data name="Derivative" xml:space="preserve"><value>डेरिवेटिव</value></data>
+  <data name="NormalDerivative_Luminance" xml:space="preserve"><value>ल्यूमिनेंस</value></data>
+  <data name="NormalDerivative_Color" xml:space="preserve"><value>रंग</value></data>
+  <data name="NormalDerivative_ColorLuminanceBlend" xml:space="preserve"><value>रंग + ल्यूमिनेंस (ब्लेंड)</value></data>
+  <data name="NormalDerivative_ColorLuminanceMax" xml:space="preserve"><value>रंग + ल्यूमिनेंस (मैक्स)</value></data>
+  <data name="SmoothnessScale" xml:space="preserve"><value>स्मूथनेस स्केल</value></data>
+  <data name="SmoothnessScaleTooltip" xml:space="preserve"><value>नॉन-मेटल टेक्सचर के लिए स्पेक्युलर स्मूथनेस (R चैनल) स्केल करता है।</value></data>
+  <data name="MetallicBoost" xml:space="preserve"><value>मेटैलिक बूस्ट</value></data>
+  <data name="MetallicBoostTooltip" xml:space="preserve"><value>मेटल के रूप में पहचाने गए टेक्सचर के लिए स्पेक्युलर रिस्पॉन्स स्केल करता है।</value></data>
+  <data name="PorosityBias" xml:space="preserve"><value>पोरोसिटी बायस</value></data>
+  <data name="PorosityBiasTooltip" xml:space="preserve"><value>पोरोसिटी/सबसर्फेस चैनल (LabPBR B) में ऑफसेट। नेगेटिव हो सकता है।</value></data>
+  <data name="FastSpecular" xml:space="preserve"><value>फास्ट स्पेक्युलर</value></data>
+  <data name="FastSpecularTooltip" xml:space="preserve"><value>अनुमानित RGB दूरी। तेज़ लेकिन कम सटीक।</value></data>
+  <data name="Foliage" xml:space="preserve"><value>पत्ते:</value></data>
+  <data name="FoliageTooltip" xml:space="preserve"><value>Ignore All: पौधे स्किप। No Height: पौधे बिना हाइट। Convert All: सब कन्वर्ट।</value></data>
+  <data name="IgnoreAll" xml:space="preserve"><value>सब इग्नोर</value></data>
+  <data name="NoHeight" xml:space="preserve"><value>नो हाइट</value></data>
+  <data name="ConvertAll" xml:space="preserve"><value>सब कन्वर्ट</value></data>
+  <data name="HeightFromNormals" xml:space="preserve"><value>नॉर्मल से हाइट</value></data>
+  <data name="HeightFromNormalsTooltip" xml:space="preserve"><value>ब्राइटनेस की जगह जनरेटेड नॉर्मल मैप (Frankot-Chellappa) से हाइट लें।</value></data>
+  <data name="NormalsFromDeepBump" xml:space="preserve"><value>DeepBump ML से नॉर्मल</value></data>
+  <data name="NormalsFromDeepBumpTooltip" xml:space="preserve"><value>DeepBump ONNX मॉडल से डिफ्यूज़ से नॉर्मल जनरेट करें।</value></data>
+  <data name="DeepBumpOverlap" xml:space="preserve"><value>टाइल ओवरलैप</value></data>
+  <data name="DeepBumpOverlapTooltip" xml:space="preserve"><value>बड़ा ओवरलैप सीम कम करता है लेकिन धीमा है। बेहतर गुणवत्ता के लिए लार्ज अनुशंसित।</value></data>
+  <data name="DeepBumpOverlapSmall" xml:space="preserve"><value>छोटा</value></data>
+  <data name="DeepBumpOverlapMedium" xml:space="preserve"><value>मध्यम</value></data>
+  <data name="DeepBumpOverlapLarge" xml:space="preserve"><value>बड़ा</value></data>
+  <data name="TextureTypes" xml:space="preserve"><value>टेक्सचर टाइप</value></data>
+  <data name="Blocks" xml:space="preserve"><value>ब्लॉक</value></data>
+  <data name="BlocksTooltip" xml:space="preserve"><value>block और blocks फोल्डर की टेक्सचर प्रोसेस करें।</value></data>
+  <data name="Items" xml:space="preserve"><value>आइटम</value></data>
+  <data name="ItemsTooltip" xml:space="preserve"><value>item और items फोल्डर की टेक्सचर प्रोसेस करें।</value></data>
+  <data name="Armor" xml:space="preserve"><value>आर्मर</value></data>
+  <data name="ArmorTooltip" xml:space="preserve"><value>entity फोल्डर (आर्मर आदि) की टेक्सचर प्रोसेस करें।</value></data>
+  <data name="Entity" xml:space="preserve"><value>एंटिटी</value></data>
+  <data name="EntityTooltip" xml:space="preserve"><value>entity फोल्डर की टेक्सचर प्रोसेस करें।</value></data>
+  <data name="Particles" xml:space="preserve"><value>पार्टिकल</value></data>
+  <data name="ParticlesTooltip" xml:space="preserve"><value>पार्टिकल टेक्सचर। सिर्फ स्पेक्युलर मैप जनरेट होते हैं।</value></data>
+  <data name="FilterWatermark" xml:space="preserve"><value>फ़िल्टर (जैसे \block\stone)</value></data>
+  <data name="Output" xml:space="preserve"><value>आउटपुट</value></data>
+  <data name="OutputFolderWatermark" xml:space="preserve"><value>आउटपुट फोल्डर</value></data>
+  <data name="OutputPathWatermark" xml:space="preserve"><value>आउटपुट पाथ</value></data>
+  <data name="Engine" xml:space="preserve"><value>इंजन</value></data>
+  <data name="MaxThreads" xml:space="preserve"><value>मैक्स थ्रेड</value></data>
+  <data name="MaxThreadsTooltip" xml:space="preserve"><value>कन्वर्ज़न वर्कर थ्रेड। 0 = ऑटो।</value></data>
+  <data name="TempFolder" xml:space="preserve"><value>टेम्प फोल्डर</value></data>
+  <data name="TempFolderTooltip" xml:space="preserve"><value>कन्वर्ज़न के दौरान टेम्प एक्सट्रैक्शन फोल्डर। खाली = सिस्टम टेम्प।</value></data>
+  <data name="TempFolderWatermark" xml:space="preserve"><value>खाली = सिस्टम टेम्प</value></data>
+  <data name="CustomThreadedExtraction" xml:space="preserve"><value>कस्टम थ्रेडेड एक्सट्रैक्शन</value></data>
+  <data name="CustomThreadedExtractionTooltip" xml:space="preserve"><value>पैरेलल डिफ्लेट से तेज़ एक्सट्रैक्शन।</value></data>
+  <data name="UseLegacyExtractor" xml:space="preserve"><value>पुराना एक्सट्रैक्टर इस्तेमाल करें</value></data>
+  <data name="UseLegacyExtractorTooltip" xml:space="preserve"><value>डिफ़ॉल्ट पैरेलल एक्सट्रैक्टर की जगह पुराने ZipFile-आधारित एक्सट्रैक्टर का उपयोग करें। केवल तब सक्षम करें जब अजीब zip फ़ाइलों के साथ दिक्कत हो।</value></data>
+  <data name="Cancel" xml:space="preserve"><value>कैंसिल</value></data>
+  <data name="Convert" xml:space="preserve"><value>कन्वर्ट</value></data>
+  <data name="UIThemeTooltip" xml:space="preserve"><value>UI थीम और एक्सेंट कलर।</value></data>
+  <data name="UILanguageTooltip" xml:space="preserve"><value>UI भाषा।</value></data>
+  <data name="Status_SelectPack" xml:space="preserve"><value>रिसोर्स पैक (.zip या .jar) और आउटपुट फोल्डर चुनें।</value></data>
+  <data name="Status_ScanningTexturesInPack" xml:space="preserve"><value>पैक में टेक्सचर स्कैन हो रहे हैं...</value></data>
+  <data name="Status_ScanningPackProgress" xml:space="preserve"><value>पैक स्कैन हो रहा है... ({0}/{1})</value></data>
+  <data name="Status_LoadedTextures" xml:space="preserve"><value>{0} टेक्सचर लोड हुए।</value></data>
+  <data name="Status_FailedToScan" xml:space="preserve"><value>टेक्सचर स्कैन विफल।</value></data>
+  <data name="Status_LoadingSpecularData" xml:space="preserve"><value>स्पेक्युलर डेटा लोड हो रहा है...</value></data>
+  <data name="Status_ExtractingPack" xml:space="preserve"><value>पैक एक्सट्रैक्ट हो रहा है...</value></data>
+  <data name="Status_ExtractingPackProgress" xml:space="preserve"><value>पैक एक्सट्रैक्ट हो रहा है... ({0}/{1})</value></data>
+  <data name="Status_ScanningTextures" xml:space="preserve"><value>टेक्सचर स्कैन हो रहे हैं...</value></data>
+  <data name="Status_SpecularCurrent" xml:space="preserve"><value>स्पेक्युलर: {0}</value></data>
+  <data name="Status_NormalsCurrent" xml:space="preserve"><value>नॉर्मल: {0}</value></data>
+  <data name="Status_PackingOutput" xml:space="preserve"><value>आउटपुट zip बन रहा है...</value></data>
+  <data name="Status_PackingOutputProgress" xml:space="preserve"><value>आउटपुट zip बन रहा है... ({0}/{1})</value></data>
+  <data name="Status_Done" xml:space="preserve"><value>हो गया।</value></data>
+  <data name="Status_Cancelled" xml:space="preserve"><value>रद्द।</value></data>
+  <data name="Status_ConversionFailed" xml:space="preserve"><value>कन्वर्ज़न विफल।</value></data>
+</root>

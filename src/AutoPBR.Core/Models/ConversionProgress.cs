@@ -14,6 +14,7 @@ public sealed record ConversionProgress(
     ConversionStage Stage,
     int Completed,
     int Total,
-    string? CurrentTextureName = null
+    string? CurrentTextureName = null,
+    string? InfoMessage = null
 );
 

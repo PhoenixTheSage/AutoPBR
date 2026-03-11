@@ -26,8 +26,10 @@ C:\Users\John_Phoenix\.nuget\packages\avalonia.x11\11.3.12\lib\net8.0\Avalonia.X
 C:\Users\John_Phoenix\.nuget\packages\colourful\3.2.0\lib\net8.0\Colourful.dll
 C:\Users\John_Phoenix\.nuget\packages\communitytoolkit.mvvm\8.2.1\lib\net6.0\CommunityToolkit.Mvvm.dll
 C:\Users\John_Phoenix\.nuget\packages\harfbuzzsharp\8.3.1.1\lib\net8.0\HarfBuzzSharp.dll
+C:\Users\John_Phoenix\.nuget\packages\mathnet.numerics\5.0.0\lib\net6.0\MathNet.Numerics.dll
 C:\Users\John_Phoenix\.nuget\packages\microcom.runtime\0.11.0\lib\net5.0\MicroCom.Runtime.dll
 c:\program files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.24\ref\net8.0\Microsoft.CSharp.dll
+C:\Users\John_Phoenix\.nuget\packages\microsoft.ml.onnxruntime.managed\1.24.3\lib\net8.0\Microsoft.ML.OnnxRuntime.dll
 c:\program files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.24\ref\net8.0\Microsoft.VisualBasic.Core.dll
 c:\program files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.24\ref\net8.0\Microsoft.VisualBasic.dll
 c:\program files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.24\ref\net8.0\Microsoft.Win32.Primitives.dll
@@ -116,6 +118,7 @@ c:\program files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.24\ref\net8.0\System
 c:\program files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.24\ref\net8.0\System.Net.WebSockets.Client.dll
 c:\program files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.24\ref\net8.0\System.Net.WebSockets.dll
 c:\program files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.24\ref\net8.0\System.Numerics.dll
+C:\Users\John_Phoenix\.nuget\packages\system.numerics.tensors\9.0.0\lib\net8.0\System.Numerics.Tensors.dll
 c:\program files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.24\ref\net8.0\System.Numerics.Vectors.dll
 c:\program files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.24\ref\net8.0\System.ObjectModel.dll
 c:\program files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.24\ref\net8.0\System.Reflection.DispatchProxy.dll

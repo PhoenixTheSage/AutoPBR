@@ -2,13 +2,14 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:AutoPBR.App.ViewModels"
         xmlns:m="using:AutoPBR.App.Models"
+        xmlns:lang="clr-namespace:AutoPBR.App.Lang"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
         x:Class="AutoPBR.App.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/avalonia-logo.ico"
-        Title="AutoPBR"
+        Title="{Binding Strings.AppTitle}"
         Width="1000"
         Height="720">
 
@@ -21,28 +22,29 @@
     <Grid RowDefinitions="Auto,*,Auto" Background="{Binding WindowBackground}">
         <Border Background="{DynamicResource SystemControlBackgroundBaseLowBrush}" Padding="16">
             <StackPanel Spacing="4">
-                <TextBlock FontSize="22" FontWeight="SemiBold" Text="AutoPBR" Foreground="{Binding ForegroundBrush}" />
-                <TextBlock Opacity="0.8" Text="Convert a Minecraft resource pack to a PBR-friendly pack (specular + normal + height)." Foreground="{Binding ForegroundBrush}" />
+                <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding Strings.AppTitle}" Foreground="{Binding ForegroundBrush}" />
+                <TextBlock Opacity="0.8" Text="{Binding Strings.AppSubtitle}" TextWrapping="Wrap" Foreground="{Binding ForegroundBrush}" />
             </StackPanel>
         </Border>
 
         <ScrollViewer Grid.Row="1">
             <TabControl Margin="16">
-                <TabItem Header="Convert">
+                <TabItem Header="{Binding Strings.TabScan}">
                     <StackPanel Margin="0,12,0,0" Spacing="16">
                         <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
                             <StackPanel Spacing="10">
-                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Input" />
-                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                                    <TextBox Grid.Column="0" Watermark="Resource pack (.zip or .jar)" Text="{Binding PackPath, Mode=TwoWay}" />
-                                    <Button Grid.Column="1" Content="Browse…" Click="BrowsePack_Click" />
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Strings.Input}" />
+                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                    <TextBox Grid.Column="0" Watermark="{Binding Strings.ResourcePackWatermark}" Text="{Binding PackPath, Mode=TwoWay}" />
+                                    <Button Grid.Column="1" Content="{Binding Strings.ScanButton}" Command="{Binding ScanArchiveCommand}" />
+                                    <Button Grid.Column="2" Content="{Binding Strings.Browse}" Click="BrowsePack_Click" />
                                 </Grid>
                             </StackPanel>
                         </Border>
 
                         <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
                             <StackPanel Spacing="10">
-                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Log" />
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Strings.Log}" />
                                 <Border CornerRadius="6" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="8">
                                     <ScrollViewer Height="200" Name="LogScrollViewer">
                                         <ItemsControl ItemsSource="{Binding LogLines}">
@@ -59,138 +61,290 @@
                     </StackPanel>
                 </TabItem>
 
-                <TabItem Header="Tune">
+                <TabItem Header="{Binding Strings.TabExplore}">
                     <StackPanel Margin="0,12,0,0" Spacing="16">
+                        <!-- Texture types: syncs with folder checkboxes in the tree when a pack is scanned -->
                         <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
                             <StackPanel Spacing="10">
-                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Generation settings" />
-
-                                <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="10">
-                                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Normal strength" />
-                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="1" Maximum="3" SmallChange="0.01" LargeChange="0.1"
-                                            Value="{Binding NormalIntensity, Mode=TwoWay}" />
-                                    <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" Text="{Binding NormalIntensity, StringFormat={}{0:0.###}}" />
-
-                                    <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="Height strength" />
-                                    <Slider Grid.Row="1" Grid.Column="1" Minimum="0.01" Maximum="0.5" SmallChange="0.001" LargeChange="0.01"
-                                            Value="{Binding HeightIntensity, Mode=TwoWay}" />
-                                    <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Text="{Binding HeightIntensity, StringFormat={}{0:0.###}}" />
-
-                                    <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="Smoothness scale" />
-                                    <Slider Grid.Row="2" Grid.Column="1" Minimum="0.5" Maximum="1.5" SmallChange="0.05" LargeChange="0.1"
-                                            Value="{Binding SmoothnessScale, Mode=TwoWay}" />
-                                    <TextBlock Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Text="{Binding SmoothnessScale, StringFormat={}{0:0.##}}" />
-
-                                    <TextBlock Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" Text="Metallic boost" />
-                                    <Slider Grid.Row="3" Grid.Column="1" Minimum="0.5" Maximum="1.5" SmallChange="0.05" LargeChange="0.1"
-                                            Value="{Binding MetallicBoost, Mode=TwoWay}" />
-                                    <TextBlock Grid.Row="3" Grid.Column="2" VerticalAlignment="Center" Text="{Binding MetallicBoost, StringFormat={}{0:0.##}}" />
-
-                                    <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center" Text="Porosity bias" />
-                                    <Slider Grid.Row="4" Grid.Column="1" Minimum="-32" Maximum="32" SmallChange="1" LargeChange="8"
-                                            Value="{Binding PorosityBias, Mode=TwoWay}" />
-                                    <TextBlock Grid.Row="4" Grid.Column="2" VerticalAlignment="Center" Text="{Binding PorosityBias, StringFormat={}{0:0}}" />
-                                </Grid>
-
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Strings.TextureTypes}" />
                                 <StackPanel Orientation="Horizontal" Spacing="16">
-                                    <CheckBox Content="Fast specular (less accurate)" IsChecked="{Binding FastSpecular, Mode=TwoWay}" />
-                                    <TextBlock VerticalAlignment="Center" Text="Foliage:" />
-                                    <ComboBox Width="140" SelectedItem="{Binding FoliageMode, Mode=TwoWay}">
-                                        <x:String>Ignore All</x:String>
-                                        <x:String>No Height</x:String>
-                                        <x:String>Convert All</x:String>
-                                    </ComboBox>
-                                </StackPanel>
-
-                                <TextBlock FontSize="14" FontWeight="SemiBold" Text="Texture types" Margin="0,8,0,0" />
-                                <StackPanel Orientation="Horizontal" Spacing="16">
-                                    <CheckBox Content="Blocks" IsChecked="{Binding ProcessBlocks, Mode=TwoWay}" />
-                                    <CheckBox Content="Items" IsChecked="{Binding ProcessItems, Mode=TwoWay}" />
-                                    <CheckBox Content="Armor (entity)" IsChecked="{Binding ProcessArmor, Mode=TwoWay}" />
-                                    <CheckBox Content="Particles (specular only)" IsChecked="{Binding ProcessParticles, Mode=TwoWay}" />
+                                    <CheckBox Content="{Binding Strings.Blocks}" IsChecked="{Binding ProcessBlocks, Mode=TwoWay}"
+                                        ToolTip.Tip="{Binding Strings.BlocksTooltip}" />
+                                    <CheckBox Content="{Binding Strings.Items}" IsChecked="{Binding ProcessItems, Mode=TwoWay}"
+                                        ToolTip.Tip="{Binding Strings.ItemsTooltip}" />
+                                    <CheckBox Content="{Binding Strings.Armor}" IsChecked="{Binding ProcessArmor, Mode=TwoWay}"
+                                        ToolTip.Tip="{Binding Strings.ArmorTooltip}" />
+                                    <CheckBox Content="{Binding Strings.Entity}" IsChecked="{Binding ProcessEntity, Mode=TwoWay}"
+                                        ToolTip.Tip="{Binding Strings.EntityTooltip}" />
+                                    <CheckBox IsChecked="{Binding ProcessParticles, Mode=TwoWay}" MaxWidth="200"
+                                        ToolTip.Tip="{Binding Strings.ParticlesTooltip}">
+                                        <TextBlock Text="{Binding Strings.Particles}" TextWrapping="Wrap" />
+                                    </CheckBox>
                                 </StackPanel>
                             </StackPanel>
                         </Border>
 
                         <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
                             <StackPanel Spacing="10">
-                                <DockPanel>
-                                    <TextBlock DockPanel.Dock="Left" FontSize="16" FontWeight="SemiBold" Text="Exclude textures" />
-                                    <Button DockPanel.Dock="Right" Content="Load from pack" Command="{Binding LoadTexturesCommand}" />
-                                </DockPanel>
-
-                                <TextBox Watermark="Filter (e.g. \block\stone)" Text="{Binding TextureFilter, Mode=TwoWay}" />
-
-                                <Border CornerRadius="6" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" Padding="8">
-                                    <ScrollViewer Height="240">
-                                        <ItemsControl ItemsSource="{Binding FilteredTextureKeys}">
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Strings.ResourceExplorer}" />
+                                <TextBlock Text="{Binding Strings.ExploreEmptyMessage}" IsVisible="{Binding ShowExploreEmptyMessage}"
+                                    TextWrapping="Wrap" Opacity="0.8" Margin="0,8,0,0" />
+                                <StackPanel x:Name="ExplorePanel" IsVisible="{Binding HasScannedArchive}" Margin="0,8,0,0" Spacing="8">
+                                    <TextBox Watermark="{Binding Strings.FilterWatermark}" Text="{Binding ExploreFilter, Mode=TwoWay}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button Content="{Binding Strings.ExploreBack}" Command="{Binding GoBackExploreCommand}"
+                                            IsEnabled="{Binding CanGoBackExplore}" />
+                                        <ItemsControl ItemsSource="{Binding ExploreBreadcrumb}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <StackPanel Orientation="Horizontal" Spacing="4" />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
                                             <ItemsControl.ItemTemplate>
-                                                <DataTemplate x:DataType="m:TextureKeyItem">
-                                                    <CheckBox IsChecked="{Binding IsIgnored, Mode=TwoWay}" Content="{Binding Key}" />
+                                                <DataTemplate x:DataType="m:ArchiveNode">
+                                                    <Button Content="{Binding Name}" Command="{Binding #ExplorePanel.((vm:MainWindowViewModel)DataContext).GoToBreadcrumbCommand}"
+                                                        CommandParameter="{Binding}" Padding="4,2" />
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
-                                    </ScrollViewer>
-                                </Border>
+                                        <Button Content="{Binding Strings.ExploreExpandAll}" Command="{Binding ExploreExpandAllCommand}" />
+                                        <Button Content="{Binding Strings.ExploreCollapseAll}" Command="{Binding ExploreCollapseAllCommand}" />
+                                    </StackPanel>
+                                    <TreeView ItemsSource="{Binding ExploreViewItems}" x:Name="ExploreTreeView">
+                                        <TreeView.Styles>
+                                            <Style Selector="TreeViewItem">
+                                                <Setter Property="IsExpanded" Value="{Binding $self.((m:ArchiveNode)DataContext).IsExpanded, Mode=TwoWay}" />
+                                                <Setter Property="IsVisible" Value="{Binding $self.((m:ArchiveNode)DataContext).IsVisibleByFilter}" />
+                                            </Style>
+                                        </TreeView.Styles>
+                                        <TreeView.DataTemplates>
+                                            <TreeDataTemplate DataType="m:ArchiveNode" ItemsSource="{Binding Children}">
+                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                    <CheckBox IsChecked="{Binding ManualOverride, Mode=TwoWay}" IsThreeState="True"
+                                                        ToolTip.Tip="Checked = include, Unchecked = exclude, Indeterminate = use other rules" />
+                                                    <Button Content="{Binding Name}" Command="{Binding #ExploreTreeView.((vm:MainWindowViewModel)DataContext).EnterFolderCommand}"
+                                                        CommandParameter="{Binding}" IsVisible="{Binding IsFolder}" Padding="2,0" />
+                                                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" IsVisible="{Binding !IsFolder}" />
+                                                </StackPanel>
+                                            </TreeDataTemplate>
+                                        </TreeView.DataTemplates>
+                                    </TreeView>
+                                </StackPanel>
                             </StackPanel>
                         </Border>
                     </StackPanel>
                 </TabItem>
 
-                <TabItem Header="Settings">
+                <TabItem Header="{Binding Strings.TabTune}">
+                    <StackPanel Margin="0,12,0,0" Spacing="16">
+                        <!-- Normals -->
+                        <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
+                            <StackPanel Spacing="10">
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Normals" />
+                                <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="10">
+                                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.NormalStrength}"
+                                               ToolTip.Tip="{Binding Strings.NormalStrengthTooltip}" />
+                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="1" Maximum="3" SmallChange="0.01" LargeChange="0.1"
+                                            Value="{Binding NormalIntensity, Mode=TwoWay}"
+                                            ToolTip.Tip="{Binding Strings.NormalStrengthTooltip}" />
+                                    <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" Text="{Binding NormalIntensity, StringFormat={}{0:0.###}}" />
+
+                                    <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="Operator" />
+                                    <ComboBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Width="220"
+                                              ItemsSource="{Binding NormalOperatorOptions}"
+                                              SelectedItem="{Binding SelectedNormalOperator, Mode=TwoWay}">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:FoliageModeOption">
+                                                <TextBlock Text="{Binding DisplayName}" />
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+
+                                    <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="Kernel size" />
+                                    <ComboBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Width="220"
+                                              ItemsSource="{Binding NormalKernelSizeOptions}"
+                                              SelectedItem="{Binding SelectedNormalKernelSize, Mode=TwoWay}">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:FoliageModeOption">
+                                                <TextBlock Text="{Binding DisplayName}" />
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+
+                                    <TextBlock Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Derivative}" />
+                                    <ComboBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Width="220"
+                                              ItemsSource="{Binding NormalDerivativeOptions}"
+                                              SelectedItem="{Binding SelectedNormalDerivative, Mode=TwoWay}">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:FoliageModeOption">
+                                                <TextBlock Text="{Binding DisplayName}" />
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                </Grid>
+                                <CheckBox IsChecked="{Binding UseDeepBumpNormals, Mode=TwoWay}" MaxWidth="320"
+                                    ToolTip.Tip="{Binding Strings.NormalsFromDeepBumpTooltip}">
+                                    <TextBlock Text="{Binding Strings.NormalsFromDeepBump}" TextWrapping="Wrap" />
+                                </CheckBox>
+                                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,0" IsVisible="{Binding UseDeepBumpNormals}">
+                                    <TextBlock Text="{Binding Strings.DeepBumpOverlap}" VerticalAlignment="Center"
+                                        ToolTip.Tip="{Binding Strings.DeepBumpOverlapTooltip}" />
+                                    <ComboBox Width="120" ItemsSource="{Binding DeepBumpOverlapOptions}"
+                                        SelectedItem="{Binding SelectedDeepBumpOverlap, Mode=TwoWay}"
+                                        ToolTip.Tip="{Binding Strings.DeepBumpOverlapTooltip}">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding DisplayName}" />
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Specular -->
+                        <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
+                            <StackPanel Spacing="10">
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Specular" />
+                                <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="10">
+                                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.SmoothnessScale}"
+                                               ToolTip.Tip="{Binding Strings.SmoothnessScaleTooltip}" />
+                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="0.5" Maximum="1.5" SmallChange="0.05" LargeChange="0.1"
+                                            Value="{Binding SmoothnessScale, Mode=TwoWay}"
+                                            ToolTip.Tip="{Binding Strings.SmoothnessScaleTooltip}" />
+                                    <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" Text="{Binding SmoothnessScale, StringFormat={}{0:0.##}}" />
+
+                                    <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.MetallicBoost}"
+                                               ToolTip.Tip="{Binding Strings.MetallicBoostTooltip}" />
+                                    <Slider Grid.Row="1" Grid.Column="1" Minimum="0.5" Maximum="1.5" SmallChange="0.05" LargeChange="0.1"
+                                            Value="{Binding MetallicBoost, Mode=TwoWay}"
+                                            ToolTip.Tip="{Binding Strings.MetallicBoostTooltip}" />
+                                    <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Text="{Binding MetallicBoost, StringFormat={}{0:0.##}}" />
+
+                                    <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.PorosityBias}"
+                                               ToolTip.Tip="{Binding Strings.PorosityBiasTooltip}" />
+                                    <Slider Grid.Row="2" Grid.Column="1" Minimum="-32" Maximum="32" SmallChange="1" LargeChange="8"
+                                            Value="{Binding PorosityBias, Mode=TwoWay}"
+                                            ToolTip.Tip="{Binding Strings.PorosityBiasTooltip}" />
+                                    <TextBlock Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Text="{Binding PorosityBias, StringFormat={}{0:0}}" />
+
+                                    <CheckBox Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" IsChecked="{Binding FastSpecular, Mode=TwoWay}" MaxWidth="280"
+                                        ToolTip.Tip="{Binding Strings.FastSpecularTooltip}">
+                                        <TextBlock Text="{Binding Strings.FastSpecular}" TextWrapping="Wrap" />
+                                    </CheckBox>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Height -->
+                        <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
+                            <StackPanel Spacing="10">
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Height" />
+                                <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="10">
+                                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.HeightStrength}"
+                                               ToolTip.Tip="{Binding Strings.HeightStrengthTooltip}" />
+                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="0.01" Maximum="0.5" SmallChange="0.001" LargeChange="0.01"
+                                            Value="{Binding HeightIntensity, Mode=TwoWay}"
+                                            ToolTip.Tip="{Binding Strings.HeightStrengthTooltip}" />
+                                    <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" Text="{Binding HeightIntensity, StringFormat={}{0:0.###}}" />
+
+                                    <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Spacing="16">
+                                        <CheckBox IsChecked="{Binding UseHeightFromNormals, Mode=TwoWay}" MaxWidth="320"
+                                            ToolTip.Tip="{Binding Strings.HeightFromNormalsTooltip}">
+                                            <TextBlock Text="{Binding Strings.HeightFromNormals}" TextWrapping="Wrap" />
+                                        </CheckBox>
+                                        <TextBlock VerticalAlignment="Center" Text="{Binding Strings.Foliage}"
+                                                   ToolTip.Tip="{Binding Strings.FoliageTooltip}" />
+                                        <ComboBox Width="140" ItemsSource="{Binding FoliageModeOptions}"
+                                            SelectedItem="{Binding SelectedFoliageMode, Mode=TwoWay}"
+                                            ToolTip.Tip="{Binding Strings.FoliageTooltip}">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:FoliageModeOption">
+                                                    <TextBlock Text="{Binding DisplayName}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </TabItem>
+
+                <TabItem Header="{Binding Strings.TabSettings}">
                     <StackPanel Margin="0,12,0,0" Spacing="16">
                         <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
                             <StackPanel Spacing="10">
-                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Output" />
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Strings.Output}" />
                                 <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="8">
-                                    <TextBox Grid.Row="0" Grid.Column="0" Watermark="Output folder" Text="{Binding OutputDirectory, Mode=TwoWay}" />
-                                    <Button Grid.Row="0" Grid.Column="1" Content="Browse…" Click="BrowseOutput_Click" />
+                                    <TextBox Grid.Row="0" Grid.Column="0" Watermark="{Binding Strings.OutputFolderWatermark}" Text="{Binding OutputDirectory, Mode=TwoWay}" />
+                                    <Button Grid.Row="0" Grid.Column="1" Content="{Binding Strings.Browse}" Click="BrowseOutput_Click" />
 
-                                    <TextBox Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" IsReadOnly="True" Watermark="Output path" Text="{Binding OutputZipPath}" />
+                                    <TextBox Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" IsReadOnly="True" Watermark="{Binding Strings.OutputPathWatermark}" Text="{Binding OutputZipPath}" />
                                 </Grid>
                             </StackPanel>
                         </Border>
 
                         <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
                             <StackPanel Spacing="10">
-                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Engine" />
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Strings.Engine}" />
 
                                 <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="10">
-                                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Max threads" />
+                                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.MaxThreads}"
+                                               ToolTip.Tip="{Binding Strings.MaxThreadsTooltip}" />
                                     <Slider Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="{Binding MaxThreadsMax}" SmallChange="1" LargeChange="1"
                                             TickFrequency="1" IsSnapToTickEnabled="True"
-                                            Value="{Binding MaxThreads, Mode=TwoWay}" />
+                                            Value="{Binding MaxThreads, Mode=TwoWay}"
+                                            ToolTip.Tip="{Binding Strings.MaxThreadsTooltip}" />
                                     <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center"
                                                Text="{Binding MaxThreads, StringFormat={}{0:0}}" />
 
-                                    <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="Temp folder" />
+                                    <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.TempFolder}"
+                                               ToolTip.Tip="{Binding Strings.TempFolderTooltip}" />
                                     <TextBox Grid.Row="1" Grid.Column="1" Margin="0,2,0,0"
-                                             Watermark="Leave empty for system temp"
-                                             Text="{Binding TempDirectory, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                             Watermark="{Binding Strings.TempFolderWatermark}"
+                                             Text="{Binding TempDirectory, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip.Tip="{Binding Strings.TempFolderTooltip}" />
                                     <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Text=" " />
                                 </Grid>
 
-                                <CheckBox Content="Experimental parallel extraction (custom zip reader; may miss files, for testing only)" IsChecked="{Binding ExperimentalExtractor, Mode=TwoWay}" />
+                                <CheckBox IsChecked="{Binding UseLegacyExtractor, Mode=TwoWay}" MaxWidth="280"
+                                    ToolTip.Tip="{Binding Strings.UseLegacyExtractorTooltip}">
+                                    <TextBlock Text="{Binding Strings.UseLegacyExtractor}" TextWrapping="Wrap" />
+                                </CheckBox>
                             </StackPanel>
                         </Border>
 
                         <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
                             <StackPanel Spacing="10">
-                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Appearance" />
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <TextBlock VerticalAlignment="Center" Text="Color scheme" />
-                                    <ComboBox Width="220" SelectedItem="{Binding ColorScheme, Mode=TwoWay}">
-                                        <x:String>Dark</x:String>
-                                        <x:String>Blue</x:String>
-                                        <x:String>Green</x:String>
-                                        <x:String>Purple</x:String>
-                                        <x:String>Amber</x:String>
-                                        <x:String>Teal</x:String>
-                                        <x:String>Rose</x:String>
-                                        <x:String>Mono</x:String>
-                                        <x:String>Ocean</x:String>
-                                        <x:String>Sunset</x:String>
-                                    </ComboBox>
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Strings.Appearance}" />
+                                <StackPanel Orientation="Horizontal" Spacing="16">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock VerticalAlignment="Center" Text="{Binding Strings.ColorScheme}"
+                                                   ToolTip.Tip="{Binding Strings.UIThemeTooltip}" />
+                                        <ComboBox Width="220" ItemsSource="{Binding ColorSchemeOptions}"
+                                            SelectedItem="{Binding SelectedColorSchemeOption, Mode=TwoWay}"
+                                            ToolTip.Tip="{Binding Strings.UIThemeTooltip}">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:FoliageModeOption">
+                                                    <TextBlock Text="{Binding DisplayName}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock VerticalAlignment="Center" Text="{Binding Strings.Language}"
+                                                   ToolTip.Tip="{Binding Strings.UILanguageTooltip}" />
+                                        <ComboBox Width="160" ItemsSource="{Binding SupportedLanguages}"
+                                            SelectedItem="{Binding SelectedLanguage, Mode=TwoWay}"
+                                            ToolTip.Tip="{Binding Strings.UILanguageTooltip}">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:LanguageOption">
+                                                    <TextBlock Text="{Binding DisplayName}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </StackPanel>
                                 </StackPanel>
                             </StackPanel>
                         </Border>
@@ -202,12 +356,12 @@
         <Border Grid.Row="2" Background="{Binding WindowBackground}" Padding="12">
             <DockPanel LastChildFill="True">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8">
-                    <Button Content="Cancel" Command="{Binding CancelCommand}" IsEnabled="{Binding IsConverting}" />
-                    <Button Content="Convert" Command="{Binding ConvertCommand}" />
+                    <Button Content="{Binding Strings.Cancel}" Command="{Binding CancelCommand}" IsEnabled="{Binding IsConverting}" />
+                    <Button Content="{Binding Strings.Convert}" Command="{Binding ConvertCommand}" />
                 </StackPanel>
 
                 <StackPanel Orientation="Vertical" Margin="0,0,8,0">
-                    <TextBlock Text="{Binding StatusText}" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" Margin="0,0,0,4" />
                     <ProgressBar Minimum="0" Maximum="{Binding ProgressMax}" Value="{Binding ProgressValue}" Height="16" Foreground="{Binding AccentBrush}" />
                 </StackPanel>
             </DockPanel>

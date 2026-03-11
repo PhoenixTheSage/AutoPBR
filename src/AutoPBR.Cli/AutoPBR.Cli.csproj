@@ -8,6 +8,14 @@
     <Content Include="..\AutoPBR.Core\Data\textures_data.json" Link="Data\textures_data.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="..\AutoPBR.Core\Data\deepbump256.onnx" Link="Data\deepbump256.onnx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\AutoPBR.Core\Data\upscale256.onnx" Link="Data\upscale256.onnx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- CUDA/cuDNN runtime DLLs from Core Data; copied to runtimes\win-x64\native for ONNX GPU -->
+    <Content Include="..\AutoPBR.Core\Data\native\*.dll" Link="runtimes\win-x64\native\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <PropertyGroup>

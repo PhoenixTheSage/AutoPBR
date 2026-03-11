@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" msdata:Ordinal="5" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="ColorScheme" xml:space="preserve">
+    <value>Цветовая схема</value>
+  </data>
+  <data name="ColorSchemeDark" xml:space="preserve"><value>Тёмная</value></data>
+  <data name="ColorSchemeBlue" xml:space="preserve"><value>Синяя</value></data>
+  <data name="ColorSchemeGreen" xml:space="preserve"><value>Зелёная</value></data>
+  <data name="ColorSchemePurple" xml:space="preserve"><value>Фиолетовая</value></data>
+  <data name="ColorSchemeAmber" xml:space="preserve"><value>Янтарная</value></data>
+  <data name="ColorSchemeTeal" xml:space="preserve"><value>Бирюзовая</value></data>
+  <data name="ColorSchemeRose" xml:space="preserve"><value>Розовая</value></data>
+  <data name="ColorSchemeMono" xml:space="preserve"><value>Моно</value></data>
+  <data name="ColorSchemeOcean" xml:space="preserve"><value>Океан</value></data>
+  <data name="ColorSchemeSunset" xml:space="preserve"><value>Закат</value></data>
+  <data name="Language" xml:space="preserve">
+    <value>Язык</value>
+  </data>
+  <data name="Appearance" xml:space="preserve">
+    <value>Внешний вид</value>
+  </data>
+  <data name="AppTitle" xml:space="preserve"><value>AutoPBR</value></data>
+  <data name="AppSubtitle" xml:space="preserve"><value>Преобразование ресурспака Minecraft в PBR-пакет (specular + normal + height).</value></data>
+  <data name="TabConvert" xml:space="preserve"><value>Конвертировать</value></data>
+  <data name="TabScan" xml:space="preserve"><value>Сканировать</value></data>
+  <data name="TabExplore" xml:space="preserve"><value>Обзор</value></data>
+  <data name="ScanButton" xml:space="preserve"><value>Сканировать</value></data>
+  <data name="ExploreArchiveContents" xml:space="preserve"><value>Содержимое пакета</value></data>
+  <data name="ResourceExplorer" xml:space="preserve"><value>Обозреватель ресурсов</value></data>
+  <data name="ExploreEmptyMessage" xml:space="preserve"><value>Отсканируйте пакет на вкладке Сканировать, чтобы просмотреть содержимое.</value></data>
+  <data name="ExploreExpandAll" xml:space="preserve"><value>Развернуть все</value></data>
+  <data name="ExploreCollapseAll" xml:space="preserve"><value>Свернуть все</value></data>
+  <data name="ExploreBack" xml:space="preserve"><value>Назад</value></data>
+  <data name="ExploreFocusAssets" xml:space="preserve"><value>assets</value></data>
+  <data name="TabTune" xml:space="preserve"><value>Настройки</value></data>
+  <data name="TabSettings" xml:space="preserve"><value>Параметры</value></data>
+  <data name="Input" xml:space="preserve"><value>Ввод</value></data>
+  <data name="ResourcePackWatermark" xml:space="preserve"><value>Ресурспак (.zip или .jar)</value></data>
+  <data name="Browse" xml:space="preserve"><value>Обзор…</value></data>
+  <data name="Log" xml:space="preserve"><value>Журнал</value></data>
+  <data name="Log_Scanning" xml:space="preserve"><value>Сканирование: {0}</value></data>
+  <data name="Log_ScanningArchive" xml:space="preserve"><value>Сканирование архива: {0}</value></data>
+  <data name="Log_ArchiveContentsLoaded" xml:space="preserve"><value>Содержимое архива загружено ({0} записей).</value></data>
+  <data name="Log_ScanningPackForExtraction" xml:space="preserve"><value>Сканирование пакета для списка извлечения...</value></data>
+  <data name="Log_IndexedPngEntries" xml:space="preserve"><value>Проиндексировано {0} записей .png; будут извлечены только они + pack.mcmeta.</value></data>
+  <data name="Log_ExtractingOnlyPng" xml:space="preserve"><value>Извлекаются только текстуры .png + pack.mcmeta.</value></data>
+  <data name="Log_StageCompleted" xml:space="preserve"><value>{0} завершено за {1:F1} с</value></data>
+  <data name="Log_TotalTime" xml:space="preserve"><value>Общее время: {0:F1} с</value></data>
+  <data name="Log_Extracting" xml:space="preserve"><value>Извлечение...</value></data>
+  <data name="Log_Packing" xml:space="preserve"><value>Упаковка...</value></data>
+  <data name="Log_StageCurrent" xml:space="preserve"><value>{0}: {1}</value></data>
+  <data name="Log_Converting" xml:space="preserve"><value>Конвертация → {0}</value></data>
+  <data name="Log_Done" xml:space="preserve"><value>Готово.</value></data>
+  <data name="Log_Cancelled" xml:space="preserve"><value>Отменено.</value></data>
+  <data name="Log_StageExtracting" xml:space="preserve"><value>Извлечение</value></data>
+  <data name="Log_StageScanning" xml:space="preserve"><value>Сканирование</value></data>
+  <data name="Log_StageSpecular" xml:space="preserve"><value>Specular</value></data>
+  <data name="Log_StageNormals" xml:space="preserve"><value>Нормали</value></data>
+  <data name="Log_StagePacking" xml:space="preserve"><value>Упаковка</value></data>
+  <data name="GenerationSettings" xml:space="preserve"><value>Параметры генерации</value></data>
+  <data name="NormalStrength" xml:space="preserve"><value>Сила нормалей</value></data>
+  <data name="NormalStrengthTooltip" xml:space="preserve"><value>Сила градиента карты нормалей. Выше = более выраженный рельеф.</value></data>
+  <data name="HeightStrength" xml:space="preserve"><value>Сила высоты</value></data>
+  <data name="HeightStrengthTooltip" xml:space="preserve"><value>Экспонента для высоты из яркости. Выше = больше контраста в карте высот.</value></data>
+  <data name="Derivative" xml:space="preserve"><value>Производная</value></data>
+  <data name="NormalDerivative_Luminance" xml:space="preserve"><value>Яркость</value></data>
+  <data name="NormalDerivative_Color" xml:space="preserve"><value>Цвет</value></data>
+  <data name="NormalDerivative_ColorLuminanceBlend" xml:space="preserve"><value>Цвет + яркость (смесь)</value></data>
+  <data name="NormalDerivative_ColorLuminanceMax" xml:space="preserve"><value>Цвет + яркость (макс.)</value></data>
+  <data name="SmoothnessScale" xml:space="preserve"><value>Масштаб сглаживания</value></data>
+  <data name="SmoothnessScaleTooltip" xml:space="preserve"><value>Масштаб сглаживания specular (канал R) для неметаллических текстур.</value></data>
+  <data name="MetallicBoost" xml:space="preserve"><value>Усиление металла</value></data>
+  <data name="MetallicBoostTooltip" xml:space="preserve"><value>Масштаб отклика specular для текстур, определяемых как металл.</value></data>
+  <data name="PorosityBias" xml:space="preserve"><value>Смещение пористости</value></data>
+  <data name="PorosityBiasTooltip" xml:space="preserve"><value>Смещение канала пористости/subsurface (LabPBR B). Может быть отрицательным.</value></data>
+  <data name="FastSpecular" xml:space="preserve"><value>Быстрый specular</value></data>
+  <data name="FastSpecularTooltip" xml:space="preserve"><value>Приближённая RGB-дистанция. Быстрее, но менее точно.</value></data>
+  <data name="Foliage" xml:space="preserve"><value>Растительность:</value></data>
+  <data name="FoliageTooltip" xml:space="preserve"><value>Ignore All: пропускать растения. No Height: растения без высоты. Convert All: конвертировать всё.</value></data>
+  <data name="IgnoreAll" xml:space="preserve"><value>Игнорировать всё</value></data>
+  <data name="NoHeight" xml:space="preserve"><value>Без высоты</value></data>
+  <data name="ConvertAll" xml:space="preserve"><value>Конвертировать всё</value></data>
+  <data name="HeightFromNormals" xml:space="preserve"><value>Высота из нормалей</value></data>
+  <data name="HeightFromNormalsTooltip" xml:space="preserve"><value>Получить высоту из карты нормалей (Frankot-Chellappa) вместо яркости.</value></data>
+  <data name="NormalsFromDeepBump" xml:space="preserve"><value>Нормали через DeepBump ML</value></data>
+  <data name="NormalsFromDeepBumpTooltip" xml:space="preserve"><value>Генерировать нормали из диффузной карты с помощью модели ONNX DeepBump.</value></data>
+  <data name="DeepBumpOverlap" xml:space="preserve"><value>Перекрытие плиток</value></data>
+  <data name="DeepBumpOverlapTooltip" xml:space="preserve"><value>Большее перекрытие уменьшает швы, но медленнее. Большой рекомендуется для лучшего качества.</value></data>
+  <data name="DeepBumpOverlapSmall" xml:space="preserve"><value>Малое</value></data>
+  <data name="DeepBumpOverlapMedium" xml:space="preserve"><value>Среднее</value></data>
+  <data name="DeepBumpOverlapLarge" xml:space="preserve"><value>Большое</value></data>
+  <data name="TextureTypes" xml:space="preserve"><value>Типы текстур</value></data>
+  <data name="Blocks" xml:space="preserve"><value>Блоки</value></data>
+  <data name="BlocksTooltip" xml:space="preserve"><value>Обрабатывать текстуры в папках block и blocks.</value></data>
+  <data name="Items" xml:space="preserve"><value>Предметы</value></data>
+  <data name="ItemsTooltip" xml:space="preserve"><value>Обрабатывать текстуры в папках item и items.</value></data>
+  <data name="Armor" xml:space="preserve"><value>Броня</value></data>
+  <data name="ArmorTooltip" xml:space="preserve"><value>Обрабатывать текстуры в папке entity (броня и т.д.).</value></data>
+  <data name="Entity" xml:space="preserve"><value>Сущности</value></data>
+  <data name="EntityTooltip" xml:space="preserve"><value>Обрабатывать текстуры в папках entity.</value></data>
+  <data name="Particles" xml:space="preserve"><value>Частицы</value></data>
+  <data name="ParticlesTooltip" xml:space="preserve"><value>Текстуры частиц. Генерируются только карты specular.</value></data>
+  <data name="FilterWatermark" xml:space="preserve"><value>Фильтр (напр. \block\stone)</value></data>
+  <data name="Output" xml:space="preserve"><value>Выход</value></data>
+  <data name="OutputFolderWatermark" xml:space="preserve"><value>Папка вывода</value></data>
+  <data name="OutputPathWatermark" xml:space="preserve"><value>Путь вывода</value></data>
+  <data name="Engine" xml:space="preserve"><value>Движок</value></data>
+  <data name="MaxThreads" xml:space="preserve"><value>Макс. потоков</value></data>
+  <data name="MaxThreadsTooltip" xml:space="preserve"><value>Рабочие потоки. 0 = авто.</value></data>
+  <data name="TempFolder" xml:space="preserve"><value>Временная папка</value></data>
+  <data name="TempFolderTooltip" xml:space="preserve"><value>Папка для временной распаковки. Пусто = системный temp.</value></data>
+  <data name="TempFolderWatermark" xml:space="preserve"><value>Пусто = системный temp</value></data>
+  <data name="CustomThreadedExtraction" xml:space="preserve"><value>Многопоточная распаковка</value></data>
+  <data name="CustomThreadedExtractionTooltip" xml:space="preserve"><value>Быстрая распаковка с параллельной deflate-декомпрессией.</value></data>
+  <data name="UseLegacyExtractor" xml:space="preserve"><value>Использовать старый экстрактор</value></data>
+  <data name="UseLegacyExtractorTooltip" xml:space="preserve"><value>Использовать старый экстрактор на основе ZipFile вместо параллельного по умолчанию. Включайте только при проблемах с необычными zip-архивами.</value></data>
+  <data name="Cancel" xml:space="preserve"><value>Отмена</value></data>
+  <data name="Convert" xml:space="preserve"><value>Конвертировать</value></data>
+  <data name="UIThemeTooltip" xml:space="preserve"><value>Тема и цвет интерфейса.</value></data>
+  <data name="UILanguageTooltip" xml:space="preserve"><value>Язык интерфейса.</value></data>
+  <data name="Status_SelectPack" xml:space="preserve"><value>Выберите ресурспак (.zip или .jar) и папку вывода.</value></data>
+  <data name="Status_ScanningTexturesInPack" xml:space="preserve"><value>Сканирование текстур в пакете...</value></data>
+  <data name="Status_ScanningPackProgress" xml:space="preserve"><value>Сканирование пакета... ({0}/{1})</value></data>
+  <data name="Status_LoadedTextures" xml:space="preserve"><value>Загружено текстур: {0}.</value></data>
+  <data name="Status_FailedToScan" xml:space="preserve"><value>Не удалось просканировать текстуры.</value></data>
+  <data name="Status_LoadingSpecularData" xml:space="preserve"><value>Загрузка данных specular...</value></data>
+  <data name="Status_ExtractingPack" xml:space="preserve"><value>Распаковка пакета...</value></data>
+  <data name="Status_ExtractingPackProgress" xml:space="preserve"><value>Распаковка пакета... ({0}/{1})</value></data>
+  <data name="Status_ScanningTextures" xml:space="preserve"><value>Сканирование текстур...</value></data>
+  <data name="Status_SpecularCurrent" xml:space="preserve"><value>Specular: {0}</value></data>
+  <data name="Status_NormalsCurrent" xml:space="preserve"><value>Нормали: {0}</value></data>
+  <data name="Status_PackingOutput" xml:space="preserve"><value>Создание выходного zip...</value></data>
+  <data name="Status_PackingOutputProgress" xml:space="preserve"><value>Создание выходного zip... ({0}/{1})</value></data>
+  <data name="Status_Done" xml:space="preserve"><value>Готово.</value></data>
+  <data name="Status_Cancelled" xml:space="preserve"><value>Отменено.</value></data>
+  <data name="Status_ConversionFailed" xml:space="preserve"><value>Ошибка конвертации.</value></data>
+</root>

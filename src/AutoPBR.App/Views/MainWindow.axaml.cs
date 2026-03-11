@@ -1,3 +1,4 @@
+using System;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using AutoPBR.App.ViewModels;
@@ -6,6 +7,9 @@ namespace AutoPBR.App.Views;
 
 public partial class MainWindow : Window
 {
+    private const int LogScrollThrottleMs = 200;
+    private DateTime _lastLogScrollUtc = DateTime.MinValue;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -18,7 +22,12 @@ public partial class MainWindow : Window
         {
             vm.LogLines.CollectionChanged += (_, _) =>
             {
-                scroll.ScrollToEnd();
+                var now = DateTime.UtcNow;
+                if ((now - _lastLogScrollUtc).TotalMilliseconds >= LogScrollThrottleMs)
+                {
+                    _lastLogScrollUtc = now;
+                    scroll.ScrollToEnd();
+                }
             };
         }
     }

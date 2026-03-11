@@ -7,10 +7,34 @@ public sealed class AutoPbrOptions
     public bool FastSpecular { get; init; } = false;
 
     /// <summary>
-    /// When true, use the experimental custom ParallelZipReader for extraction instead of the built-in ZipFile-based extractor.
-    /// Useful for testing parallel decompression; default is false (safer).
+    /// Normal generation operator when not using DeepBump. "SobelVc" = current default
+    /// Sobel + VC filter. "ScharrVc" = Scharr gradients + VC filter for stronger, more
+    /// isotropic edge response.
     /// </summary>
-    public bool ExperimentalExtractor { get; init; } = false;
+    public NormalOperator NormalOperator { get; init; } = NormalOperator.SobelVc;
+
+    /// <summary>
+    /// Kernel size for Sobel/Scharr normals when not using DeepBump. For Sobel, supports 3x3, 5x5, 7x7.
+    /// For Scharr, supports 3x3 and 5x5 (7x7 will be clamped to 5x5).
+    /// </summary>
+    public NormalKernelSize NormalKernelSize { get; init; } = NormalKernelSize.K3;
+
+    /// <summary>
+    /// What to derive normals from when not using DeepBump: Luminance, Color, Color+Luminance blend, or max.
+    /// </summary>
+    public NormalDerivative NormalDerivative { get; init; } = NormalDerivative.Luminance;
+
+    /// <summary>
+    /// When true, use the legacy ZipFile-based extractor instead of the default parallel extractor.
+    /// Use only if you hit issues with the default (e.g. exotic zip format).
+    /// </summary>
+    public bool UseLegacyExtractor { get; init; } = false;
+
+    /// <summary>
+    /// When non-null and non-empty, only these zip entry paths are extracted (e.g. from a prior scan).
+    /// Reduces extraction time and disk use when only .png textures (and pack.mcmeta) are needed.
+    /// </summary>
+    public IReadOnlyList<string>? EntriesToExtractOnly { get; init; }
 
     /// <summary>
     /// Maximum worker threads to use for conversion (specular/normal/height). 0 or less = auto (CPU-2, minimum 1).
@@ -59,6 +83,41 @@ public sealed class AutoPbrOptions
     /// <summary>Foliage handling: "Ignore All", "No Height", or "Convert All".</summary>
     public string FoliageMode { get; init; } = "Ignore All";
 
+    /// <summary>When true, derive height from the generated normal map via Frankot-Chellappa (DeepBump-style) instead of from diffuse luminance.</summary>
+    public bool UseHeightFromNormals { get; init; } = false;
+
+    /// <summary>When true and DeepBumpModelPath is valid, generate normals from diffuse using the DeepBump ONNX model (deepbump256.onnx) instead of Sobel/VC.</summary>
+    public bool UseDeepBumpNormals { get; init; } = false;
+
+    /// <summary>Path to deepbump256.onnx (from https://github.com/HugoTini/DeepBump). Used when UseDeepBumpNormals is true.</summary>
+    public string? DeepBumpModelPath { get; init; }
+
+    /// <summary>DeepBump tile overlap: "Small", "Medium", or "Large". Matches DeepBump --color_to_normals-overlap (default LARGE = best quality).</summary>
+    public string DeepBumpOverlap { get; init; } = "Large";
+
     public SpecularData? SpecularData { get; init; }
 }
+
+public enum NormalOperator
+{
+    SobelVc,
+    ScharrVc
+}
+
+public enum NormalKernelSize
+{
+    K3 = 3,
+    K5 = 5,
+    K7 = 7
+}
+
+public enum NormalDerivative
+{
+    Luminance,
+    Color,
+    ColorLuminanceBlend,
+    ColorLuminanceMax
+}
+
+
 
