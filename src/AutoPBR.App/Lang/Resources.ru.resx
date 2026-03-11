@@ -116,6 +116,9 @@
   <data name="Log_StageNormals" xml:space="preserve"><value>Нормали</value></data>
   <data name="Log_StagePacking" xml:space="preserve"><value>Упаковка</value></data>
   <data name="GenerationSettings" xml:space="preserve"><value>Параметры генерации</value></data>
+  <data name="TuneNormals" xml:space="preserve"><value>Нормали</value></data>
+  <data name="TuneSpecular" xml:space="preserve"><value>Specular</value></data>
+  <data name="TuneHeight" xml:space="preserve"><value>Высота</value></data>
   <data name="NormalStrength" xml:space="preserve"><value>Сила нормалей</value></data>
   <data name="NormalStrengthTooltip" xml:space="preserve"><value>Сила градиента карты нормалей. Выше = более выраженный рельеф.</value></data>
   <data name="HeightStrength" xml:space="preserve"><value>Сила высоты</value></data>

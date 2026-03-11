@@ -116,6 +116,9 @@
   <data name="Log_StageNormals" xml:space="preserve"><value>Normales</value></data>
   <data name="Log_StagePacking" xml:space="preserve"><value>Empaquetando</value></data>
   <data name="GenerationSettings" xml:space="preserve"><value>Configuración de generación</value></data>
+  <data name="TuneNormals" xml:space="preserve"><value>Normales</value></data>
+  <data name="TuneSpecular" xml:space="preserve"><value>Specular</value></data>
+  <data name="TuneHeight" xml:space="preserve"><value>Altura</value></data>
   <data name="NormalStrength" xml:space="preserve"><value>Fuerza de normales</value></data>
   <data name="NormalStrengthTooltip" xml:space="preserve"><value>Fuerza del gradiente del mapa de normales. Mayor = más relieve.</value></data>
   <data name="HeightStrength" xml:space="preserve"><value>Fuerza de altura</value></data>

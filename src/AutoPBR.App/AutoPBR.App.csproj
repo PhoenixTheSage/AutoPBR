@@ -77,15 +77,26 @@
     <Content Include="..\AutoPBR.Core\Data\native\*.dll" Link="runtimes\win-x64\native\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
-  <!-- Move satellite assemblies (de, es, fr, ...) into lang\ so build output is tidy. -->
-  <Target Name="MoveSatellitesToLang" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+  <!-- Satellite cultures: must match Lang\Resources.*.resx (excluding default Resources.resx). -->
+  <ItemGroup>
+    <_SatelliteCulture Include="de;es;fr;pt;ru;ja;zh-Hans;hi;ar" />
+  </ItemGroup>
+
+  <!-- Build: copy satellite assemblies to lang\culture\ so app finds them in lang\ and publish can still copy from culture\. -->
+  <Target Name="CopySatellitesToLang" AfterTargets="Build">
     <ItemGroup>
-      <_SatelliteCulture Include="de;es;fr;pt;ru;ja;zh-Hans;hi;ar" />
+      <_SatelliteFiles Include="$(OutputPath)%(_SatelliteCulture.Identity)\*" />
     </ItemGroup>
-    <MakeDir Directories="$(OutputPath)lang" />
-    <!-- Remove existing destination so move does not fail with Access denied (e.g. when app is running). -->
-    <RemoveDir Directories="$(OutputPath)lang\%(_SatelliteCulture.Identity)" Condition="Exists('$(OutputPath)lang\%(_SatelliteCulture.Identity)')" />
-    <Exec Command="move /Y &quot;$(OutputPath)%(_SatelliteCulture.Identity)&quot; &quot;$(OutputPath)lang\%(_SatelliteCulture.Identity)&quot;" Condition="Exists('$(OutputPath)%(_SatelliteCulture.Identity)')" />
+    <MakeDir Directories="$(OutputPath)lang\%(_SatelliteCulture.Identity)" />
+    <Copy SourceFiles="@(_SatelliteFiles)" DestinationFolder="$(OutputPath)lang\%(_SatelliteCulture.Identity)\" SkipUnchangedFiles="true" Condition="Exists('$(OutputPath)%(_SatelliteCulture.Identity)')" />
+  </Target>
+
+  <!-- Publish: move satellite assemblies from culture\ to lang\culture\ in publish output (same layout as build). -->
+  <Target Name="MoveSatellitesToLangAfterPublish" AfterTargets="Publish" Condition="'$(PublishDir)' != ''">
+    <MakeDir Directories="$(PublishDir)lang\%(_SatelliteCulture.Identity)" />
+    <RemoveDir Directories="$(PublishDir)lang\%(_SatelliteCulture.Identity)" Condition="Exists('$(PublishDir)lang\%(_SatelliteCulture.Identity)')" />
+    <Exec Command="move /Y &quot;$(PublishDir)%(_SatelliteCulture.Identity)&quot; &quot;$(PublishDir)lang\%(_SatelliteCulture.Identity)&quot;" Condition="Exists('$(PublishDir)%(_SatelliteCulture.Identity)') and '$(OS)' == 'Windows_NT'" />
+    <Exec Command="mv &quot;$(PublishDir)%(_SatelliteCulture.Identity)&quot; &quot;$(PublishDir)lang/%(_SatelliteCulture.Identity)&quot;" Condition="Exists('$(PublishDir)%(_SatelliteCulture.Identity)') and '$(OS)' != 'Windows_NT'" />
   </Target>
 
   <!-- Overlay ONNX Runtime CUDA 13 native binaries from GitHub release (replaces default CUDA 12 from NuGet). -->

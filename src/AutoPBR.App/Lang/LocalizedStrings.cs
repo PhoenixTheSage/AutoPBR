@@ -36,6 +36,9 @@ public sealed class LocalizedStrings
     public string Browse => Resources.Browse;
     public string Log => Resources.Log;
     public string GenerationSettings => Resources.GenerationSettings;
+    public string TuneNormals => Resources.TuneNormals;
+    public string TuneSpecular => Resources.TuneSpecular;
+    public string TuneHeight => Resources.TuneHeight;
     public string NormalStrength => Resources.NormalStrength;
     public string NormalStrengthTooltip => Resources.NormalStrengthTooltip;
     public string HeightStrength => Resources.HeightStrength;

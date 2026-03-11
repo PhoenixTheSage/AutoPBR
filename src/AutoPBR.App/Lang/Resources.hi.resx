@@ -116,6 +116,9 @@
   <data name="Log_StageNormals" xml:space="preserve"><value>नॉर्मल</value></data>
   <data name="Log_StagePacking" xml:space="preserve"><value>पैक</value></data>
   <data name="GenerationSettings" xml:space="preserve"><value>जनरेशन सेटिंग्स</value></data>
+  <data name="TuneNormals" xml:space="preserve"><value>नॉर्मल</value></data>
+  <data name="TuneSpecular" xml:space="preserve"><value>स्पेक्युलर</value></data>
+  <data name="TuneHeight" xml:space="preserve"><value>ऊँचाई</value></data>
   <data name="NormalStrength" xml:space="preserve"><value>नॉर्मल स्ट्रेंथ</value></data>
   <data name="NormalStrengthTooltip" xml:space="preserve"><value>नॉर्मल मैप ग्रेडिएंट की ताकत। ज्यादा = ज्यादा रिलीफ।</value></data>
   <data name="HeightStrength" xml:space="preserve"><value>हाइट स्ट्रेंथ</value></data>

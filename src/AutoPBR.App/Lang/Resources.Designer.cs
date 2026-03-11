@@ -57,6 +57,9 @@ public static class Resources
     public static string Browse => GetString("Browse");
     public static string Log => GetString("Log");
     public static string GenerationSettings => GetString("GenerationSettings");
+    public static string TuneNormals => GetString("TuneNormals");
+    public static string TuneSpecular => GetString("TuneSpecular");
+    public static string TuneHeight => GetString("TuneHeight");
     public static string NormalStrength => GetString("NormalStrength");
     public static string NormalStrengthTooltip => GetString("NormalStrengthTooltip");
     public static string HeightStrength => GetString("HeightStrength");

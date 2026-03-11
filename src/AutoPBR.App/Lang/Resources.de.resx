@@ -136,6 +136,15 @@
   <data name="GenerationSettings" xml:space="preserve">
     <value>Erzeugungseinstellungen</value>
   </data>
+  <data name="TuneNormals" xml:space="preserve">
+    <value>Normalen</value>
+  </data>
+  <data name="TuneSpecular" xml:space="preserve">
+    <value>Specular</value>
+  </data>
+  <data name="TuneHeight" xml:space="preserve">
+    <value>Höhe</value>
+  </data>
   <data name="NormalStrength" xml:space="preserve">
     <value>Normalen-Stärke</value>
   </data>

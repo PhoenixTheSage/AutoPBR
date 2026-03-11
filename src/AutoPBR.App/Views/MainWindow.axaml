@@ -140,7 +140,7 @@
                         <!-- Normals -->
                         <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
                             <StackPanel Spacing="10">
-                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Normals" />
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Strings.TuneNormals}" />
                                 <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="10">
                                     <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.NormalStrength}"
                                                ToolTip.Tip="{Binding Strings.NormalStrengthTooltip}" />
@@ -205,7 +205,7 @@
                         <!-- Specular -->
                         <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
                             <StackPanel Spacing="10">
-                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Specular" />
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Strings.TuneSpecular}" />
                                 <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="10">
                                     <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.SmoothnessScale}"
                                                ToolTip.Tip="{Binding Strings.SmoothnessScaleTooltip}" />
@@ -239,7 +239,7 @@
                         <!-- Height -->
                         <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
                             <StackPanel Spacing="10">
-                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="Height" />
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Strings.TuneHeight}" />
                                 <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="10">
                                     <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.HeightStrength}"
                                                ToolTip.Tip="{Binding Strings.HeightStrengthTooltip}" />

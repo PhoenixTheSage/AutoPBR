@@ -116,6 +116,9 @@
   <data name="Log_StageNormals" xml:space="preserve"><value>العاديات</value></data>
   <data name="Log_StagePacking" xml:space="preserve"><value>ضغط</value></data>
   <data name="GenerationSettings" xml:space="preserve"><value>إعدادات التوليد</value></data>
+  <data name="TuneNormals" xml:space="preserve"><value>العاديات</value></data>
+  <data name="TuneSpecular" xml:space="preserve"><value>اللمعان</value></data>
+  <data name="TuneHeight" xml:space="preserve"><value>الارتفاع</value></data>
   <data name="NormalStrength" xml:space="preserve"><value>قوة الطبيعية</value></data>
   <data name="NormalStrengthTooltip" xml:space="preserve"><value>قوة تدرج خريطة الطبيعية. أعلى = مزيد من النقوش.</value></data>
   <data name="HeightStrength" xml:space="preserve"><value>قوة الارتفاع</value></data>

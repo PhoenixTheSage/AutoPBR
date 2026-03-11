@@ -114,12 +114,12 @@
           "Avalonia.Remote.Protocol": "11.3.12"
         },
         "compile": {
-          "lib/net8.0/Avalonia.Controls.ColorPicker.dll": {
+          "lib/net8.0/_._": {
             "related": ".xml"
           }
         },
         "runtime": {
-          "lib/net8.0/Avalonia.Controls.ColorPicker.dll": {
+          "lib/net8.0/_._": {
             "related": ".xml"
           }
         }
@@ -152,12 +152,12 @@
           "Avalonia.Themes.Simple": "11.3.12"
         },
         "compile": {
-          "lib/net8.0/Avalonia.Diagnostics.dll": {
+          "lib/net8.0/_._": {
             "related": ".xml"
           }
         },
         "runtime": {
-          "lib/net8.0/Avalonia.Diagnostics.dll": {
+          "lib/net8.0/_._": {
             "related": ".xml"
           }
         }
@@ -274,12 +274,12 @@
           "Avalonia": "11.3.12"
         },
         "compile": {
-          "lib/net8.0/Avalonia.Themes.Simple.dll": {
+          "lib/net8.0/_._": {
             "related": ".xml"
           }
         },
         "runtime": {
-          "lib/net8.0/Avalonia.Themes.Simple.dll": {
+          "lib/net8.0/_._": {
             "related": ".xml"
           }
         }
@@ -1998,7 +1998,7 @@
         "auditLevel": "low",
         "auditMode": "direct"
       },
-      "SdkAnalysisLevel": "10.0.100"
+      "SdkAnalysisLevel": "10.0.200"
     },
     "frameworks": {
       "net8.0": {
@@ -2013,6 +2013,8 @@
             "version": "[11.3.12, )"
           },
           "Avalonia.Diagnostics": {
+            "include": "None",
+            "suppressParent": "All",
             "target": "Package",
             "version": "[11.3.12, )"
           },
@@ -2045,7 +2047,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "c:\\program files\\dotnet\\sdk\\10.0.103/PortableRuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "c:\\program files\\dotnet\\sdk\\10.0.200/PortableRuntimeIdentifierGraph.json"
       }
     }
   }

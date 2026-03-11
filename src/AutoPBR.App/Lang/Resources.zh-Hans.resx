@@ -116,6 +116,9 @@
   <data name="Log_StageNormals" xml:space="preserve"><value>法线</value></data>
   <data name="Log_StagePacking" xml:space="preserve"><value>打包</value></data>
   <data name="GenerationSettings" xml:space="preserve"><value>生成设置</value></data>
+  <data name="TuneNormals" xml:space="preserve"><value>法线</value></data>
+  <data name="TuneSpecular" xml:space="preserve"><value>高光</value></data>
+  <data name="TuneHeight" xml:space="preserve"><value>高度</value></data>
   <data name="NormalStrength" xml:space="preserve"><value>法线强度</value></data>
   <data name="NormalStrengthTooltip" xml:space="preserve"><value>法线贴图梯度强度。越高 = 表面凹凸越明显。</value></data>
   <data name="HeightStrength" xml:space="preserve"><value>高度强度</value></data>

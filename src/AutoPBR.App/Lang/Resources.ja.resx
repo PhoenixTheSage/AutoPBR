@@ -116,6 +116,9 @@
   <data name="Log_StageNormals" xml:space="preserve"><value>法線</value></data>
   <data name="Log_StagePacking" xml:space="preserve"><value>パック</value></data>
   <data name="GenerationSettings" xml:space="preserve"><value>生成設定</value></data>
+  <data name="TuneNormals" xml:space="preserve"><value>法線</value></data>
+  <data name="TuneSpecular" xml:space="preserve"><value>スペキュラ</value></data>
+  <data name="TuneHeight" xml:space="preserve"><value>高さ</value></data>
   <data name="NormalStrength" xml:space="preserve"><value>法線の強さ</value></data>
   <data name="NormalStrengthTooltip" xml:space="preserve"><value>法線マップのグラデーション強度。高いほど立体感が強くなります。</value></data>
   <data name="HeightStrength" xml:space="preserve"><value>高さの強さ</value></data>
