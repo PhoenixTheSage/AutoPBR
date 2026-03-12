@@ -217,6 +217,7 @@ public sealed class ResourcePackConverter
         {
             await Task.Run(() =>
             {
+                SetThreadName("AutoPBR.Extract");
                 if (options.UseLegacyExtractor)
                     ExtractWithProgress(inputZipPath, extracted, options, progress, cancellationToken);
                 else

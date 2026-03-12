@@ -19,6 +19,7 @@ namespace AutoPBR.App.ViewModels;
 public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
 {
     private CancellationTokenSource? _cts;
+    private CancellationTokenSource? _scanCts;
     private ScannedArchiveData? _scannedArchiveData;
     private string? _scannedArchivePath;
     private readonly ConcurrentDictionary<string, bool?> _pathOverrides = new(StringComparer.OrdinalIgnoreCase);
@@ -670,9 +671,12 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         return true;
     }
 
-    /// <summary>Warm up visibility info for the first few levels of folders so tree expansion is smoother.</summary>
-    private void PrewarmFolderVisibilityCache()
+    /// <summary>Warm up visibility info for the first few levels of folders so tree expansion is smoother. Runs on a background thread; set thread name for debugger. Respects cancellation (e.g. when user clears archive or starts a new scan).</summary>
+    private void PrewarmFolderVisibilityCache(CancellationToken cancellationToken)
     {
+        try { Thread.CurrentThread.Name ??= "AutoPBR.Prewarm"; }
+        catch (InvalidOperationException) { /* already set */ }
+
         var data = _scannedArchiveData;
         if (data is null)
             return;
@@ -683,6 +687,8 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
 
         while (queue.Count > 0)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var (parent, depth) = queue.Dequeue();
             var children = data.GetChildren(parent);
             if (children is null)
@@ -693,11 +699,9 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
                 if (!c.IsFolder)
                     continue;
 
-                // Queue child folders up to maxDepth.
                 if (depth < maxDepth)
                     queue.Enqueue((c.FullPath, depth + 1));
 
-                // Compute and cache visibility for this folder.
                 if (!_folderVisibilityCache.ContainsKey(c.FullPath))
                 {
                     var visible = ComputeFolderVisible(data, c.FullPath);
@@ -806,6 +810,9 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
 
     private void ClearScannedArchive()
     {
+        _scanCts?.Cancel();
+        _scanCts?.Dispose();
+        _scanCts = null;
         FocusedArchiveNode = null;
         ScannedArchiveRoot = null;
         _scannedArchiveData = null;
@@ -1030,6 +1037,12 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         ProgressMax = 1;
         SetStatus("Status_ScanningTexturesInPack");
         AddLogLine(Resources.GetStatusString("Log_ScanningArchive", PackPath ?? ""));
+
+        _scanCts?.Cancel();
+        _scanCts?.Dispose();
+        _scanCts = new CancellationTokenSource();
+        var scanToken = _scanCts.Token;
+
         var scanProgress = new Progress<(int completed, int total)>(p =>
         {
             Dispatcher.UIThread.Post(() =>
@@ -1042,6 +1055,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         try
         {
             var data = await Task.Run(() => BuildArchiveIndex(PackPath!, scanProgress)).ConfigureAwait(false);
+            scanToken.ThrowIfCancellationRequested();
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 _scannedArchiveData = data;
@@ -1055,8 +1069,11 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
                 SetStatus("Status_LoadedTextures", data.FileCount);
                 AddLogLine(Resources.GetStatusString("Log_ArchiveContentsLoaded", data.FileCount));
             });
-            // Prewarm folder visibility cache for top-level subtrees in the background.
-            Task.Run(PrewarmFolderVisibilityCache);
+            await Task.Run(() => PrewarmFolderVisibilityCache(scanToken), scanToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // User cleared archive or started new scan; no error message
         }
         catch (Exception ex)
         {
@@ -1068,6 +1085,8 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         }
         finally
         {
+            _scanCts?.Dispose();
+            _scanCts = null;
             Dispatcher.UIThread.Post(() =>
             {
                 IsBusy = false;
@@ -1276,105 +1295,12 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
                 AddLogLine(Resources.GetString("Log_ExtractingOnlyPng"));
             }
 
-            var op = Enum.TryParse<AutoPBR.Core.Models.NormalOperator>(NormalOperator, ignoreCase: true, out var parsedOp)
-                ? parsedOp
-                : AutoPBR.Core.Models.NormalOperator.SobelVc;
-            var ks = NormalKernelSize switch
-            {
-                "5" => AutoPBR.Core.Models.NormalKernelSize.K5,
-                "7" => AutoPBR.Core.Models.NormalKernelSize.K7,
-                _ => AutoPBR.Core.Models.NormalKernelSize.K3
-            };
-            var deriv = Enum.TryParse<AutoPBR.Core.Models.NormalDerivative>(NormalDerivative, ignoreCase: true, out var parsedDeriv)
-                ? parsedDeriv
-                : AutoPBR.Core.Models.NormalDerivative.Luminance;
-
-            var options = new AutoPbrOptions
-            {
-                NormalIntensity = (float)NormalIntensity,
-                HeightIntensity = (float)HeightIntensity,
-                FastSpecular = FastSpecular,
-                UseLegacyExtractor = UseLegacyExtractor,
-                SmoothnessScale = (float)SmoothnessScale,
-                MetallicBoost = (float)MetallicBoost,
-                PorosityBias = (int)Math.Round(PorosityBias),
-                MaxThreads = MaxThreads,
-                TempDirectory = string.IsNullOrWhiteSpace(TempDirectory) ? null : TempDirectory,
-                ProcessBlocks = ProcessBlocks,
-                ProcessItems = ProcessItems,
-                ProcessArmor = ProcessEntity,
-                ProcessParticles = ProcessParticles,
-                IgnoreTextureKeys = ignore,
-                FoliageMode = FoliageMode,
-                UseHeightFromNormals = UseHeightFromNormals,
-                UseDeepBumpNormals = UseDeepBumpNormals,
-                DeepBumpModelPath = UseDeepBumpNormals ? Path.Combine(AppContext.BaseDirectory, "Data", "deepbump256.onnx") : null,
-                DeepBumpOverlap = DeepBumpOverlap,
-                NormalOperator = op,
-                NormalKernelSize = ks,
-                NormalDerivative = deriv,
-                SpecularData = _specularData,
-                EntriesToExtractOnly = entriesToExtractOnly
-            };
-
+            var options = BuildConversionOptions(ignore, entriesToExtractOnly);
             var converter = new ResourcePackConverter();
-            var prog = new Progress<ConversionProgress>(p =>
-            {
-                Dispatcher.UIThread.Post(() =>
-                {
-                    var now = DateTime.UtcNow;
-                    if (_currentStage.HasValue && _currentStage.Value != p.Stage)
-                    {
-                        var elapsed = (now - _stageStartUtc).TotalSeconds;
-                        var stageName = GetStageDisplayName(_currentStage.Value);
-                        AddLogLine(Resources.GetStatusString("Log_StageCompleted", stageName, elapsed));
-                    }
-                    if (p.Stage != ConversionStage.Done)
-                    {
-                        _currentStage = p.Stage;
-                        _stageStartUtc = now;
-                    }
-                    else
-                    {
-                        var totalSec = (now - _conversionStartUtc).TotalSeconds;
-                        AddLogLine(Resources.GetStatusString("Log_TotalTime", totalSec));
-                    }
-
-                    ProgressMax = Math.Max(1, p.Total);
-                    ProgressValue = p.Completed;
-                    if (!string.IsNullOrEmpty(p.InfoMessage))
-                        AddLogLine(p.InfoMessage);
-                    if (p.Stage == ConversionStage.Extracting && p.Completed == 0 && p.Total > 0)
-                        AddLogLine(Resources.GetString("Log_Extracting"));
-                    if (p.Stage == ConversionStage.Packing && p.Completed == 0 && p.Total > 0)
-                        AddLogLine(Resources.GetString("Log_Packing"));
-                    if (!string.IsNullOrEmpty(p.CurrentTextureName))
-                    {
-                        if ((now - _lastLogWriteUtc).TotalMilliseconds >= LogWriteIntervalMs)
-                        {
-                            _lastLogWriteUtc = now;
-                            var stageLabel = GetStageDisplayName(p.Stage);
-                            AddLogLine(Resources.GetStatusString("Log_StageCurrent", stageLabel, p.CurrentTextureName));
-                        }
-                    }
-                    (_statusKey, _statusFormatArgs) = p.Stage switch
-                    {
-                        ConversionStage.Extracting => p.Total > 0 ? ("Status_ExtractingPackProgress", new object[] { p.Completed, p.Total }) : ("Status_ExtractingPack", null),
-                        ConversionStage.ScanningTextures => ("Status_ScanningTextures", null),
-                        ConversionStage.GeneratingSpecular => ("Status_SpecularCurrent", new object[] { p.CurrentTextureName ?? "" }),
-                        ConversionStage.GeneratingNormals => ("Status_NormalsCurrent", new object[] { p.CurrentTextureName ?? "" }),
-                        ConversionStage.Packing => p.Total > 0 ? ("Status_PackingOutputProgress", new object[] { p.Completed, p.Total }) : ("Status_PackingOutput", null),
-                        ConversionStage.Done => ("Status_Done", null),
-                        _ => (_statusKey, _statusFormatArgs)
-                    };
-                    UpdateStatusText();
-                });
-            });
+            var prog = CreateConversionProgressReporter();
 
             AddLogLine(Resources.GetStatusString("Log_Converting", OutputZipPath ?? ""));
-            await Task.Run(async () =>
-                await converter.ConvertAsync(PackPath!, OutputZipPath!, options, prog, _cts.Token).ConfigureAwait(false));
-            // Resume on UI thread so we don't get "Call from invalid thread" when updating bindings.
+            await converter.ConvertAsync(PackPath!, OutputZipPath!, options, prog, _cts.Token);
             AddLogLine(Resources.GetString("Log_Done"));
         }
         catch (OperationCanceledException)
@@ -1421,6 +1347,108 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
     }
 
     private bool CanCancel() => IsConverting;
+
+    /// <summary>Build converter options from current VM state and scan data.</summary>
+    private AutoPbrOptions BuildConversionOptions(HashSet<string> ignore, IReadOnlyList<string>? entriesToExtractOnly)
+    {
+        var op = Enum.TryParse<AutoPBR.Core.Models.NormalOperator>(NormalOperator, ignoreCase: true, out var parsedOp)
+            ? parsedOp
+            : AutoPBR.Core.Models.NormalOperator.SobelVc;
+        var ks = NormalKernelSize switch
+        {
+            "5" => AutoPBR.Core.Models.NormalKernelSize.K5,
+            "7" => AutoPBR.Core.Models.NormalKernelSize.K7,
+            _ => AutoPBR.Core.Models.NormalKernelSize.K3
+        };
+        var deriv = Enum.TryParse<AutoPBR.Core.Models.NormalDerivative>(NormalDerivative, ignoreCase: true, out var parsedDeriv)
+            ? parsedDeriv
+            : AutoPBR.Core.Models.NormalDerivative.Luminance;
+
+        return new AutoPbrOptions
+        {
+            NormalIntensity = (float)NormalIntensity,
+            HeightIntensity = (float)HeightIntensity,
+            FastSpecular = FastSpecular,
+            UseLegacyExtractor = UseLegacyExtractor,
+            SmoothnessScale = (float)SmoothnessScale,
+            MetallicBoost = (float)MetallicBoost,
+            PorosityBias = (int)Math.Round(PorosityBias),
+            MaxThreads = MaxThreads,
+            TempDirectory = string.IsNullOrWhiteSpace(TempDirectory) ? null : TempDirectory,
+            ProcessBlocks = ProcessBlocks,
+            ProcessItems = ProcessItems,
+            ProcessArmor = ProcessEntity,
+            ProcessParticles = ProcessParticles,
+            IgnoreTextureKeys = ignore,
+            FoliageMode = FoliageMode,
+            UseHeightFromNormals = UseHeightFromNormals,
+            UseDeepBumpNormals = UseDeepBumpNormals,
+            DeepBumpModelPath = UseDeepBumpNormals ? Path.Combine(AppContext.BaseDirectory, "Data", "deepbump256.onnx") : null,
+            DeepBumpOverlap = DeepBumpOverlap,
+            NormalOperator = op,
+            NormalKernelSize = ks,
+            NormalDerivative = deriv,
+            SpecularData = _specularData,
+            EntriesToExtractOnly = entriesToExtractOnly
+        };
+    }
+
+    /// <summary>Progress reporter that marshals conversion progress to the UI thread and updates status/log.</summary>
+    private IProgress<ConversionProgress> CreateConversionProgressReporter() =>
+        new Progress<ConversionProgress>(OnConversionProgress);
+
+    private void OnConversionProgress(ConversionProgress p)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            var now = DateTime.UtcNow;
+            if (_currentStage.HasValue && _currentStage.Value != p.Stage)
+            {
+                var elapsed = (now - _stageStartUtc).TotalSeconds;
+                var stageName = GetStageDisplayName(_currentStage.Value);
+                AddLogLine(Resources.GetStatusString("Log_StageCompleted", stageName, elapsed));
+            }
+            if (p.Stage != ConversionStage.Done)
+            {
+                _currentStage = p.Stage;
+                _stageStartUtc = now;
+            }
+            else
+            {
+                var totalSec = (now - _conversionStartUtc).TotalSeconds;
+                AddLogLine(Resources.GetStatusString("Log_TotalTime", totalSec));
+            }
+
+            ProgressMax = Math.Max(1, p.Total);
+            ProgressValue = p.Completed;
+            if (!string.IsNullOrEmpty(p.InfoMessage))
+                AddLogLine(p.InfoMessage);
+            if (p.Stage == ConversionStage.Extracting && p.Completed == 0 && p.Total > 0)
+                AddLogLine(Resources.GetString("Log_Extracting"));
+            if (p.Stage == ConversionStage.Packing && p.Completed == 0 && p.Total > 0)
+                AddLogLine(Resources.GetString("Log_Packing"));
+            if (!string.IsNullOrEmpty(p.CurrentTextureName))
+            {
+                if ((now - _lastLogWriteUtc).TotalMilliseconds >= LogWriteIntervalMs)
+                {
+                    _lastLogWriteUtc = now;
+                    var stageLabel = GetStageDisplayName(p.Stage);
+                    AddLogLine(Resources.GetStatusString("Log_StageCurrent", stageLabel, p.CurrentTextureName));
+                }
+            }
+            (_statusKey, _statusFormatArgs) = p.Stage switch
+            {
+                ConversionStage.Extracting => p.Total > 0 ? ("Status_ExtractingPackProgress", new object[] { p.Completed, p.Total }) : ("Status_ExtractingPack", null),
+                ConversionStage.ScanningTextures => ("Status_ScanningTextures", null),
+                ConversionStage.GeneratingSpecular => ("Status_SpecularCurrent", new object[] { p.CurrentTextureName ?? "" }),
+                ConversionStage.GeneratingNormals => ("Status_NormalsCurrent", new object[] { p.CurrentTextureName ?? "" }),
+                ConversionStage.Packing => p.Total > 0 ? ("Status_PackingOutputProgress", new object[] { p.Completed, p.Total }) : ("Status_PackingOutput", null),
+                ConversionStage.Done => ("Status_Done", null),
+                _ => (_statusKey, _statusFormatArgs)
+            };
+            UpdateStatusText();
+        });
+    }
 
     private static string GetStageDisplayName(ConversionStage stage)
     {

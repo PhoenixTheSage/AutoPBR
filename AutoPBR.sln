@@ -1,7 +1,6 @@
-
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 17
-VisualStudioVersion = 17.0.31903.59
+# Visual Studio Version 18
+VisualStudioVersion = 18.4.11605.240 stable
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
 EndProject
@@ -10,6 +9,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AutoPBR.Cli", "src\AutoPBR.Cli\AutoPBR.Cli.csproj", "{57733030-2349-4A16-A3F7-4CD7793F360C}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AutoPBR.App", "src\AutoPBR.App\AutoPBR.App.csproj", "{5D042A33-0D90-4A33-838A-F2E97653761D}"
+EndProject
+Project("{54435603-DBB4-11D2-8724-00A0C9A8B90C}") = "AutoPBR-v.0.7.0-install", "AutoPBR\AutoPBR.vdproj", "{71B6405E-6EC5-35F2-0272-DB7CA3C81F08}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -57,6 +58,12 @@ Global
 		{5D042A33-0D90-4A33-838A-F2E97653761D}.Release|x64.Build.0 = Release|Any CPU
 		{5D042A33-0D90-4A33-838A-F2E97653761D}.Release|x86.ActiveCfg = Release|Any CPU
 		{5D042A33-0D90-4A33-838A-F2E97653761D}.Release|x86.Build.0 = Release|Any CPU
+		{71B6405E-6EC5-35F2-0272-DB7CA3C81F08}.Debug|Any CPU.ActiveCfg = Debug
+		{71B6405E-6EC5-35F2-0272-DB7CA3C81F08}.Debug|x64.ActiveCfg = Debug
+		{71B6405E-6EC5-35F2-0272-DB7CA3C81F08}.Debug|x86.ActiveCfg = Debug
+		{71B6405E-6EC5-35F2-0272-DB7CA3C81F08}.Release|Any CPU.ActiveCfg = Release
+		{71B6405E-6EC5-35F2-0272-DB7CA3C81F08}.Release|x64.ActiveCfg = Release
+		{71B6405E-6EC5-35F2-0272-DB7CA3C81F08}.Release|x86.ActiveCfg = Release
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -65,5 +72,8 @@ Global
 		{E4C3E3EC-9829-4758-A5EB-00A1F6606A1D} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{57733030-2349-4A16-A3F7-4CD7793F360C} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{5D042A33-0D90-4A33-838A-F2E97653761D} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {0E5F1F06-02B0-4039-9A10-9CD6875E3AEF}
 	EndGlobalSection
 EndGlobal
