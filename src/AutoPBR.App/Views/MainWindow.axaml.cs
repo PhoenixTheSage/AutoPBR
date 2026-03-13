@@ -1,4 +1,3 @@
-using System;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using AutoPBR.App.ViewModels;
@@ -34,45 +33,59 @@ public partial class MainWindow : Window
 
     private async void BrowsePack_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        var topLevel = TopLevel.GetTopLevel(this);
-        if (topLevel?.StorageProvider is null)
-            return;
-
-        var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        try
         {
-            Title = "Select resource pack (.zip or .jar)",
-            AllowMultiple = false,
-            FileTypeFilter =
-            [
-                new FilePickerFileType("Zip / JAR") { Patterns = ["*.zip", "*.jar"] }
-            ]
-        });
+            var topLevel = TopLevel.GetTopLevel(this);
+            if (topLevel?.StorageProvider is null)
+                return;
 
-        var path = files.Count > 0 ? files[0].TryGetLocalPath() : null;
-        if (path is null)
-            return;
+            var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "Select resource pack (.zip or .jar)",
+                AllowMultiple = false,
+                FileTypeFilter =
+                [
+                    new FilePickerFileType("Zip / JAR") { Patterns = ["*.zip", "*.jar"] }
+                ]
+            });
 
-        if (DataContext is MainWindowViewModel vm)
-            vm.PackPath = path;
+            var path = files.Count > 0 ? files[0].TryGetLocalPath() : null;
+            if (path is null)
+                return;
+
+            if (DataContext is MainWindowViewModel vm)
+                vm.PackPath = path;
+        }
+        catch (Exception)
+        {
+            // Prevent unhandled exception in async void from crashing the process
+        }
     }
 
     private async void BrowseOutput_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        var topLevel = TopLevel.GetTopLevel(this);
-        if (topLevel?.StorageProvider is null)
-            return;
-
-        var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        try
         {
-            Title = "Select output folder",
-            AllowMultiple = false
-        });
+            var topLevel = TopLevel.GetTopLevel(this);
+            if (topLevel?.StorageProvider is null)
+                return;
 
-        var path = folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
-        if (path is null)
-            return;
+            var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "Select output folder",
+                AllowMultiple = false
+            });
 
-        if (DataContext is MainWindowViewModel vm)
-            vm.OutputDirectory = path;
+            var path = folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
+            if (path is null)
+                return;
+
+            if (DataContext is MainWindowViewModel vm)
+                vm.OutputDirectory = path;
+        }
+        catch (Exception)
+        {
+            // Prevent unhandled exception in async void from crashing the process
+        }
     }
 }

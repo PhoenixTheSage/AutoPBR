@@ -9,7 +9,6 @@ internal static class ParallelZipReader
 {
     private const uint LocalFileHeaderSignature = 0x04034b50;
     private const uint CentralFileHeaderSignature = 0x02014b50;
-    private const uint EndOfCentralDirSignature = 0x06054b50;
     private const uint Zip64EndOfCentralDirSignature = 0x06064b50;
     private const uint Zip64EndOfCentralDirLocatorSignature = 0x07064b50;
     private const ushort CompressionMethodStored = 0;
@@ -44,33 +43,41 @@ internal static class ParallelZipReader
         var degree = Math.Min(ZipParallelism, entries.Count);
         var completed = 0;
 
-        Parallel.ForEach(entries, new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = cancellationToken }, entry =>
-        {
-            try { Thread.CurrentThread.Name ??= "AutoPBR.Extract"; } catch (InvalidOperationException) { }
-            cancellationToken.ThrowIfCancellationRequested();
-            var (fullName, dataOffset, compressedSize, uncompressedSize, isStored) = entry;
-            var destPath = Path.Combine(extracted, fullName);
-            var dir = Path.GetDirectoryName(destPath);
-            if (!string.IsNullOrEmpty(dir))
-                Directory.CreateDirectory(dir);
-            using (var fs = new FileStream(inputZipPath, FileMode.Open, FileAccess.Read, FileShare.Read))
-            using (var outFile = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None))
+        Parallel.ForEach(entries,
+            new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = cancellationToken }, entry =>
             {
-                fs.Seek(dataOffset, SeekOrigin.Begin);
-                if (isStored)
+                try
                 {
-                    CopyStream(fs, outFile, compressedSize, cancellationToken);
+                    Thread.CurrentThread.Name ??= "AutoPBR.Extract";
                 }
-                else
+                catch (InvalidOperationException)
                 {
-                    using var deflate = new DeflateStream(fs, CompressionMode.Decompress, leaveOpen: true);
-                    CopyStream(deflate, outFile, uncompressedSize, cancellationToken);
                 }
-            }
 
-            var n = Interlocked.Increment(ref completed);
-            progress?.Report(new ConversionProgress(stage, n, total));
-        });
+                cancellationToken.ThrowIfCancellationRequested();
+                var (fullName, dataOffset, compressedSize, uncompressedSize, isStored) = entry;
+                var destPath = Path.Combine(extracted, fullName);
+                var dir = Path.GetDirectoryName(destPath);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+                using (var fs = new FileStream(inputZipPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var outFile = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    fs.Seek(dataOffset, SeekOrigin.Begin);
+                    if (isStored)
+                    {
+                        CopyStream(fs, outFile, compressedSize, cancellationToken);
+                    }
+                    else
+                    {
+                        using var deflate = new DeflateStream(fs, CompressionMode.Decompress, leaveOpen: true);
+                        CopyStream(deflate, outFile, uncompressedSize, cancellationToken);
+                    }
+                }
+
+                var n = Interlocked.Increment(ref completed);
+                progress?.Report(new ConversionProgress(stage, n, total));
+            });
     }
 
     private static void CopyStream(Stream from, Stream to, long count, CancellationToken cancellationToken = default)
@@ -88,14 +95,14 @@ internal static class ParallelZipReader
         }
     }
 
-    private static List<(string fullName, long dataOffset, long compressedSize, long uncompressedSize, bool isStored)> ParseZip(Stream fs)
+    private static List<(string fullName, long dataOffset, long compressedSize, long uncompressedSize, bool isStored)>
+        ParseZip(Stream fs)
     {
         var len = fs.Length;
         if (len < 22) return [];
 
         // Find EOCD: scan from end in chunks so we handle large comments or trailing data
         long centralDirOffset;
-        long centralDirSize;
         int totalEntries;
 
         var searchLen = Math.Min(MaxEocdSearch, len);
@@ -114,16 +121,17 @@ internal static class ParallelZipReader
                 break;
             }
         }
+
         if (eocdIndex < 0) return [];
 
         var centralDirSize32 = ReadLe32(buf, eocdIndex + 12);
         var centralDirOffset32 = ReadLe32(buf, eocdIndex + 16);
         var totalEntries16 = ReadLe16(buf, eocdIndex + 8);
 
-        const uint Zip64Marker32 = 0xFFFFFFFF;
-        const ushort Zip64Marker16 = 0xFFFF;
+        const uint zip64Marker32 = 0xFFFFFFFF;
+        const ushort zip64Marker16 = 0xFFFF;
 
-        if (centralDirOffset32 == Zip64Marker32 || centralDirSize32 == Zip64Marker32 || totalEntries16 == Zip64Marker16)
+        if (centralDirOffset32 == zip64Marker32 || centralDirSize32 == zip64Marker32 || totalEntries16 == zip64Marker16)
         {
             // Zip64: find Zip64 EOCD locator (20 bytes before standard EOCD)
             var eocdFileOffset = searchStart + eocdIndex;
@@ -132,7 +140,8 @@ internal static class ParallelZipReader
 
             fs.Seek(locatorOffset, SeekOrigin.Begin);
             var locatorBuf = new byte[20];
-            if (ReadFully(fs, locatorBuf, 0, 20) != 20 || ReadLe32(locatorBuf, 0) != Zip64EndOfCentralDirLocatorSignature)
+            if (ReadFully(fs, locatorBuf, 0, 20) != 20 ||
+                ReadLe32(locatorBuf, 0) != Zip64EndOfCentralDirLocatorSignature)
                 return [];
 
             var zip64EocdOffset = ReadLe64(locatorBuf, 8);
@@ -142,7 +151,6 @@ internal static class ParallelZipReader
             if (ReadFully(fs, zip64EocdBuf, 0, 56) != 56 || ReadLe32(zip64EocdBuf, 0) != Zip64EndOfCentralDirSignature)
                 return [];
 
-            centralDirSize = ReadLe64(zip64EocdBuf, 40);
             centralDirOffset = ReadLe64(zip64EocdBuf, 48);
             var totalEntries64 = ReadLe64(zip64EocdBuf, 32);
             totalEntries = totalEntries64 > int.MaxValue ? int.MaxValue : (int)totalEntries64;
@@ -150,7 +158,6 @@ internal static class ParallelZipReader
         else
         {
             centralDirOffset = centralDirOffset32;
-            centralDirSize = centralDirSize32;
             totalEntries = totalEntries16;
         }
 
@@ -187,8 +194,10 @@ internal static class ParallelZipReader
                     fs.Seek(commentLen, SeekOrigin.Current);
                     continue;
                 }
+
                 ParseZip64Extra(extraBuf, ref compressedSize, ref uncompressedSize, ref localHeaderOffset,
-                    compressedSize32 == Zip64Marker32, uncompressedSize32 == Zip64Marker32, localHeaderOffset32 == Zip64Marker32);
+                    compressedSize32 == zip64Marker32, uncompressedSize32 == zip64Marker32,
+                    localHeaderOffset32 == zip64Marker32);
                 fs.Seek(commentLen, SeekOrigin.Current);
             }
             else
@@ -197,7 +206,6 @@ internal static class ParallelZipReader
             if (string.IsNullOrEmpty(fullName) || fullName.EndsWith('/'))
                 continue;
 
-            long dataOffset;
             var pos = fs.Position;
             fs.Seek(localHeaderOffset, SeekOrigin.Begin);
             var localBuf = new byte[30];
@@ -206,9 +214,10 @@ internal static class ParallelZipReader
                 fs.Seek(pos, SeekOrigin.Begin);
                 continue;
             }
+
             var localNameLen = ReadLe16(localBuf, 26);
             var localExtraLen = ReadLe16(localBuf, 28);
-            dataOffset = localHeaderOffset + 30 + localNameLen + localExtraLen;
+            var dataOffset = localHeaderOffset + 30 + localNameLen + localExtraLen;
             fs.Seek(pos, SeekOrigin.Begin);
 
             var isStored = compression == CompressionMethodStored;
@@ -222,7 +231,8 @@ internal static class ParallelZipReader
         return result;
     }
 
-    private static void ParseZip64Extra(byte[] extra, ref long compressedSize, ref long uncompressedSize, ref long localHeaderOffset,
+    private static void ParseZip64Extra(byte[] extra, ref long compressedSize, ref long uncompressedSize,
+        ref long localHeaderOffset,
         bool needCompressed, bool needUncompressed, bool needOffset)
     {
         var pos = 0;
@@ -234,12 +244,28 @@ internal static class ParallelZipReader
             if (pos + size > extra.Length) break;
             if (id == Zip64ExtraId && size >= 8)
             {
-                var o = 0;
-                if (needUncompressed && o + 8 <= size) { uncompressedSize = ReadLe64(extra, pos + o); o += 8; }
-                if (needCompressed && o + 8 <= size) { compressedSize = ReadLe64(extra, pos + o); o += 8; }
-                if (needOffset && o + 8 <= size) { localHeaderOffset = ReadLe64(extra, pos + o); o += 8; }
+                var offset = 0;
+
+                if (needUncompressed)
+                {
+                    uncompressedSize = ReadLe64(extra, pos);
+                    offset = 8;
+                }
+
+                if (needCompressed && size - offset >= 8)
+                {
+                    compressedSize = ReadLe64(extra, pos + offset);
+                    offset += 8;
+                }
+
+                if (needOffset && size - offset >= 8)
+                {
+                    localHeaderOffset = ReadLe64(extra, pos + offset);
+                }
+
                 break;
             }
+
             pos += size;
         }
     }
@@ -253,10 +279,14 @@ internal static class ParallelZipReader
             if (n == 0) return total;
             total += n;
         }
+
         return total;
     }
 
     private static ushort ReadLe16(byte[] b, int i) => (ushort)(b[i] | (b[i + 1] << 8));
-    private static uint ReadLe32(byte[] b, int i) => (uint)(b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24));
-    private static long ReadLe64(byte[] b, int i) => (long)ReadLe32(b, i) | ((long)ReadLe32(b, i + 4) << 32);
+
+    private static uint ReadLe32(byte[] b, int i) =>
+        (uint)(b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24));
+
+    private static long ReadLe64(byte[] b, int i) => ReadLe32(b, i) | ((long)ReadLe32(b, i + 4) << 32);
 }

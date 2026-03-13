@@ -64,8 +64,6 @@
               "version": "[11.3.12, )"
             },
             "Avalonia.Diagnostics": {
-              "include": "None",
-              "suppressParent": "All",
               "target": "Package",
               "version": "[11.3.12, )"
             },
@@ -80,6 +78,10 @@
             "CommunityToolkit.Mvvm": {
               "target": "Package",
               "version": "[8.2.1, )"
+            },
+            "JetBrains.Annotations": {
+              "target": "Package",
+              "version": "[2024.2.0, )"
             }
           },
           "imports": [

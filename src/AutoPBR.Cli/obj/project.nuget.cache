@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "1MK6Q2tJ/T8=",
+  "dgSpecHash": "NG9XJXFm3gY=",
   "success": true,
-  "projectFilePath": "Z:\\Cursor Projects\\AutoPBR\\src\\AutoPBR.Cli\\AutoPBR.Cli.csproj",
+  "projectFilePath": "z:\\Cursor Projects\\AutoPBR\\src\\AutoPBR.Cli\\AutoPBR.Cli.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\colourful\\3.2.0\\colourful.3.2.0.nupkg.sha512",
     "C:\\Users\\John_Phoenix\\.nuget\\packages\\mathnet.numerics\\5.0.0\\mathnet.numerics.5.0.0.nupkg.sha512",

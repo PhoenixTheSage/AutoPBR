@@ -1,18 +1,18 @@
 using System.Collections.ObjectModel;
 using System.Collections.Concurrent;
 using System.Globalization;
-using System.IO.Compression;
-using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
 using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using JetBrains.Annotations;
 using AutoPBR.App.Lang;
 using AutoPBR.App.Models;
 using AutoPBR.Core;
 using AutoPBR.Core.Models;
+using NormalOperatorEnum = AutoPBR.Core.Models.NormalOperator;
+using NormalKernelSizeEnum = AutoPBR.Core.Models.NormalKernelSize;
+using NormalDerivativeEnum = AutoPBR.Core.Models.NormalDerivative;
 
 namespace AutoPBR.App.ViewModels;
 
@@ -26,7 +26,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
     private readonly ConcurrentDictionary<string, bool> _folderVisibilityCache = new(StringComparer.OrdinalIgnoreCase);
     private SpecularData? _specularData;
     private readonly UserSettings _settings;
-    private bool _loadingSettings;
+    private readonly bool _loadingSettings;
     private DateTime _lastLogWriteUtc = DateTime.MinValue;
     private const int LogWriteIntervalMs = 250;
     private const int MaxLogLines = 600;
@@ -37,63 +37,64 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         while (LogLines.Count > MaxLogLines)
             LogLines.RemoveAt(0);
     }
+
     private DateTime _conversionStartUtc;
     private ConversionStage? _currentStage;
     private DateTime _stageStartUtc;
     private string? _statusKey;
     private object[]? _statusFormatArgs;
 
-    [ObservableProperty] private string? packPath;
-    [ObservableProperty] private string? outputDirectory;
+    [ObservableProperty] private string? _packPath;
+    [ObservableProperty] private string? _outputDirectory;
 
-    [ObservableProperty] private double normalIntensity = AutoPbrDefaults.DefaultNormalIntensity;
-    [ObservableProperty] private double heightIntensity = AutoPbrDefaults.DefaultHeightIntensity;
-    [ObservableProperty] private bool fastSpecular;
-    [ObservableProperty] private string foliageMode = "Ignore All";
-    [ObservableProperty] private bool useLegacyExtractor;
-    [ObservableProperty] private double smoothnessScale = AutoPbrDefaults.DefaultSmoothnessScale;
-    [ObservableProperty] private double metallicBoost = AutoPbrDefaults.DefaultMetallicBoost;
-    [ObservableProperty] private double porosityBias = AutoPbrDefaults.DefaultPorosityBias;
-    [ObservableProperty] private int maxThreads; // 0 = auto
-    [ObservableProperty] private int maxThreadsMax = Math.Max(1, Environment.ProcessorCount);
-    [ObservableProperty] private string? tempDirectory;
-    [ObservableProperty] private bool processBlocks = true;
-    [ObservableProperty] private bool processItems = true;
-    [ObservableProperty] private bool processArmor = true;
-    [ObservableProperty] private bool processEntity = true;
-    [ObservableProperty] private bool processParticles = true;
-    [ObservableProperty] private bool useHeightFromNormals;
-    [ObservableProperty] private bool useDeepBumpNormals;
-    [ObservableProperty] private string deepBumpOverlap = "Large";
-    [ObservableProperty] private string normalOperator = nameof(AutoPBR.Core.Models.NormalOperator.SobelVc);
-    [ObservableProperty] private string normalKernelSize = "3";
-    [ObservableProperty] private string normalDerivative = nameof(AutoPBR.Core.Models.NormalDerivative.Luminance);
+    [ObservableProperty] private double _normalIntensity = AutoPbrDefaults.DefaultNormalIntensity;
+    [ObservableProperty] private double _heightIntensity = AutoPbrDefaults.DefaultHeightIntensity;
+    [ObservableProperty] private bool _fastSpecular;
+    [ObservableProperty] private string _foliageMode = "Ignore All";
+    [ObservableProperty] private bool _useLegacyExtractor;
+    [ObservableProperty] private double _smoothnessScale = AutoPbrDefaults.DefaultSmoothnessScale;
+    [ObservableProperty] private double _metallicBoost = AutoPbrDefaults.DefaultMetallicBoost;
+    [ObservableProperty] private double _porosityBias = AutoPbrDefaults.DefaultPorosityBias;
+    [ObservableProperty] private int _maxThreads; // 0 = auto
+    [ObservableProperty] private int _maxThreadsMax = Math.Max(1, Environment.ProcessorCount);
+    [ObservableProperty] private string? _tempDirectory;
+    [ObservableProperty] private bool _processBlocks = true;
+    [ObservableProperty] private bool _processItems = true;
+    [ObservableProperty] private bool _processArmor = true;
+    [ObservableProperty] private bool _processEntity = true;
+    [ObservableProperty] private bool _processParticles = true;
+    [ObservableProperty] private bool _useHeightFromNormals;
+    [ObservableProperty] private bool _useDeepBumpNormals;
+    [ObservableProperty] private string _deepBumpOverlap = "Large";
+    [ObservableProperty] private string _normalOperator = nameof(AutoPBR.Core.Models.NormalOperator.SobelVc);
+    [ObservableProperty] private string _normalKernelSize = "3";
+    [ObservableProperty] private string _normalDerivative = nameof(AutoPBR.Core.Models.NormalDerivative.Luminance);
 
-    [ObservableProperty] private bool isBusy;
-    [ObservableProperty] private bool isConverting;
-    [ObservableProperty] private string statusText = "";
+    [ObservableProperty] private bool _isBusy;
+    [ObservableProperty] private bool _isConverting;
+    [ObservableProperty] private string _statusText = "";
 
-    [ObservableProperty] private double progressValue;
-    [ObservableProperty] private double progressMax = 1;
+    [ObservableProperty] private double _progressValue;
+    [ObservableProperty] private double _progressMax = 1;
 
-    [ObservableProperty] private string? outputZipPath;
+    [ObservableProperty] private string? _outputZipPath;
 
     /// <summary>Search filter for the Resource Explorer tree (Explore tab). Filters nodes by path/name.</summary>
-    [ObservableProperty] private string exploreFilter = "";
+    [ObservableProperty] private string _exploreFilter = "";
 
-    [ObservableProperty] private string colorScheme = "Dark";
-    [ObservableProperty] private LanguageOption? selectedLanguage;
-    [ObservableProperty] private FoliageModeOption? selectedFoliageMode;
-    [ObservableProperty] private FoliageModeOption? selectedDeepBumpOverlap;
-    [ObservableProperty] private FoliageModeOption? selectedNormalOperator;
-    [ObservableProperty] private FoliageModeOption? selectedNormalKernelSize;
-    [ObservableProperty] private FoliageModeOption? selectedNormalDerivative;
-    [ObservableProperty] private FoliageModeOption? selectedColorSchemeOption;
-    [ObservableProperty] private IBrush windowBackground = Brushes.Transparent;
-    [ObservableProperty] private IBrush cardBackground = Brushes.Transparent;
-    [ObservableProperty] private IBrush cardBorderBrush = Brushes.Gray;
-    [ObservableProperty] private IBrush accentBrush = Brushes.DeepSkyBlue;
-    [ObservableProperty] private IBrush foregroundBrush = Brushes.White;
+    [ObservableProperty] private string _colorScheme = "Dark";
+    [ObservableProperty] private LanguageOption? _selectedLanguage;
+    [ObservableProperty] private FoliageModeOption? _selectedFoliageMode;
+    [ObservableProperty] private FoliageModeOption? _selectedDeepBumpOverlap;
+    [ObservableProperty] private FoliageModeOption? _selectedNormalOperator;
+    [ObservableProperty] private FoliageModeOption? _selectedNormalKernelSize;
+    [ObservableProperty] private FoliageModeOption? _selectedNormalDerivative;
+    [ObservableProperty] private FoliageModeOption? _selectedColorSchemeOption;
+    [ObservableProperty] private IBrush _windowBackground = Brushes.Transparent;
+    [ObservableProperty] private IBrush _cardBackground = Brushes.Transparent;
+    [ObservableProperty] private IBrush _cardBorderBrush = Brushes.Gray;
+    [ObservableProperty] private IBrush _accentBrush = Brushes.DeepSkyBlue;
+    [ObservableProperty] private IBrush _foregroundBrush = Brushes.White;
 
     public ObservableCollection<string> LogLines { get; } = new();
 
@@ -113,13 +114,20 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
 
             // Keep only the 10 newest log files.
             var files = Directory.GetFiles(LogsDirectory, "AutoPBR_*.log")
-                .OrderBy(f => File.GetCreationTimeUtc(f))
+                .OrderBy(File.GetCreationTimeUtc)
                 .ToList();
             while (files.Count > 10)
             {
                 var oldest = files[0];
                 files.RemoveAt(0);
-                try { File.Delete(oldest); } catch { /* ignore cleanup errors */ }
+                try
+                {
+                    File.Delete(oldest);
+                }
+                catch
+                {
+                    /* ignore cleanup errors */
+                }
             }
         }
         catch
@@ -129,7 +137,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
     }
 
     /// <summary>Localized strings for bindings; replaced when language changes.</summary>
-    public LocalizedStrings Strings { get; private set; } = null!;
+    public LocalizedStrings Strings { get; private set; }
 
     /// <summary>Foliage options for the dropdown (display name from Strings, value for settings/converter).</summary>
     public ObservableCollection<FoliageModeOption> FoliageModeOptions { get; } = new();
@@ -150,18 +158,18 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
     public ObservableCollection<FoliageModeOption> ColorSchemeOptions { get; } = new();
 
     /// <summary>Root of the scanned archive tree for the Explore tab. Null until user clicks Scan or when cleared.</summary>
-    [ObservableProperty]
-    private ArchiveNode? _scannedArchiveRoot;
+    [ObservableProperty] private ArchiveNode? _scannedArchiveRoot;
 
     public bool HasScannedArchive => ScannedArchiveRoot != null;
     public bool ShowExploreEmptyMessage => !HasScannedArchive;
 
     private static readonly ObservableCollection<ArchiveNode> EmptyArchiveNodes = new();
-    public ObservableCollection<ArchiveNode> ScannedArchiveTopLevel => ScannedArchiveRoot?.Children ?? EmptyArchiveNodes;
+
+    public ObservableCollection<ArchiveNode> ScannedArchiveTopLevel =>
+        ScannedArchiveRoot?.Children ?? EmptyArchiveNodes;
 
     /// <summary>Folder we're currently viewing in Explore; null = root. After scan, defaults to "assets" if present.</summary>
-    [ObservableProperty]
-    private ArchiveNode? _focusedArchiveNode;
+    [ObservableProperty] private ArchiveNode? _focusedArchiveNode;
 
     /// <summary>Items to show in Explore tree: children of focused folder, or root's children when no focus.</summary>
     public ObservableCollection<ArchiveNode> ExploreViewItems => FocusedArchiveNode?.Children ?? ScannedArchiveTopLevel;
@@ -185,8 +193,8 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
     }
 
     /// <summary>Languages shown in the Language dropdown (display name, culture code). Top 10 most spoken worldwide.</summary>
-    public ObservableCollection<LanguageOption> SupportedLanguages { get; } = new()
-    {
+    public ObservableCollection<LanguageOption> SupportedLanguages { get; } = new(
+    [
         new LanguageOption("English", "en"),
         new LanguageOption("中文 (简体)", "zh-Hans"),
         new LanguageOption("Español", "es"),
@@ -197,7 +205,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         new LanguageOption("Русский", "ru"),
         new LanguageOption("Deutsch", "de"),
         new LanguageOption("日本語", "ja"),
-    };
+    ]);
 
     public MainWindowViewModel()
     {
@@ -227,7 +235,9 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
             ProcessParticles = _settings.ProcessParticles;
             UseHeightFromNormals = _settings.UseHeightFromNormals;
             UseDeepBumpNormals = _settings.UseDeepBumpNormals;
-            DeepBumpOverlap = string.IsNullOrWhiteSpace(_settings.DeepBumpOverlap) ? "Large" : _settings.DeepBumpOverlap;
+            DeepBumpOverlap = string.IsNullOrWhiteSpace(_settings.DeepBumpOverlap)
+                ? "Large"
+                : _settings.DeepBumpOverlap;
             NormalOperator = string.IsNullOrWhiteSpace(_settings.NormalOperator)
                 ? nameof(AutoPBR.Core.Models.NormalOperator.SobelVc)
                 : _settings.NormalOperator;
@@ -239,7 +249,10 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
             var lang = string.IsNullOrWhiteSpace(_settings.Language) ? "en" : _settings.Language;
             ApplyCulture(lang);
             Strings = new LocalizedStrings();
-            SelectedLanguage = SupportedLanguages.FirstOrDefault(x => string.Equals(x.CultureCode, _settings.Language, StringComparison.OrdinalIgnoreCase)) ?? SupportedLanguages[0];
+            SelectedLanguage = SupportedLanguages.FirstOrDefault(x =>
+                                   string.Equals(x.CultureCode, _settings.Language,
+                                       StringComparison.OrdinalIgnoreCase)) ??
+                               SupportedLanguages[0];
             RefreshFoliageModeOptions();
             RefreshDeepBumpOverlapOptions();
             RefreshNormalOperatorOptions();
@@ -267,6 +280,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         {
             Resources.Culture = null;
         }
+
         Strings = new LocalizedStrings();
         OnPropertyChanged(nameof(Strings));
         RefreshFoliageModeOptions();
@@ -291,7 +305,8 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         ColorSchemeOptions.Add(new FoliageModeOption(Resources.GetString("ColorSchemeMono"), "Mono"));
         ColorSchemeOptions.Add(new FoliageModeOption(Resources.GetString("ColorSchemeOcean"), "Ocean"));
         ColorSchemeOptions.Add(new FoliageModeOption(Resources.GetString("ColorSchemeSunset"), "Sunset"));
-        SelectedColorSchemeOption = ColorSchemeOptions.FirstOrDefault(x => string.Equals(x.Value, ColorScheme, StringComparison.OrdinalIgnoreCase))
+        SelectedColorSchemeOption = ColorSchemeOptions.FirstOrDefault(x =>
+                                        string.Equals(x.Value, ColorScheme, StringComparison.OrdinalIgnoreCase))
                                     ?? ColorSchemeOptions[0];
     }
 
@@ -301,7 +316,10 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         DeepBumpOverlapOptions.Add(new FoliageModeOption(Strings.DeepBumpOverlapSmall, "Small"));
         DeepBumpOverlapOptions.Add(new FoliageModeOption(Strings.DeepBumpOverlapMedium, "Medium"));
         DeepBumpOverlapOptions.Add(new FoliageModeOption(Strings.DeepBumpOverlapLarge, "Large"));
-        SelectedDeepBumpOverlap = DeepBumpOverlapOptions.FirstOrDefault(x => string.Equals(x.Value, DeepBumpOverlap, StringComparison.OrdinalIgnoreCase)) ?? DeepBumpOverlapOptions[2];
+        SelectedDeepBumpOverlap =
+            DeepBumpOverlapOptions.FirstOrDefault(x =>
+                string.Equals(x.Value, DeepBumpOverlap, StringComparison.OrdinalIgnoreCase)) ??
+            DeepBumpOverlapOptions[2];
     }
 
     private void RefreshFoliageModeOptions()
@@ -310,38 +328,50 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         FoliageModeOptions.Add(new FoliageModeOption(Strings.IgnoreAll, "Ignore All"));
         FoliageModeOptions.Add(new FoliageModeOption(Strings.NoHeight, "No Height"));
         FoliageModeOptions.Add(new FoliageModeOption(Strings.ConvertAll, "Convert All"));
-        SelectedFoliageMode = FoliageModeOptions.FirstOrDefault(x => string.Equals(x.Value, FoliageMode, StringComparison.OrdinalIgnoreCase)) ?? FoliageModeOptions[0];
+        SelectedFoliageMode =
+            FoliageModeOptions.FirstOrDefault(x =>
+                string.Equals(x.Value, FoliageMode, StringComparison.OrdinalIgnoreCase)) ?? FoliageModeOptions[0];
     }
 
     private void RefreshNormalOperatorOptions()
     {
         NormalOperatorOptions.Clear();
-        NormalOperatorOptions.Add(new FoliageModeOption("Sobel + VC (default)", nameof(AutoPBR.Core.Models.NormalOperator.SobelVc)));
-        NormalOperatorOptions.Add(new FoliageModeOption("Scharr + VC (stronger edges)", nameof(AutoPBR.Core.Models.NormalOperator.ScharrVc)));
-        SelectedNormalOperator = NormalOperatorOptions.FirstOrDefault(x => string.Equals(x.Value, NormalOperator, StringComparison.OrdinalIgnoreCase))
+        NormalOperatorOptions.Add(new FoliageModeOption("Sobel + VC (default)",
+            nameof(AutoPBR.Core.Models.NormalOperator.SobelVc)));
+        NormalOperatorOptions.Add(new FoliageModeOption("Scharr + VC (stronger edges)",
+            nameof(AutoPBR.Core.Models.NormalOperator.ScharrVc)));
+        SelectedNormalOperator = NormalOperatorOptions.FirstOrDefault(x =>
+                                     string.Equals(x.Value, NormalOperator, StringComparison.OrdinalIgnoreCase))
                                  ?? NormalOperatorOptions[0];
     }
 
     private void RefreshNormalKernelSizeOptions()
     {
         NormalKernelSizeOptions.Clear();
-        var isScharr = string.Equals(NormalOperator, nameof(AutoPBR.Core.Models.NormalOperator.ScharrVc), StringComparison.OrdinalIgnoreCase);
+        var isScharr = string.Equals(NormalOperator, nameof(AutoPBR.Core.Models.NormalOperator.ScharrVc),
+            StringComparison.OrdinalIgnoreCase);
         NormalKernelSizeOptions.Add(new FoliageModeOption("3x3", "3"));
         NormalKernelSizeOptions.Add(new FoliageModeOption("5x5", "5"));
         if (!isScharr)
             NormalKernelSizeOptions.Add(new FoliageModeOption("7x7", "7"));
-        SelectedNormalKernelSize = NormalKernelSizeOptions.FirstOrDefault(x => string.Equals(x.Value, NormalKernelSize, StringComparison.OrdinalIgnoreCase))
+        SelectedNormalKernelSize = NormalKernelSizeOptions.FirstOrDefault(x =>
+                                       string.Equals(x.Value, NormalKernelSize, StringComparison.OrdinalIgnoreCase))
                                    ?? NormalKernelSizeOptions[0];
     }
 
     private void RefreshNormalDerivativeOptions()
     {
         NormalDerivativeOptions.Clear();
-        NormalDerivativeOptions.Add(new FoliageModeOption(Resources.GetString("NormalDerivative_Luminance"), nameof(AutoPBR.Core.Models.NormalDerivative.Luminance)));
-        NormalDerivativeOptions.Add(new FoliageModeOption(Resources.GetString("NormalDerivative_Color"), nameof(AutoPBR.Core.Models.NormalDerivative.Color)));
-        NormalDerivativeOptions.Add(new FoliageModeOption(Resources.GetString("NormalDerivative_ColorLuminanceBlend"), nameof(AutoPBR.Core.Models.NormalDerivative.ColorLuminanceBlend)));
-        NormalDerivativeOptions.Add(new FoliageModeOption(Resources.GetString("NormalDerivative_ColorLuminanceMax"), nameof(AutoPBR.Core.Models.NormalDerivative.ColorLuminanceMax)));
-        SelectedNormalDerivative = NormalDerivativeOptions.FirstOrDefault(x => string.Equals(x.Value, NormalDerivative, StringComparison.OrdinalIgnoreCase))
+        NormalDerivativeOptions.Add(new FoliageModeOption(Resources.GetString("NormalDerivative_Luminance"),
+            nameof(AutoPBR.Core.Models.NormalDerivative.Luminance)));
+        NormalDerivativeOptions.Add(new FoliageModeOption(Resources.GetString("NormalDerivative_Color"),
+            nameof(AutoPBR.Core.Models.NormalDerivative.Color)));
+        NormalDerivativeOptions.Add(new FoliageModeOption(Resources.GetString("NormalDerivative_ColorLuminanceBlend"),
+            nameof(AutoPBR.Core.Models.NormalDerivative.ColorLuminanceBlend)));
+        NormalDerivativeOptions.Add(new FoliageModeOption(Resources.GetString("NormalDerivative_ColorLuminanceMax"),
+            nameof(AutoPBR.Core.Models.NormalDerivative.ColorLuminanceMax)));
+        SelectedNormalDerivative = NormalDerivativeOptions.FirstOrDefault(x =>
+                                       string.Equals(x.Value, NormalDerivative, StringComparison.OrdinalIgnoreCase))
                                    ?? NormalDerivativeOptions[0];
     }
 
@@ -359,6 +389,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
             StatusText = Resources.GetString("Status_SelectPack");
             return;
         }
+
         StatusText = _statusFormatArgs is null || _statusFormatArgs.Length == 0
             ? Resources.GetString(_statusKey)
             : Resources.GetStatusString(_statusKey, _statusFormatArgs);
@@ -366,6 +397,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
 
     partial void OnPackPathChanged(string? value)
     {
+        _ = value;
         ClearScannedArchive();
         RecomputeOutputZipPath();
         ConvertCommand.NotifyCanExecuteChanged();
@@ -374,6 +406,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
 
     partial void OnOutputDirectoryChanged(string? value)
     {
+        _ = value;
         RecomputeOutputZipPath();
         ConvertCommand.NotifyCanExecuteChanged();
         SaveSettings();
@@ -381,22 +414,25 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
 
     partial void OnFastSpecularChanged(bool value)
     {
+        _ = value;
         RecomputeOutputZipPath();
         ConvertCommand.NotifyCanExecuteChanged();
         SaveSettings();
     }
 
-    partial void OnNormalIntensityChanged(double value) => SaveSettings();
-    partial void OnHeightIntensityChanged(double value) => SaveSettings();
-    partial void OnUseLegacyExtractorChanged(bool value) => SaveSettings();
-    partial void OnSmoothnessScaleChanged(double value) => SaveSettings();
-    partial void OnMetallicBoostChanged(double value) => SaveSettings();
-    partial void OnPorosityBiasChanged(double value) => SaveSettings();
-    partial void OnMaxThreadsChanged(int value) => SaveSettings();
-    partial void OnTempDirectoryChanged(string? value) => SaveSettings();
-    partial void OnExploreFilterChanged(string value) => ApplyExploreFilter();
+    partial void OnNormalIntensityChanged(double value) { _ = value; SaveSettings(); }
+    partial void OnHeightIntensityChanged(double value) { _ = value; SaveSettings(); }
+    partial void OnUseLegacyExtractorChanged(bool value) { _ = value; SaveSettings(); }
+    partial void OnSmoothnessScaleChanged(double value) { _ = value; SaveSettings(); }
+    partial void OnMetallicBoostChanged(double value) { _ = value; SaveSettings(); }
+    partial void OnPorosityBiasChanged(double value) { _ = value; SaveSettings(); }
+    partial void OnMaxThreadsChanged(int value) { _ = value; SaveSettings(); }
+    partial void OnTempDirectoryChanged(string? value) { _ = value; SaveSettings(); }
+    partial void OnExploreFilterChanged(string value) { _ = value; ApplyExploreFilter(); }
+
     partial void OnColorSchemeChanged(string value)
     {
+        _ = value;
         ApplyColorScheme();
         SaveSettings();
     }
@@ -407,6 +443,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
             ColorScheme = value.Value;
     }
 
+    [UsedImplicitly] // Invoked by CommunityToolkit.Mvvm source generator when SelectedLanguage changes
     partial void OnSelectedLanguageChanged(LanguageOption? value)
     {
         if (_loadingSettings)
@@ -416,34 +453,46 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         _settings.Language = code;
         _settings.Save();
     }
+
     partial void OnProcessBlocksChanged(bool value)
     {
+        _ = value;
         SaveSettings();
         ApplyTextureTypeOverridesToExplore();
     }
+
     partial void OnProcessItemsChanged(bool value)
     {
+        _ = value;
         SaveSettings();
         ApplyTextureTypeOverridesToExplore();
     }
+
     partial void OnProcessArmorChanged(bool value)
     {
+        _ = value;
         SaveSettings();
         ApplyTextureTypeOverridesToExplore();
     }
+
     partial void OnProcessEntityChanged(bool value)
     {
+        _ = value;
         SaveSettings();
         ApplyTextureTypeOverridesToExplore();
     }
+
     partial void OnProcessParticlesChanged(bool value)
     {
+        _ = value;
         SaveSettings();
         ApplyTextureTypeOverridesToExplore();
     }
-    partial void OnUseHeightFromNormalsChanged(bool value) => SaveSettings();
-    partial void OnUseDeepBumpNormalsChanged(bool value) => SaveSettings();
 
+    partial void OnUseHeightFromNormalsChanged(bool value) { _ = value; SaveSettings(); }
+    partial void OnUseDeepBumpNormalsChanged(bool value) { _ = value; SaveSettings(); }
+
+    [UsedImplicitly] // Invoked by CommunityToolkit.Mvvm source generator when SelectedDeepBumpOverlap changes
     partial void OnSelectedDeepBumpOverlapChanged(FoliageModeOption? value)
     {
         if (_loadingSettings)
@@ -452,6 +501,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         SaveSettings();
     }
 
+    [UsedImplicitly] // Invoked by CommunityToolkit.Mvvm source generator when SelectedNormalOperator changes
     partial void OnSelectedNormalOperatorChanged(FoliageModeOption? value)
     {
         if (_loadingSettings)
@@ -491,10 +541,9 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
             baseName = "pack";
 
         // Always output .zip (separate PBR layer). JAR in → ZIP out; ZIP in → ZIP with _PBR suffix.
-        if (ext.Equals(".jar", StringComparison.OrdinalIgnoreCase))
-            OutputZipPath = Path.Combine(OutputDirectory, baseName + ".zip");
-        else
-            OutputZipPath = Path.Combine(OutputDirectory, $"{baseName}_PBR.zip");
+        OutputZipPath = ext.Equals(".jar", StringComparison.OrdinalIgnoreCase)
+            ? Path.Combine(OutputDirectory, baseName + ".zip")
+            : Path.Combine(OutputDirectory, $"{baseName}_PBR.zip");
     }
 
     private void SaveSettings()
@@ -653,6 +702,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
                 seen.Add(folderPath);
             }
         }
+
         return seen;
     }
 
@@ -660,9 +710,11 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
     {
         var seg = folderPath.Split('/');
         var last = seg.Length > 0 ? seg[^1] : "";
-        if (last.Equals("block", StringComparison.OrdinalIgnoreCase) || last.Equals("blocks", StringComparison.OrdinalIgnoreCase))
+        if (last.Equals("block", StringComparison.OrdinalIgnoreCase) ||
+            last.Equals("blocks", StringComparison.OrdinalIgnoreCase))
             return ProcessBlocks;
-        if (last.Equals("item", StringComparison.OrdinalIgnoreCase) || last.Equals("items", StringComparison.OrdinalIgnoreCase))
+        if (last.Equals("item", StringComparison.OrdinalIgnoreCase) ||
+            last.Equals("items", StringComparison.OrdinalIgnoreCase))
             return ProcessItems;
         if (last.Equals("entity", StringComparison.OrdinalIgnoreCase))
             return ProcessEntity;
@@ -674,8 +726,14 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
     /// <summary>Warm up visibility info for the first few levels of folders so tree expansion is smoother. Runs on a background thread; set thread name for debugger. Respects cancellation (e.g. when user clears archive or starts a new scan).</summary>
     private void PrewarmFolderVisibilityCache(CancellationToken cancellationToken)
     {
-        try { Thread.CurrentThread.Name ??= "AutoPBR.Prewarm"; }
-        catch (InvalidOperationException) { /* already set */ }
+        try
+        {
+            Thread.CurrentThread.Name ??= "AutoPBR.Prewarm";
+        }
+        catch (InvalidOperationException)
+        {
+            /* already set */
+        }
 
         var data = _scannedArchiveData;
         if (data is null)
@@ -725,6 +783,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
             var include = GetProcessValueForTextureFolder(path);
             _pathOverrides[path] = include;
         }
+
         NotifyOverrideChangedForPaths(paths);
         RefreshExploreTreeFilter();
 
@@ -755,7 +814,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
     {
         if (ScannedArchiveRoot is null)
             return;
-        var f = (ExploreFilter ?? "").Trim();
+        var f = ExploreFilter.Trim();
         ApplyExploreFilterRecursive(ScannedArchiveRoot, f);
     }
 
@@ -768,6 +827,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
                 ApplyExploreFilterRecursive(child, filter);
             return true;
         }
+
         bool selfMatch = node.FullPath.Contains(filter, StringComparison.OrdinalIgnoreCase)
                          || node.Name.Contains(filter, StringComparison.OrdinalIgnoreCase);
         bool anyChildVisible = false;
@@ -776,6 +836,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
             if (ApplyExploreFilterRecursive(child, filter))
                 anyChildVisible = true;
         }
+
         node.IsVisibleByFilter = selfMatch || anyChildVisible;
         return node.IsVisibleByFilter;
     }
@@ -789,7 +850,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
 
     private void NotifyOverrideChangedForPaths(HashSet<string> paths)
     {
-        if (paths is null || paths.Count == 0 || ScannedArchiveRoot is null)
+        if (paths.Count == 0 || ScannedArchiveRoot is null)
             return;
         NotifyOverrideChangedRecursive(ScannedArchiveRoot, paths);
     }
@@ -804,7 +865,8 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
 
     private static bool IsPackPath(string? path) =>
         !string.IsNullOrWhiteSpace(path) &&
-        (path!.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".jar", StringComparison.OrdinalIgnoreCase));
+        (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
+         path.EndsWith(".jar", StringComparison.OrdinalIgnoreCase));
 
     private bool CanScanArchive() => !IsConverting && !IsBusy && IsPackPath(PackPath) && File.Exists(PackPath);
 
@@ -823,10 +885,11 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
 
     private bool HaveScanForCurrentPack() =>
         _scannedArchiveData is not null && _scannedArchivePath is not null && PackPath is not null &&
-        string.Equals(Path.GetFullPath(_scannedArchivePath), Path.GetFullPath(PackPath), StringComparison.OrdinalIgnoreCase);
+        string.Equals(Path.GetFullPath(_scannedArchivePath), Path.GetFullPath(PackPath),
+            StringComparison.OrdinalIgnoreCase);
 
     bool? IArchiveNodeHost.GetOverride(string fullPath) =>
-        _pathOverrides.TryGetValue(fullPath, out var v) ? v : null;
+        _pathOverrides.GetValueOrDefault(fullPath);
 
     void IArchiveNodeHost.SetOverride(string fullPath, bool? value)
     {
@@ -875,6 +938,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
                 }
             }
         }
+
         return false;
     }
 
@@ -913,9 +977,11 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
                 if (GetEffectiveOverrideForPath(entry.FullPath) == false)
                     continue;
             }
+
             var child = new ArchiveNode(entry.Name, entry.FullPath, entry.IsFolder, node, this);
             node.Children.Add(child);
         }
+
         ApplyExploreFilter();
     }
 
@@ -940,6 +1006,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
             if (c.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
                 return c;
         }
+
         return null;
     }
 
@@ -967,6 +1034,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
                     break;
                 }
             }
+
             if (next is null)
                 return null;
             current = next;
@@ -1039,13 +1107,14 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         AddLogLine(Resources.GetStatusString("Log_ScanningArchive", PackPath ?? ""));
 
         _scanCts?.Cancel();
+        // ReSharper disable once MethodHasAsyncOverload -- CancellationTokenSource has no DisposeAsync in this target
         _scanCts?.Dispose();
         _scanCts = new CancellationTokenSource();
         var scanToken = _scanCts.Token;
 
         var scanProgress = new Progress<(int completed, int total)>(p =>
         {
-            Dispatcher.UIThread.Post(() =>
+            _ = Dispatcher.UIThread.InvokeAsync(() =>
             {
                 ProgressMax = Math.Max(1, p.total);
                 ProgressValue = p.completed;
@@ -1054,7 +1123,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         });
         try
         {
-            var data = await Task.Run(() => BuildArchiveIndex(PackPath!, scanProgress)).ConfigureAwait(false);
+            var data = await Task.Run(() => BuildArchiveIndex(PackPath!, scanProgress), scanToken).ConfigureAwait(false);
             scanToken.ThrowIfCancellationRequested();
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
@@ -1077,7 +1146,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         }
         catch (Exception ex)
         {
-            Dispatcher.UIThread.Post(() =>
+            _ = Dispatcher.UIThread.InvokeAsync(() =>
             {
                 SetStatus("Status_FailedToScan");
                 AddLogLine(ex.ToString());
@@ -1085,9 +1154,10 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         }
         finally
         {
+            // ReSharper disable once MethodHasAsyncOverload
             _scanCts?.Dispose();
             _scanCts = null;
-            Dispatcher.UIThread.Post(() =>
+            _ = Dispatcher.UIThread.InvokeAsync(() =>
             {
                 IsBusy = false;
                 ScanArchiveCommand.NotifyCanExecuteChanged();
@@ -1097,11 +1167,12 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
     }
 
     /// <summary>Build a lightweight index (path -> immediate children) and file count. Only .png files are indexed; only entry names are read.</summary>
-    private static ScannedArchiveData BuildArchiveIndex(string zipPath, IProgress<(int completed, int total)>? progress = null)
+    private static ScannedArchiveData BuildArchiveIndex(string zipPath,
+        IProgress<(int completed, int total)>? progress = null)
     {
         var childLists = new Dictionary<string, List<ArchiveChildEntry>>(StringComparer.OrdinalIgnoreCase);
         var fileCount = 0;
-        using var zip = ZipFile.OpenRead(zipPath);
+        using var zip = System.IO.Compression.ZipFile.OpenRead(zipPath);
         var entries = zip.Entries.ToList();
         var total = entries.Count;
         var completed = 0;
@@ -1114,6 +1185,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
                 completed++;
                 continue;
             }
+
             var isEntryFolder = entry.FullName.EndsWith('/');
             if (!isEntryFolder && !full.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
             {
@@ -1121,6 +1193,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
                 completed++;
                 continue;
             }
+
             var segments = full.Split('/');
             var current = "";
             for (var i = 0; i < segments.Length; i++)
@@ -1135,20 +1208,25 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
                     siblingList = new List<ArchiveChildEntry>();
                     childLists[parentPath] = siblingList;
                 }
+
                 if (siblingList.Exists(c => c.FullPath.Equals(path, StringComparison.OrdinalIgnoreCase)))
                 {
                     current = path;
                     continue;
                 }
+
                 siblingList.Add(new ArchiveChildEntry(segment, path, !isFile));
                 if (isFile)
                     fileCount++;
                 current = path;
             }
+
             progress?.Report((completed, total));
             completed++;
         }
-        var index = childLists.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<ArchiveChildEntry>)kv.Value.AsReadOnly(), StringComparer.OrdinalIgnoreCase);
+
+        var index = childLists.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<ArchiveChildEntry>)kv.Value.AsReadOnly(),
+            StringComparer.OrdinalIgnoreCase);
         return new ScannedArchiveData(index, fileCount);
     }
 
@@ -1162,15 +1240,17 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         if (parts[2].Equals("textures", StringComparison.OrdinalIgnoreCase))
         {
             var after = string.Join("\\", parts.Skip(3));
-            var noExt = Path.ChangeExtension(after, null) ?? after;
+            var noExt = Path.ChangeExtension(after, null);
             return "\\" + ns + "\\" + noExt;
         }
+
         if (parts[2].Equals("optifine", StringComparison.OrdinalIgnoreCase))
         {
             var after = string.Join("\\", parts.Skip(3));
-            var noExt = Path.ChangeExtension(after, null) ?? after;
+            var noExt = Path.ChangeExtension(after, null);
             return "\\" + ns + "\\optifine\\" + noExt;
         }
+
         return null;
     }
 
@@ -1206,11 +1286,13 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
                 break;
             path = path[..slash];
         }
+
         return null;
     }
 
     partial void OnScannedArchiveRootChanged(ArchiveNode? value)
     {
+        _ = value; // Partial method signature is generated; parameter not needed for this handler.
         OnPropertyChanged(nameof(HasScannedArchive));
         OnPropertyChanged(nameof(ShowExploreEmptyMessage));
         OnPropertyChanged(nameof(ScannedArchiveTopLevel));
@@ -1227,6 +1309,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         GoBackExploreCommand.NotifyCanExecuteChanged();
     }
 
+    [UsedImplicitly] // Invoked by CommunityToolkit.Mvvm source generator when SelectedFoliageMode changes
     partial void OnSelectedFoliageModeChanged(FoliageModeOption? value)
     {
         if (_loadingSettings)
@@ -1257,7 +1340,8 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
         try
         {
             SetStatus("Status_LoadingSpecularData");
-            _specularData ??= SpecularData.LoadFromFile(Path.Combine(AppContext.BaseDirectory, "Data", "textures_data.json"));
+            _specularData ??=
+                SpecularData.LoadFromFile(Path.Combine(AppContext.BaseDirectory, "Data", "textures_data.json"));
 
             var ignore = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (FoliageMode == "Ignore All")
@@ -1265,6 +1349,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
                 foreach (var p in AutoPbrDefaults.PlantTextureKeys)
                     ignore.Add(p);
             }
+
             ApplyExploreOverridesToIgnoreSet(ignore);
 
             if (!HaveScanForCurrentPack())
@@ -1351,18 +1436,18 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
     /// <summary>Build converter options from current VM state and scan data.</summary>
     private AutoPbrOptions BuildConversionOptions(HashSet<string> ignore, IReadOnlyList<string>? entriesToExtractOnly)
     {
-        var op = Enum.TryParse<AutoPBR.Core.Models.NormalOperator>(NormalOperator, ignoreCase: true, out var parsedOp)
+        var op = Enum.TryParse<NormalOperatorEnum>(NormalOperator, ignoreCase: true, out var parsedOp)
             ? parsedOp
-            : AutoPBR.Core.Models.NormalOperator.SobelVc;
+            : NormalOperatorEnum.SobelVc;
         var ks = NormalKernelSize switch
         {
-            "5" => AutoPBR.Core.Models.NormalKernelSize.K5,
-            "7" => AutoPBR.Core.Models.NormalKernelSize.K7,
-            _ => AutoPBR.Core.Models.NormalKernelSize.K3
+            "5" => NormalKernelSizeEnum.K5,
+            "7" => NormalKernelSizeEnum.K7,
+            _ => NormalKernelSizeEnum.K3
         };
-        var deriv = Enum.TryParse<AutoPBR.Core.Models.NormalDerivative>(NormalDerivative, ignoreCase: true, out var parsedDeriv)
+        var deriv = Enum.TryParse<NormalDerivativeEnum>(NormalDerivative, ignoreCase: true, out var parsedDeriv)
             ? parsedDeriv
-            : AutoPBR.Core.Models.NormalDerivative.Luminance;
+            : NormalDerivativeEnum.Luminance;
 
         return new AutoPbrOptions
         {
@@ -1383,7 +1468,9 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
             FoliageMode = FoliageMode,
             UseHeightFromNormals = UseHeightFromNormals,
             UseDeepBumpNormals = UseDeepBumpNormals,
-            DeepBumpModelPath = UseDeepBumpNormals ? Path.Combine(AppContext.BaseDirectory, "Data", "deepbump256.onnx") : null,
+            DeepBumpModelPath = UseDeepBumpNormals
+                ? Path.Combine(AppContext.BaseDirectory, "Data", "deepbump256.onnx")
+                : null,
             DeepBumpOverlap = DeepBumpOverlap,
             NormalOperator = op,
             NormalKernelSize = ks,
@@ -1408,6 +1495,7 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
                 var stageName = GetStageDisplayName(_currentStage.Value);
                 AddLogLine(Resources.GetStatusString("Log_StageCompleted", stageName, elapsed));
             }
+
             if (p.Stage != ConversionStage.Done)
             {
                 _currentStage = p.Stage;
@@ -1423,9 +1511,9 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
             ProgressValue = p.Completed;
             if (!string.IsNullOrEmpty(p.InfoMessage))
                 AddLogLine(p.InfoMessage);
-            if (p.Stage == ConversionStage.Extracting && p.Completed == 0 && p.Total > 0)
+            if (p.Stage == ConversionStage.Extracting && p is { Completed: 0, Total: > 0 })
                 AddLogLine(Resources.GetString("Log_Extracting"));
-            if (p.Stage == ConversionStage.Packing && p.Completed == 0 && p.Total > 0)
+            if (p.Stage == ConversionStage.Packing && p is { Completed: 0, Total: > 0 })
                 AddLogLine(Resources.GetString("Log_Packing"));
             if (!string.IsNullOrEmpty(p.CurrentTextureName))
             {
@@ -1436,13 +1524,20 @@ public partial class MainWindowViewModel : ViewModelBase, IArchiveNodeHost
                     AddLogLine(Resources.GetStatusString("Log_StageCurrent", stageLabel, p.CurrentTextureName));
                 }
             }
+
             (_statusKey, _statusFormatArgs) = p.Stage switch
             {
-                ConversionStage.Extracting => p.Total > 0 ? ("Status_ExtractingPackProgress", new object[] { p.Completed, p.Total }) : ("Status_ExtractingPack", null),
+                ConversionStage.Extracting => p.Total > 0
+                    ? ("Status_ExtractingPackProgress", [p.Completed, p.Total])
+                    : ("Status_ExtractingPack", null),
                 ConversionStage.ScanningTextures => ("Status_ScanningTextures", null),
-                ConversionStage.GeneratingSpecular => ("Status_SpecularCurrent", new object[] { p.CurrentTextureName ?? "" }),
-                ConversionStage.GeneratingNormals => ("Status_NormalsCurrent", new object[] { p.CurrentTextureName ?? "" }),
-                ConversionStage.Packing => p.Total > 0 ? ("Status_PackingOutputProgress", new object[] { p.Completed, p.Total }) : ("Status_PackingOutput", null),
+                ConversionStage.GeneratingSpecular => ("Status_SpecularCurrent",
+                    [p.CurrentTextureName ?? ""]),
+                ConversionStage.GeneratingNormals => ("Status_NormalsCurrent",
+                    [p.CurrentTextureName ?? ""]),
+                ConversionStage.Packing => p.Total > 0
+                    ? ("Status_PackingOutputProgress", [p.Completed, p.Total])
+                    : ("Status_PackingOutput", null),
                 ConversionStage.Done => ("Status_Done", null),
                 _ => (_statusKey, _statusFormatArgs)
             };

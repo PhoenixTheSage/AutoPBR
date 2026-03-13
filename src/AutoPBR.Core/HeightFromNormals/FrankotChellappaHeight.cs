@@ -55,8 +55,8 @@ public static class FrankotChellappaHeight
 
         // Frankot-Chellappa in Fourier domain: Z(u,v) = (-i * (ωu*P + ωv*Q)) / (ωu² + ωv²)
         // with ωu = 2π*u/width, ωv = 2π*v/height. At (0,0) set Z=0.
-        var fftP = ToComplex32_2D(p, width, height);
-        var fftQ = ToComplex32_2D(q, width, height);
+        var fftP = ToComplex32_2D(p);
+        var fftQ = ToComplex32_2D(q);
         Fft2D(fftP, width, height, forward: true);
         Fft2D(fftQ, width, height, forward: true);
 
@@ -71,12 +71,13 @@ public static class FrankotChellappaHeight
             {
                 var omegaU = twoPiW * (u <= width / 2 ? u : u - width);
                 var idx = v * width + u;
-                var denom = (float)(omegaU * omegaU + omegaV * omegaV);
+                var denom = omegaU * omegaU + omegaV * omegaV;
                 if (denom < 1e-20f)
                 {
                     zFft[idx] = Complex32.Zero;
                     continue;
                 }
+
                 var sum = (omegaU * fftP[idx] + omegaV * fftQ[idx]);
                 var num = new Complex32(0, -1) * sum;
                 zFft[idx] = num / denom;
@@ -110,7 +111,7 @@ public static class FrankotChellappaHeight
         return (width, height, outData);
     }
 
-    private static Complex32[] ToComplex32_2D(double[] data, int width, int height)
+    private static Complex32[] ToComplex32_2D(double[] data)
     {
         var c = new Complex32[data.Length];
         for (var i = 0; i < data.Length; i++)
@@ -132,6 +133,7 @@ public static class FrankotChellappaHeight
             for (var x = 0; x < width; x++)
                 data[y * width + x] = rowBuf[x];
         }
+
         var colBuf = new Complex32[height];
         for (var x = 0; x < width; x++)
         {

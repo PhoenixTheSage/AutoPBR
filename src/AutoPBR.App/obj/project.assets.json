@@ -114,12 +114,12 @@
           "Avalonia.Remote.Protocol": "11.3.12"
         },
         "compile": {
-          "lib/net8.0/_._": {
+          "lib/net8.0/Avalonia.Controls.ColorPicker.dll": {
             "related": ".xml"
           }
         },
         "runtime": {
-          "lib/net8.0/_._": {
+          "lib/net8.0/Avalonia.Controls.ColorPicker.dll": {
             "related": ".xml"
           }
         }
@@ -152,12 +152,12 @@
           "Avalonia.Themes.Simple": "11.3.12"
         },
         "compile": {
-          "lib/net8.0/_._": {
+          "lib/net8.0/Avalonia.Diagnostics.dll": {
             "related": ".xml"
           }
         },
         "runtime": {
-          "lib/net8.0/_._": {
+          "lib/net8.0/Avalonia.Diagnostics.dll": {
             "related": ".xml"
           }
         }
@@ -274,12 +274,12 @@
           "Avalonia": "11.3.12"
         },
         "compile": {
-          "lib/net8.0/_._": {
+          "lib/net8.0/Avalonia.Themes.Simple.dll": {
             "related": ".xml"
           }
         },
         "runtime": {
-          "lib/net8.0/_._": {
+          "lib/net8.0/Avalonia.Themes.Simple.dll": {
             "related": ".xml"
           }
         }
@@ -474,6 +474,19 @@
           "runtimes/win-x86/native/libHarfBuzzSharp.dll": {
             "assetType": "native",
             "rid": "win-x86"
+          }
+        }
+      },
+      "JetBrains.Annotations/2024.2.0": {
+        "type": "package",
+        "compile": {
+          "lib/netstandard2.0/JetBrains.Annotations.dll": {
+            "related": ".deps.json;.xml"
+          }
+        },
+        "runtime": {
+          "lib/netstandard2.0/JetBrains.Annotations.dll": {
+            "related": ".deps.json;.xml"
           }
         }
       },
@@ -1450,6 +1463,29 @@
         "runtimes/win-x86/native/libHarfBuzzSharp.dll"
       ]
     },
+    "JetBrains.Annotations/2024.2.0": {
+      "sha512": "GNnqCFW/163p1fOehKx0CnAqjmpPrUSqrgfHM6qca+P+RN39C9rhlfZHQpJhxmQG/dkOYe/b3Z0P8b6Kv5m1qw==",
+      "type": "package",
+      "path": "jetbrains.annotations/2024.2.0",
+      "files": [
+        ".nupkg.metadata",
+        ".signature.p7s",
+        "icon.png",
+        "jetbrains.annotations.2024.2.0.nupkg.sha512",
+        "jetbrains.annotations.nuspec",
+        "lib/JetBrains.Annotations.2024.2.0.snupkg",
+        "lib/net20/JetBrains.Annotations.dll",
+        "lib/net20/JetBrains.Annotations.xml",
+        "lib/netstandard1.0/JetBrains.Annotations.deps.json",
+        "lib/netstandard1.0/JetBrains.Annotations.dll",
+        "lib/netstandard1.0/JetBrains.Annotations.xml",
+        "lib/netstandard2.0/JetBrains.Annotations.deps.json",
+        "lib/netstandard2.0/JetBrains.Annotations.dll",
+        "lib/netstandard2.0/JetBrains.Annotations.xml",
+        "lib/portable40-net40+sl5+win8+wp8+wpa81/JetBrains.Annotations.dll",
+        "lib/portable40-net40+sl5+win8+wp8+wpa81/JetBrains.Annotations.xml"
+      ]
+    },
     "MathNet.Numerics/5.0.0": {
       "sha512": "pg1W2VwaEQMAiTpGK840hZgzavnqjlCMTVSbtVCXVyT+7AX4mc1o89SPv4TBlAjhgCOo9c1Y+jZ5m3ti2YgGgA==",
       "type": "package",
@@ -1946,7 +1982,8 @@
       "Avalonia.Diagnostics >= 11.3.12",
       "Avalonia.Fonts.Inter >= 11.3.12",
       "Avalonia.Themes.Fluent >= 11.3.12",
-      "CommunityToolkit.Mvvm >= 8.2.1"
+      "CommunityToolkit.Mvvm >= 8.2.1",
+      "JetBrains.Annotations >= 2024.2.0"
     ]
   },
   "packageFolders": {
@@ -2013,8 +2050,6 @@
             "version": "[11.3.12, )"
           },
           "Avalonia.Diagnostics": {
-            "include": "None",
-            "suppressParent": "All",
             "target": "Package",
             "version": "[11.3.12, )"
           },
@@ -2029,6 +2064,10 @@
           "CommunityToolkit.Mvvm": {
             "target": "Package",
             "version": "[8.2.1, )"
+          },
+          "JetBrains.Annotations": {
+            "target": "Package",
+            "version": "[2024.2.0, )"
           }
         },
         "imports": [

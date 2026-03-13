@@ -57,6 +57,7 @@
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
     </PackageReference>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.1" />
+    <PackageReference Include="JetBrains.Annotations" Version="2024.2.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -74,7 +75,11 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <!-- CUDA/cuDNN runtime DLLs from Core Data; copied to runtimes\win-x64\native for ONNX GPU -->
-    <Content Include="..\AutoPBR.Core\Data\native\*.dll" Link="runtimes\win-x64\native\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content
+      Include="..\AutoPBR.Core\Data\native\*.dll"
+      Link="runtimes\win-x64\native\%(Filename)%(Extension)"
+      CopyToOutputDirectory="PreserveNewest"
+    />
   </ItemGroup>
 
   <!-- Satellite cultures: must match Lang\Resources.*.resx (excluding default Resources.resx). -->
@@ -88,15 +93,33 @@
       <_SatelliteFiles Include="$(OutputPath)%(_SatelliteCulture.Identity)\*" />
     </ItemGroup>
     <MakeDir Directories="$(OutputPath)lang\%(_SatelliteCulture.Identity)" />
-    <Copy SourceFiles="@(_SatelliteFiles)" DestinationFolder="$(OutputPath)lang\%(_SatelliteCulture.Identity)\" SkipUnchangedFiles="true" Condition="Exists('$(OutputPath)%(_SatelliteCulture.Identity)')" />
+    <Copy
+      SourceFiles="@(_SatelliteFiles)"
+      DestinationFolder="$(OutputPath)lang\%(_SatelliteCulture.Identity)\"
+      SkipUnchangedFiles="true"
+      Condition="Exists('$(OutputPath)%(_SatelliteCulture.Identity)')"
+    />
   </Target>
 
   <!-- Publish: move satellite assemblies from culture\ to lang\culture\ in publish output (same layout as build). -->
-  <Target Name="MoveSatellitesToLangAfterPublish" AfterTargets="Publish" Condition="'$(PublishDir)' != ''">
+  <Target
+    Name="MoveSatellitesToLangAfterPublish"
+    AfterTargets="Publish"
+    Condition="'$(PublishDir)' != ''"
+  >
     <MakeDir Directories="$(PublishDir)lang\%(_SatelliteCulture.Identity)" />
-    <RemoveDir Directories="$(PublishDir)lang\%(_SatelliteCulture.Identity)" Condition="Exists('$(PublishDir)lang\%(_SatelliteCulture.Identity)')" />
-    <Exec Command="move /Y &quot;$(PublishDir)%(_SatelliteCulture.Identity)&quot; &quot;$(PublishDir)lang\%(_SatelliteCulture.Identity)&quot;" Condition="Exists('$(PublishDir)%(_SatelliteCulture.Identity)') and '$(OS)' == 'Windows_NT'" />
-    <Exec Command="mv &quot;$(PublishDir)%(_SatelliteCulture.Identity)&quot; &quot;$(PublishDir)lang/%(_SatelliteCulture.Identity)&quot;" Condition="Exists('$(PublishDir)%(_SatelliteCulture.Identity)') and '$(OS)' != 'Windows_NT'" />
+    <RemoveDir
+      Directories="$(PublishDir)lang\%(_SatelliteCulture.Identity)"
+      Condition="Exists('$(PublishDir)lang\%(_SatelliteCulture.Identity)')"
+    />
+    <Exec
+      Command="move /Y &quot;$(PublishDir)%(_SatelliteCulture.Identity)&quot; &quot;$(PublishDir)lang\%(_SatelliteCulture.Identity)&quot;"
+      Condition="Exists('$(PublishDir)%(_SatelliteCulture.Identity)') and '$(OS)' == 'Windows_NT'"
+    />
+    <Exec
+      Command="mv &quot;$(PublishDir)%(_SatelliteCulture.Identity)&quot; &quot;$(PublishDir)lang/%(_SatelliteCulture.Identity)&quot;"
+      Condition="Exists('$(PublishDir)%(_SatelliteCulture.Identity)') and '$(OS)' != 'Windows_NT'"
+    />
   </Target>
 
   <!-- Overlay ONNX Runtime CUDA 13 native binaries from GitHub release (replaces default CUDA 12 from NuGet). -->
@@ -113,14 +136,40 @@
     <PropertyGroup Condition="Exists('$(_OnnxNativeDir)')">
       <_DoCuda13Overlay>true</_DoCuda13Overlay>
     </PropertyGroup>
-    <Message Importance="high" Text="Overlaying ONNX Runtime with CUDA 13 build from GitHub releases..." Condition="'$(_DoCuda13Overlay)' == 'true'" />
-    <DownloadFile SourceUrl="$(OnnxRuntimeCuda13ZipUrl)" DestinationFolder="$(IntermediateOutputPath)" SkipUnchangedFiles="true" Condition="'$(_DoCuda13Overlay)' == 'true'" />
-    <Message Importance="high" Text="Extracting CUDA 13 native binaries..." Condition="'$(_DoCuda13Overlay)' == 'true'" />
-    <Exec Command="powershell -NoProfile -Command &quot;Expand-Archive -Path '$(IntermediateOutputPath)onnxruntime-win-x64-gpu_cuda13-1.24.3.zip' -DestinationPath '$(OnnxRuntimeCuda13ExtractDir)' -Force&quot;" Condition="'$(_DoCuda13Overlay)' == 'true'" />
+    <Message
+      Importance="high"
+      Text="Overlaying ONNX Runtime with CUDA 13 build from GitHub releases..."
+      Condition="'$(_DoCuda13Overlay)' == 'true'"
+    />
+    <DownloadFile
+      SourceUrl="$(OnnxRuntimeCuda13ZipUrl)"
+      DestinationFolder="$(IntermediateOutputPath)"
+      SkipUnchangedFiles="true"
+      Condition="'$(_DoCuda13Overlay)' == 'true'"
+    />
+    <Message
+      Importance="high"
+      Text="Extracting CUDA 13 native binaries..."
+      Condition="'$(_DoCuda13Overlay)' == 'true'"
+    />
+    <Exec
+      Command="powershell -NoProfile -Command &quot;Expand-Archive -Path '$(IntermediateOutputPath)onnxruntime-win-x64-gpu_cuda13-1.24.3.zip' -DestinationPath '$(OnnxRuntimeCuda13ExtractDir)' -Force&quot;"
+      Condition="'$(_DoCuda13Overlay)' == 'true'"
+    />
     <ItemGroup Condition="'$(_DoCuda13Overlay)' == 'true'">
       <_Cuda13Dlls Include="$(OnnxRuntimeCuda13ExtractDir)\**\*.dll" />
     </ItemGroup>
-    <Copy SourceFiles="@(_Cuda13Dlls)" DestinationFolder="$(_OnnxNativeDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true" Condition="'$(_DoCuda13Overlay)' == 'true'" />
-    <Message Importance="high" Text="ONNX Runtime CUDA 13 native binaries overlay complete." Condition="'$(_DoCuda13Overlay)' == 'true'" />
+    <Copy
+      SourceFiles="@(_Cuda13Dlls)"
+      DestinationFolder="$(_OnnxNativeDir)"
+      SkipUnchangedFiles="false"
+      OverwriteReadOnlyFiles="true"
+      Condition="'$(_DoCuda13Overlay)' == 'true'"
+    />
+    <Message
+      Importance="high"
+      Text="ONNX Runtime CUDA 13 native binaries overlay complete."
+      Condition="'$(_DoCuda13Overlay)' == 'true'"
+    />
   </Target>
 </Project>

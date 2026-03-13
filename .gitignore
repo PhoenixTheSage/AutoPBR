@@ -464,3 +464,10 @@ src/AutoPBR.Core/obj/project.nuget.cache
 src/AutoPBR.App/obj/project.nuget.cache
 src/AutoPBR.App/obj/project.assets.json
 src/AutoPBR.App/obj/AutoPBR.App.csproj.nuget.dgspec.json
+src/AutoPBR.App/obj/project.assets.json
+src/AutoPBR.App/obj/project.nuget.cache
+src/AutoPBR.Cli/obj/AutoPBR.Cli.csproj.nuget.dgspec.json
+src/AutoPBR.Cli/obj/project.assets.json
+src/AutoPBR.Cli/obj/project.nuget.cache
+src/AutoPBR.Core/obj/project.assets.json
+src/AutoPBR.App/obj/AutoPBR.App.csproj.nuget.dgspec.json

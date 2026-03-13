@@ -1,11 +1,9 @@
-using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Text.Json;
 using Colourful;
 using AutoPBR.Core.HeightFromNormals;
 using AutoPBR.Core.Models;
 using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Advanced;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 
@@ -24,8 +22,14 @@ public sealed class ResourcePackConverter
     /// <summary>Set thread name for debugging (e.g. in Visual Studio Threads window). Name can only be set once per thread.</summary>
     private static void SetThreadName(string name)
     {
-        try { Thread.CurrentThread.Name ??= name; }
-        catch (InvalidOperationException) { /* already set */ }
+        try
+        {
+            Thread.CurrentThread.Name ??= name;
+        }
+        catch (InvalidOperationException)
+        {
+            /* already set */
+        }
     }
 
     private static int GetZipParallelism(AutoPbrOptions options) => GetEffectiveThreads(options.MaxThreads);
@@ -53,21 +57,24 @@ public sealed class ResourcePackConverter
             if (combined.Contains(sub, StringComparison.OrdinalIgnoreCase))
                 return true;
         }
+
         return false;
     }
 
     private static bool IsPathUnderPlantOrPlants(string relativePathNoExt)
     {
         return relativePathNoExt.Contains("\\plant\\", StringComparison.OrdinalIgnoreCase)
-            || relativePathNoExt.Contains("\\plants\\", StringComparison.OrdinalIgnoreCase);
+               || relativePathNoExt.Contains("\\plants\\", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>True for plants that always get no height in "No Height" mode. Grass by name is excluded here; grass gets no height only when it has significant transparency (checked at normal generation).</summary>
-    private static bool IsPlantForNoHeight(string relativePathNoExt, string name, string foliageMode)
+    private static bool IsPlantForNoHeight(string relativePathNoExt, string foliageMode)
     {
-        if (foliageMode != "No Height") return false;
+        if (foliageMode != "No Height")
+            return false;
+
         return AutoPbrDefaults.PlantTextureKeys.Contains(relativePathNoExt)
-            || IsPathUnderPlantOrPlants(relativePathNoExt);
+               || IsPathUnderPlantOrPlants(relativePathNoExt);
     }
 
     /// <summary>Same thresholds as Ignore All grass skip: 2D grass sprites have lots of transparency; grass block cubes do not.</summary>
@@ -85,12 +92,14 @@ public sealed class ResourcePackConverter
             sumA += a;
             if (a < 128) lowAlphaCount++;
         }
+
         var meanAlpha = (int)(sumA / n);
         return meanAlpha < 200 || lowAlphaCount > 0.3 * n;
     }
 
     /// <summary>Precompute per-pixel luminance (0–1) and edge magnitude (0–1) from cropped diffuse for specular heuristics.</summary>
-    private static (float[] luminance, float[] edgeMagnitude, float meanLuminance) BuildLuminanceAndEdge(Image<Rgba32> cropped, int width, int height)
+    private static (float[] luminance, float[] edgeMagnitude, float meanLuminance) BuildLuminanceAndEdge(
+        Image<Rgba32> cropped, int width, int height)
     {
         var lum = new float[width * height];
         cropped.ProcessPixelRows(acc =>
@@ -106,14 +115,24 @@ public sealed class ResourcePackConverter
             }
         });
         var sumLum = 0.0;
-        for (var i = 0; i < lum.Length; i++)
-            sumLum += lum[i];
+        foreach (var value in lum)
+            sumLum += value;
         var meanLum = (float)(sumLum / lum.Length);
 
         // VC-Filter: multiple orientation-selective Sobel responses summed to reduce blind zones
         // (see https://kravtsov-development.medium.com/new-high-quality-edge-detector-6757f35a0ee0)
-        int[,] kx = { { -1, 0, 1 }, { -2, 0, 2 }, { -1, 0, 1 } };
-        int[,] ky = { { -1, -2, -1 }, { 0, 0, 0 }, { 1, 2, 1 } };
+        int[,] kx =
+        {
+            { -1, 0, 1 },
+            { -2, 0, 2 },
+            { -1, 0, 1 }
+        };
+        int[,] ky =
+        {
+            { -1, -2, -1 },
+            { 0, 0, 0 },
+            { 1, 2, 1 }
+        };
         var gx = new float[width * height];
         var gy = new float[width * height];
         for (var y = 0; y < height; y++)
@@ -129,35 +148,40 @@ public sealed class ResourcePackConverter
                 sx += v * kx[oy + 1, ox + 1];
                 sy += v * ky[oy + 1, ox + 1];
             }
+
             gx[y * width + x] = sx;
             gy[y * width + x] = sy;
         }
 
         // Sum absolute response over 12 orientations (0°, 15°, ..., 165°) for isotropic edge strength
-        const int VcOrientationCount = 12;
-        const float VcAngleStep = MathF.PI / VcOrientationCount;
+        const int vcOrientationCount = 12;
+        const float vcAngleStep = MathF.PI / vcOrientationCount;
         var edge = new float[width * height];
         for (var i = 0; i < gx.Length; i++)
         {
             var gxv = gx[i];
             var gyv = gy[i];
             float sum = 0;
-            for (var k = 0; k < VcOrientationCount; k++)
+            for (var k = 0; k < vcOrientationCount; k++)
             {
-                var a = k * VcAngleStep;
+                var a = k * vcAngleStep;
                 var r = gxv * MathF.Cos(a) + gyv * MathF.Sin(a);
                 sum += MathF.Abs(r);
             }
+
             edge[i] = sum;
         }
+
         var maxEdge = 0f;
-        for (var i = 0; i < edge.Length; i++)
-            if (edge[i] > maxEdge) maxEdge = edge[i];
+        foreach (var e in edge)
+            if (e > maxEdge)
+                maxEdge = e;
         if (maxEdge > 0f)
         {
             for (var i = 0; i < edge.Length; i++)
                 edge[i] = Math.Clamp(edge[i] / maxEdge, 0f, 1f);
         }
+
         return (lum, edge, meanLum);
     }
 
@@ -172,11 +196,13 @@ public sealed class ResourcePackConverter
             yield return ("blocks", false);
             yield return ("block", false);
         }
+
         if (options.ProcessItems)
         {
             yield return ("items", false);
             yield return ("item", false);
         }
+
         if (options.ProcessArmor)
             yield return ("entity", false);
         if (options.ProcessParticles)
@@ -221,8 +247,9 @@ public sealed class ResourcePackConverter
                 if (options.UseLegacyExtractor)
                     ExtractWithProgress(inputZipPath, extracted, options, progress, cancellationToken);
                 else
-                    ParallelZipReader.ExtractZip(inputZipPath, extracted, progress, ConversionStage.Extracting, cancellationToken, options.EntriesToExtractOnly);
-            }).ConfigureAwait(false);
+                    ParallelZipReader.ExtractZip(inputZipPath, extracted, progress, ConversionStage.Extracting,
+                        cancellationToken, options.EntriesToExtractOnly);
+            }, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
 
             progress?.Report(new ConversionProgress(ConversionStage.ScanningTextures, 0, 0));
@@ -241,12 +268,20 @@ public sealed class ResourcePackConverter
             if (File.Exists(outputZipPath))
                 File.Delete(outputZipPath);
 
-            await Task.Run(() => CreateWithProgress(extracted, outputZipPath, textures, progress, cancellationToken)).ConfigureAwait(false);
+            await Task.Run(() => CreateWithProgress(extracted, outputZipPath, textures, progress, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
             progress?.Report(new ConversionProgress(ConversionStage.Done, 0, 0));
         }
         finally
         {
-            try { Directory.Delete(tempRoot, recursive: true); } catch { /* best-effort */ }
+            try
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+            catch
+            {
+                /* best-effort */
+            }
         }
     }
 
@@ -266,8 +301,8 @@ public sealed class ResourcePackConverter
         }
         else
         {
-            using (var archive = ZipFile.OpenRead(inputZipPath))
-                entryNames = archive.Entries.Where(e => !string.IsNullOrEmpty(e.Name)).Select(e => e.FullName).ToList();
+            using var archive = ZipFile.OpenRead(inputZipPath);
+            entryNames = archive.Entries.Where(e => !string.IsNullOrEmpty(e.Name)).Select(e => e.FullName).ToList();
         }
 
         var total = entryNames.Count;
@@ -276,6 +311,7 @@ public sealed class ResourcePackConverter
         var completed = 0;
         var lastReported = -1;
         var reportLock = new object();
+
         void ReportProgress()
         {
             var current = Interlocked.Increment(ref completed);
@@ -306,6 +342,7 @@ public sealed class ResourcePackConverter
                     entry.ExtractToFile(destPath, overwrite: true);
                 ReportProgress();
             }
+
             return;
         }
 
@@ -319,24 +356,25 @@ public sealed class ResourcePackConverter
                 partitions.Add(entryNames.GetRange(start, count));
         }
 
-        Parallel.ForEach(partitions, new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = cancellationToken }, partition =>
-        {
-            SetThreadName("AutoPBR.Extract");
-            using var archive = ZipFile.OpenRead(inputZipPath);
-            foreach (var fullName in partition)
+        Parallel.ForEach(partitions,
+            new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = cancellationToken }, partition =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var entry = archive.GetEntry(fullName);
-                if (entry is null) continue;
-                var destPath = Path.Combine(extracted, fullName);
-                var dir = Path.GetDirectoryName(destPath);
-                if (!string.IsNullOrEmpty(dir))
-                    Directory.CreateDirectory(dir);
-                if (!string.IsNullOrEmpty(entry.Name))
-                    entry.ExtractToFile(destPath, overwrite: true);
-                ReportProgress();
-            }
-        });
+                SetThreadName("AutoPBR.Extract");
+                using var archive = ZipFile.OpenRead(inputZipPath);
+                foreach (var fullName in partition)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var entry = archive.GetEntry(fullName);
+                    if (entry is null) continue;
+                    var destPath = Path.Combine(extracted, fullName);
+                    var dir = Path.GetDirectoryName(destPath);
+                    if (!string.IsNullOrEmpty(dir))
+                        Directory.CreateDirectory(dir);
+                    if (!string.IsNullOrEmpty(entry.Name))
+                        entry.ExtractToFile(destPath, overwrite: true);
+                    ReportProgress();
+                }
+            });
     }
 
     /// <summary>Writes pack.mcmeta with description "Generated by AutoPBR", preserving pack_format from source if present.</summary>
@@ -354,8 +392,12 @@ public sealed class ResourcePackConverter
                     pack.TryGetProperty("pack_format", out var pf))
                     packFormat = pf.GetInt32();
             }
-            catch { /* keep default */ }
+            catch
+            {
+                /* keep default */
+            }
         }
+
         var mcmeta = new Dictionary<string, object>
         {
             ["pack"] = new Dictionary<string, object>
@@ -403,7 +445,8 @@ public sealed class ResourcePackConverter
                 files.Add(t.SpecularPath);
         }
 
-        ParallelZipWriter.WriteZip(outputZipPath, files, extracted, progress, ConversionStage.Packing, cancellationToken);
+        ParallelZipWriter.WriteZip(outputZipPath, files, extracted, progress, ConversionStage.Packing,
+            cancellationToken);
     }
 
     /// <summary>Scans for textures under assets/&lt;namespace&gt;/textures (minecraft, optifine, mod ids, etc.).</summary>
@@ -460,7 +503,7 @@ public sealed class ResourcePackConverter
                             Extension = ext,
                             RelativeKey = relativePathNoExt,
                             SpecularOnly = specularOnly,
-                            IsPlantForNoHeight = IsPlantForNoHeight(relativePathNoExt, name, options.FoliageMode)
+                            IsPlantForNoHeight = IsPlantForNoHeight(relativePathNoExt, options.FoliageMode)
                         });
                     }
                 }
@@ -571,137 +614,155 @@ public sealed class ResourcePackConverter
             var de2000 = new CIEDE2000ColorDifference();
             var completed = 0;
 
-            Parallel.ForEach(textures, new ParallelOptions { MaxDegreeOfParallelism = GetConversionParallelism(options), CancellationToken = ct }, t =>
-            {
-                SetThreadName("AutoPBR.Specular");
-                ct.ThrowIfCancellationRequested();
-                var fast = t.Overrides.FastSpecular ?? options.FastSpecular;
-                var rules = t.Overrides.CustomSpecularRules
-                            ?? (options.SpecularData!.ByTextureName.TryGetValue(t.Name, out var list) ? list : null)
-                            ?? (options.SpecularData.ByTextureName.TryGetValue("*", out var def) ? def : null);
-
-                using var img = Image.Load<Rgba32>(t.DiffusePath);
-                using var cropped = CropToSquare(img, out var size);
-                var width = size;
-                var height = size;
-
-                // Ignore All: skip grass textures with significant transparency in diffuse
-                if (options.FoliageMode == "Ignore All" &&
-                    (t.Name.Contains("grass", StringComparison.OrdinalIgnoreCase) || t.RelativeKey.Contains("grass", StringComparison.OrdinalIgnoreCase)))
+            Parallel.ForEach(textures,
+                new ParallelOptions
+                    { MaxDegreeOfParallelism = GetConversionParallelism(options), CancellationToken = ct }, t =>
                 {
-                    if (!cropped.DangerousTryGetSinglePixelMemory(out var alphaCheckMem))
-                        throw new InvalidOperationException("Expected contiguous pixel memory.");
-                    var alphaSpan = alphaCheckMem.Span;
-                    long sumA = 0;
-                    int lowAlphaCount = 0;
-                    var pixelCount = width * height;
-                    for (var i = 0; i < pixelCount; i++)
-                    {
-                        var a = alphaSpan[i].A;
-                        sumA += a;
-                        if (a < 128) lowAlphaCount++;
-                    }
-                    var meanAlpha = (int)(sumA / pixelCount);
-                    if (meanAlpha < 200 || lowAlphaCount > 0.3 * pixelCount)
-                    {
-                        var done = Interlocked.Increment(ref completed);
-                        progress?.Report(new ConversionProgress(stage, done, total, t.Name));
-                        return;
-                    }
-                }
+                    SetThreadName("AutoPBR.Specular");
+                    ct.ThrowIfCancellationRequested();
+                    var fast = t.Overrides.FastSpecular ?? options.FastSpecular;
+                    var rules = t.Overrides.CustomSpecularRules
+                                ?? options.SpecularData!.ByTextureName.GetValueOrDefault(t.Name)
+                                ?? options.SpecularData.ByTextureName.GetValueOrDefault("*");
 
-                List<(SpecularRule Rule, LabColor Lab)>? rulesLab = null;
-                if (!fast && rules is not null)
-                {
-                    rulesLab = new List<(SpecularRule, LabColor)>(rules.Count);
-                    foreach (var r in rules)
+                    using var img = Image.Load<Rgba32>(t.DiffusePath);
+                    using var cropped = CropToSquare(img, out var size);
+                    var width = size;
+                    var height = size;
+
+                    // Ignore All: skip grass textures with significant transparency in diffuse
+                    if (options.FoliageMode == "Ignore All" &&
+                        (t.Name.Contains("grass", StringComparison.OrdinalIgnoreCase) ||
+                         t.RelativeKey.Contains("grass", StringComparison.OrdinalIgnoreCase)))
                     {
-                        var rgb = RGBColor.FromRGB8Bit(r.ColorR, r.ColorG, r.ColorB);
-                        rulesLab.Add((r, rgbToLab.Convert(rgb)));
-                    }
-                }
-
-                // LabPBR specular only: _s RGBA (smoothness, F0/metal, porosity/subsurface, emissive)
-                var (luminance, edgeMagnitude, meanLuminance) = BuildLuminanceAndEdge(cropped, width, height);
-                var isMetal = IsMetalTexture(t.Name, t.RelativeKey);
-                var nPixels = width * height;
-                var rBuf = new byte[nPixels];
-                var gBuf = new byte[nPixels];
-                var bBuf = new byte[nPixels];
-                var aBuf = new byte[nPixels];
-                if (!cropped.DangerousTryGetSinglePixelMemory(out var inMem))
-                    throw new InvalidOperationException("Expected contiguous pixel memory.");
-                var inSpan = inMem.Span;
-
-                for (var idx = 0; idx < nPixels; idx++)
-                {
-                    var p = inSpan[idx];
-                    var spec = GetSpecularRgba(p, rules, rulesLab, fast, rgbToLab, de2000);
-                    var lum = luminance[idx];
-                    var edge = edgeMagnitude[idx];
-
-                    int rr = spec.r, gg = spec.g, bb = spec.b;
-                    if (isMetal)
-                    {
-                        rr = (int)Math.Min(255, (int)(spec.r * options.MetallicBoost));
-                        gg = 255;
-                        bb = 0;
-                    }
-                    else
-                    {
-                        gg = Math.Min(spec.g, LabPbrF0CapDielectric);
-                        rr = (int)Math.Min(255, (int)(spec.r * options.SmoothnessScale));
-                        rr = (int)(rr * (1f - 0.2f * edge));
-                        if (lum > 0.92f && meanLuminance < 0.25f)
-                            rr = Math.Min(rr, 220);
-                        bb = (byte)Math.Clamp(spec.b + options.PorosityBias, 0, 255);
-                    }
-                    rBuf[idx] = (byte)Math.Clamp(rr, 0, 255);
-                    gBuf[idx] = (byte)Math.Clamp(gg, 0, 255);
-                    bBuf[idx] = (byte)bb;
-                    aBuf[idx] = spec.a;
-                }
-
-                // Per-texture R normalization: remap to 10–200 when there is variation
-                byte minR = 255, maxR = 0;
-                for (var i = 0; i < nPixels; i++)
-                {
-                    var v = rBuf[i];
-                    if (v < minR) minR = v;
-                    if (v > maxR) maxR = v;
-                }
-                if (maxR > minR)
-                {
-                    for (var i = 0; i < nPixels; i++)
-                        rBuf[i] = (byte)Math.Clamp(10 + (rBuf[i] - minR) * 190 / (maxR - minR), 0, 255);
-                }
-
-                var hasData = false;
-                using (var outImg = new Image<Rgba32>(width, height))
-                {
-                    outImg.ProcessPixelRows(acc =>
-                    {
-                        for (var y = 0; y < height; y++)
+                        if (!cropped.DangerousTryGetSinglePixelMemory(out var alphaCheckMem))
+                            throw new InvalidOperationException("Expected contiguous pixel memory.");
+                        var alphaSpan = alphaCheckMem.Span;
+                        long sumA = 0;
+                        int lowAlphaCount = 0;
+                        var pixelCount = width * height;
+                        for (var i = 0; i < pixelCount; i++)
                         {
-                            var row = acc.GetRowSpan(y);
-                            for (var x = 0; x < width; x++)
-                            {
-                                var idx = y * width + x;
-                                var rr = rBuf[idx]; var gg = gBuf[idx]; var bb = bBuf[idx]; var aa = aBuf[idx];
-                                if (rr != 0 || gg != 0 || bb != 0 || aa != 255) hasData = true;
-                                row[x] = new Rgba32(rr, gg, bb, aa);
-                            }
+                            var a = alphaSpan[i].A;
+                            sumA += a;
+                            if (a < 128) lowAlphaCount++;
                         }
-                    });
-                    if (hasData)
-                        outImg.Save(t.SpecularPath);
-                    else if (File.Exists(t.SpecularPath))
-                        File.Delete(t.SpecularPath);
-                }
 
-                var n = Interlocked.Increment(ref completed);
-                progress?.Report(new ConversionProgress(stage, n, total, t.Name));
-            });
+                        var meanAlpha = (int)(sumA / pixelCount);
+                        if (meanAlpha < 200 || lowAlphaCount > 0.3 * pixelCount)
+                        {
+                            var done = Interlocked.Increment(ref completed);
+                            progress?.Report(new ConversionProgress(stage, done, total, t.Name));
+                            return;
+                        }
+                    }
+
+                    List<(SpecularRule Rule, LabColor Lab)>? rulesLab = null;
+                    if (!fast && rules is not null)
+                    {
+                        rulesLab = new List<(SpecularRule, LabColor)>(rules.Count);
+                        foreach (var r in rules)
+                        {
+                            var rgb = RGBColor.FromRGB8Bit(r.ColorR, r.ColorG, r.ColorB);
+                            rulesLab.Add((r, rgbToLab.Convert(rgb)));
+                        }
+                    }
+
+                    // LabPBR specular only: _s RGBA (smoothness, F0/metal, porosity/subsurface, emissive)
+                    var (luminance, edgeMagnitude, meanLuminance) = BuildLuminanceAndEdge(cropped, width, height);
+                    var isMetal = IsMetalTexture(t.Name, t.RelativeKey);
+                    var nPixels = width * height;
+                    var rBuf = new byte[nPixels];
+                    var gBuf = new byte[nPixels];
+                    var bBuf = new byte[nPixels];
+                    var aBuf = new byte[nPixels];
+                    if (!cropped.DangerousTryGetSinglePixelMemory(out var inMem))
+                        throw new InvalidOperationException("Expected contiguous pixel memory.");
+                    var inSpan = inMem.Span;
+
+                    for (var idx = 0; idx < nPixels; idx++)
+                    {
+                        var p = inSpan[idx];
+                        var spec = GetSpecularRgba(p, rules, rulesLab, fast, rgbToLab, de2000);
+                        var lum = luminance[idx];
+                        var edge = edgeMagnitude[idx];
+
+                        int rr, gg, bb;
+                        if (isMetal)
+                        {
+                            rr = (int)Math.Min(255, spec.r * options.MetallicBoost);
+                            gg = 255;
+                            bb = 0;
+                        }
+                        else
+                        {
+                            gg = Math.Min(spec.g, LabPbrF0CapDielectric);
+                            rr = (int)Math.Min(255, spec.r * options.SmoothnessScale);
+                            rr = (int)(rr * (1f - 0.2f * edge));
+                            if (lum > 0.92f && meanLuminance < 0.25f)
+                                rr = Math.Min(rr, 220);
+                            bb = Math.Clamp(spec.b + options.PorosityBias, 0, 255);
+                        }
+
+                        rBuf[idx] = (byte)Math.Clamp(rr, 0, 255);
+                        gBuf[idx] = (byte)Math.Clamp(gg, 0, 255);
+                        bBuf[idx] = (byte)bb;
+                        aBuf[idx] = spec.a;
+                    }
+
+                    // Per-texture R normalization: remap to 10–200 when there is variation
+                    byte minR = 255, maxR = 0;
+                    for (var i = 0; i < nPixels; i++)
+                    {
+                        var v = rBuf[i];
+                        if (v < minR) minR = v;
+                        if (v > maxR) maxR = v;
+                    }
+
+                    if (maxR > minR)
+                    {
+                        for (var i = 0; i < nPixels; i++)
+                            rBuf[i] = (byte)Math.Clamp(10 + (rBuf[i] - minR) * 190 / (maxR - minR), 0, 255);
+                    }
+
+                    var hasData = false;
+
+                    using (var outImg = new Image<Rgba32>(width, height))
+                    {
+                        outImg.ProcessPixelRows(acc =>
+                        {
+                            for (var y = 0; y < height; y++)
+                            {
+                                var row = acc.GetRowSpan(y);
+                                for (var x = 0; x < width; x++)
+                                {
+                                    var idx = y * width + x;
+                                    var r = rBuf[idx];
+                                    var g = gBuf[idx];
+                                    var b = bBuf[idx];
+                                    var a = aBuf[idx];
+
+                                    if (r != 0 || g != 0 || b != 0 || a != 255)
+                                        hasData = true;
+
+                                    row[x] = new Rgba32(r, g, b, a);
+                                }
+                            }
+                        });
+
+                        if (hasData)
+                        {
+                            outImg.Save(t.SpecularPath);
+                        }
+                        else if (File.Exists(t.SpecularPath))
+                        {
+                            File.Delete(t.SpecularPath);
+                        }
+                    }
+
+                    var n = Interlocked.Increment(ref completed);
+                    progress?.Report(new ConversionProgress(stage, n, total, t.Name));
+                });
         }, ct);
     }
 
@@ -738,6 +799,7 @@ public sealed class ResourcePackConverter
                     bestIdx = i;
                 }
             }
+
             var bestRule = rules[bestIdx];
             return (bestRule.SpecR, bestRule.SpecG, bestRule.SpecB, bestRule.SpecA);
         }
@@ -782,110 +844,121 @@ public sealed class ResourcePackConverter
             var toProcess = textures.Where(t => !t.SpecularOnly).ToList();
             var total = toProcess.Count;
             var completed = 0;
-            using var deepBumpGenerator = options.UseDeepBumpNormals && !string.IsNullOrWhiteSpace(options.DeepBumpModelPath)
-                ? DeepBumpNormalsGenerator.TryCreate(options.DeepBumpModelPath!)
-                : null;
-
-            if (deepBumpGenerator != null && !deepBumpGenerator.IsUsingGpu)
-                progress?.Report(new ConversionProgress(ConversionStage.GeneratingNormals, 0, total, null, "DeepBump: CUDA not available, using CPU."));
-
-            Parallel.ForEach(toProcess, new ParallelOptions { MaxDegreeOfParallelism = GetConversionParallelism(options), CancellationToken = ct }, t =>
+            DeepBumpNormalsGenerator? deepBumpGenerator = null;
+            try
             {
-                SetThreadName("AutoPBR.Normals");
-                ct.ThrowIfCancellationRequested();
+                deepBumpGenerator =
+                    options.UseDeepBumpNormals && !string.IsNullOrWhiteSpace(options.DeepBumpModelPath)
+                        ? DeepBumpNormalsGenerator.TryCreate(options.DeepBumpModelPath!)
+                        : null;
 
-                using var diffuseImg = Image.Load<Rgba32>(t.DiffusePath);
-                using var croppedDiffuse = CropToSquare(diffuseImg, out var size);
-                var width = size;
-                var height = size;
+                if (deepBumpGenerator is { IsUsingGpu: false })
+                    progress?.Report(new ConversionProgress(ConversionStage.GeneratingNormals, 0, total, null,
+                        "DeepBump: CUDA not available, using CPU."));
 
-                Image<Rgba32> normal;
-                if (deepBumpGenerator != null)
+                var generatorForLoop = deepBumpGenerator;
+                Parallel.ForEach(toProcess,
+                new ParallelOptions
+                    { MaxDegreeOfParallelism = GetConversionParallelism(options), CancellationToken = ct }, t =>
                 {
-                    var overlap = options.DeepBumpOverlap switch
+                    SetThreadName("AutoPBR.Normals");
+                    ct.ThrowIfCancellationRequested();
+
+                    using var diffuseImg = Image.Load<Rgba32>(t.DiffusePath);
+                    using var croppedDiffuse = CropToSquare(diffuseImg, out var size);
+                    var width = size;
+                    var height = size;
+
+                    Image<Rgba32> normal;
+                    if (generatorForLoop != null)
                     {
-                        "Small" => DeepBumpNormalsGenerator.Overlap.Small,
-                        "Medium" => DeepBumpNormalsGenerator.Overlap.Medium,
-                        "Large" => DeepBumpNormalsGenerator.Overlap.Large,
-                        _ => DeepBumpNormalsGenerator.Overlap.Large
-                    };
-                    Image<Rgba32> diffuseForNormals = croppedDiffuse;
-                    // Upscaling disabled for testing - DeepBump receives original-size diffuse
-                    // using var upscaledDiffuse = (width < 256 || height < 256) ? UpscaleForDeepBump(croppedDiffuse, width, height) : null;
-                    // if (upscaledDiffuse != null)
-                    //     diffuseForNormals = upscaledDiffuse;
-                    normal = deepBumpGenerator.Generate(diffuseForNormals, overlap);
-                    // if (upscaledDiffuse != null)
-                    // {
-                    //     var resized = ResizeNormalTo(normal, width, height);
-                    //     normal.Dispose();
-                    //     normal = resized;
-                    // }
-                }
-                else
-                {
-                    var normalIntensity = t.Overrides.NormalIntensity ?? options.NormalIntensity;
-                    normal = GenerateNormalMap(
-                        croppedDiffuse,
-                        width,
-                        height,
-                        normalIntensity,
-                        t.Overrides.InvertNormalRed,
-                        t.Overrides.InvertNormalGreen,
-                        options.NormalOperator,
-                        options.NormalKernelSize,
-                        options.NormalDerivative);
-                }
-                using (normal)
-                {
-
-                HeightMap heightMap;
-                if (options.UseHeightFromNormals)
-                {
-                    var (w, h, data) = FrankotChellappaHeight.FromNormalMap(normal);
-                    heightMap = new HeightMap { Width = w, Height = h, Data = data };
-                }
-                else
-                {
-                    var heightIntensity = t.Overrides.HeightIntensity ?? options.HeightIntensity;
-                    var brightness = t.Overrides.HeightBrightness ?? AutoPbrDefaults.DefaultHeightBrightness;
-                    heightMap = GenerateHeightMap(croppedDiffuse, width, height, heightIntensity, brightness, t.Overrides.InvertHeight);
-                }
-
-                // No Height mode: skip height for plants (and for grass only when significant transparency, so grass blocks keep height).
-                var skipHeightInAlpha = t.IsPlantForNoHeight;
-                if (!skipHeightInAlpha && options.FoliageMode == "No Height" &&
-                    (t.Name.Contains("grass", StringComparison.OrdinalIgnoreCase) || t.RelativeKey.Contains("grass", StringComparison.OrdinalIgnoreCase)))
-                    skipHeightInAlpha = HasSignificantTransparency(croppedDiffuse);
-
-                // Apply height data into the normal map alpha channel only (no dedicated _h file).
-                normal.ProcessPixelRows(acc =>
-                {
-                    for (var y = 0; y < heightMap.Height; y++)
-                    {
-                        var row = acc.GetRowSpan(y);
-                        for (var x = 0; x < heightMap.Width; x++)
+                        var overlap = options.DeepBumpOverlap switch
                         {
-                            byte a;
-                            if (skipHeightInAlpha)
-                                a = 255;
-                            else
-                            {
-                                // White = highest (255), black = lowest (0); clamp 0 -> 1 to avoid problematic fully-black alpha
-                                var h = heightMap[x, y];
-                                a = h == 0 ? (byte)1 : h;
-                            }
-                            row[x].A = a;
-                        }
+                            "Small" => DeepBumpNormalsGenerator.Overlap.Small,
+                            "Medium" => DeepBumpNormalsGenerator.Overlap.Medium,
+                            _ => DeepBumpNormalsGenerator.Overlap.Large
+                        };
+
+                        Image<Rgba32> diffuseForNormals = croppedDiffuse;
+                        // Upscaling disabled for testing - DeepBump receives original-size diffuse
+                        // using var upscaledDiffuse = (width < 256 || height < 256) ? UpscaleForDeepBump(croppedDiffuse, width, height) : null;
+                        // if (upscaledDiffuse != null)
+                        //     diffuseForNormals = upscaledDiffuse;
+
+                        normal = generatorForLoop.Generate(diffuseForNormals, overlap);
                     }
+                    else
+                    {
+                        var normalIntensity = t.Overrides.NormalIntensity ?? options.NormalIntensity;
+                        normal = GenerateNormalMap(
+                            croppedDiffuse,
+                            width,
+                            height,
+                            normalIntensity,
+                            t.Overrides.InvertNormalRed,
+                            t.Overrides.InvertNormalGreen,
+                            options.NormalOperator,
+                            options.NormalKernelSize,
+                            options.NormalDerivative);
+                    }
+
+                    using (normal)
+                    {
+                        HeightMap heightMap;
+                        if (options.UseHeightFromNormals)
+                        {
+                            var (w, h, data) = FrankotChellappaHeight.FromNormalMap(normal);
+                            heightMap = new HeightMap { Width = w, Height = h, Data = data };
+                        }
+                        else
+                        {
+                            var heightIntensity = t.Overrides.HeightIntensity ?? options.HeightIntensity;
+                            var brightness = t.Overrides.HeightBrightness ?? AutoPbrDefaults.DefaultHeightBrightness;
+                            heightMap = GenerateHeightMap(croppedDiffuse, width, height, heightIntensity, brightness,
+                                t.Overrides.InvertHeight);
+                        }
+
+                        // No Height mode: skip height for plants (and for grass only when significant transparency, so grass blocks keep height).
+                        var skipHeightInAlpha = t.IsPlantForNoHeight;
+                        if (!skipHeightInAlpha && options.FoliageMode == "No Height" &&
+                            (t.Name.Contains("grass", StringComparison.OrdinalIgnoreCase) ||
+                             t.RelativeKey.Contains("grass", StringComparison.OrdinalIgnoreCase)))
+                            skipHeightInAlpha = HasSignificantTransparency(croppedDiffuse);
+
+                        // Apply height data into the normal map alpha channel only (no dedicated _h file).
+                        normal.ProcessPixelRows(acc =>
+                        {
+                            for (var y = 0; y < heightMap.Height; y++)
+                            {
+                                var row = acc.GetRowSpan(y);
+                                for (var x = 0; x < heightMap.Width; x++)
+                                {
+                                    byte a;
+                                    if (skipHeightInAlpha)
+                                        a = 255;
+                                    else
+                                    {
+                                        // White = highest (255), black = lowest (0); clamp 0 -> 1 to avoid problematic fully-black alpha
+                                        var h = heightMap[x, y];
+                                        a = h == 0 ? (byte)1 : h;
+                                    }
+
+                                    row[x].A = a;
+                                }
+                            }
+                        });
+
+                        normal.Save(t.NormalPath);
+                    }
+
+                    var n = Interlocked.Increment(ref completed);
+                    progress?.Report(new ConversionProgress(stage, n, total, t.Name));
                 });
-
-                normal.Save(t.NormalPath);
-                }
-
-                var n = Interlocked.Increment(ref completed);
-                progress?.Report(new ConversionProgress(stage, n, total, t.Name));
-            });
+            }
+            finally
+            {
+                deepBumpGenerator?.Dispose();
+            }
         }, ct);
     }
 
@@ -916,7 +989,8 @@ public sealed class ResourcePackConverter
         });
 
         // Optional unsharp for luminance (used when derivative uses luminance)
-        if (derivativeMode is NormalDerivative.Luminance or NormalDerivative.ColorLuminanceBlend or NormalDerivative.ColorLuminanceMax)
+        if (derivativeMode is NormalDerivative.Luminance or NormalDerivative.ColorLuminanceBlend
+            or NormalDerivative.ColorLuminanceMax)
         {
             var blurred = new float[n];
             for (var y = 0; y < height; y++)
@@ -932,8 +1006,10 @@ public sealed class ResourcePackConverter
                     sum += grey[ry * width + rx];
                     count++;
                 }
+
                 blurred[y * width + x] = sum / count;
             }
+
             const float amount = 0.5f;
             for (var i = 0; i < n; i++)
             {
@@ -956,61 +1032,62 @@ public sealed class ResourcePackConverter
                 ComputeColorGradients(cropped, width, height, kx, ky, radius, gx, gy);
                 break;
             case NormalDerivative.ColorLuminanceBlend:
+            {
+                var gxL = new float[n];
+                var gyL = new float[n];
+                var gxC = new float[n];
+                var gyC = new float[n];
+                ComputeGradients(grey, width, height, kx, ky, radius, gxL, gyL);
+                ComputeColorGradients(cropped, width, height, kx, ky, radius, gxC, gyC);
+                for (var i = 0; i < n; i++)
                 {
-                    var gxL = new float[n];
-                    var gyL = new float[n];
-                    var gxC = new float[n];
-                    var gyC = new float[n];
-                    ComputeGradients(grey, width, height, kx, ky, radius, gxL, gyL);
-                    ComputeColorGradients(cropped, width, height, kx, ky, radius, gxC, gyC);
-                    for (var i = 0; i < n; i++)
-                    {
-                        gx[i] = 0.5f * gxL[i] + 0.5f * gxC[i];
-                        gy[i] = 0.5f * gyL[i] + 0.5f * gyC[i];
-                    }
+                    gx[i] = 0.5f * gxL[i] + 0.5f * gxC[i];
+                    gy[i] = 0.5f * gyL[i] + 0.5f * gyC[i];
                 }
+            }
                 break;
             case NormalDerivative.ColorLuminanceMax:
+            {
+                var gxL = new float[n];
+                var gyL = new float[n];
+                var gxC = new float[n];
+                var gyC = new float[n];
+                ComputeGradients(grey, width, height, kx, ky, radius, gxL, gyL);
+                ComputeColorGradients(cropped, width, height, kx, ky, radius, gxC, gyC);
+                for (var i = 0; i < n; i++)
                 {
-                    var gxL = new float[n];
-                    var gyL = new float[n];
-                    var gxC = new float[n];
-                    var gyC = new float[n];
-                    ComputeGradients(grey, width, height, kx, ky, radius, gxL, gyL);
-                    ComputeColorGradients(cropped, width, height, kx, ky, radius, gxC, gyC);
-                    for (var i = 0; i < n; i++)
+                    var magL = MathF.Sqrt(gxL[i] * gxL[i] + gyL[i] * gyL[i]);
+                    var magC = MathF.Sqrt(gxC[i] * gxC[i] + gyC[i] * gyC[i]);
+                    if (magL >= magC)
                     {
-                        var magL = MathF.Sqrt(gxL[i] * gxL[i] + gyL[i] * gyL[i]);
-                        var magC = MathF.Sqrt(gxC[i] * gxC[i] + gyC[i] * gyC[i]);
-                        if (magL >= magC)
-                        {
-                            gx[i] = gxL[i];
-                            gy[i] = gyL[i];
-                        }
-                        else
-                        {
-                            gx[i] = gxC[i];
-                            gy[i] = gyC[i];
-                        }
+                        gx[i] = gxL[i];
+                        gy[i] = gyL[i];
+                    }
+                    else
+                    {
+                        gx[i] = gxC[i];
+                        gy[i] = gyC[i];
                     }
                 }
+            }
                 break;
         }
 
         // VC-Filter magnitude: isotropic edge strength (reduces Sobel blind zones) while we keep direction from (gx, gy)
-        const int VcOrientationCount = 12;
-        const float VcAngleStep = MathF.PI / VcOrientationCount;
+        const int vcOrientationCount = 12;
+        const float vcAngleStep = MathF.PI / vcOrientationCount;
         var vcMag = new float[width * height];
         for (var i = 0; i < gx.Length; i++)
         {
             var gxv = gx[i];
             var gyv = gy[i];
             float sum = 0;
-            for (var k = 0; k < VcOrientationCount; k++)
+            for (var k = 0; k < vcOrientationCount; k++)
             {
-                var a = k * VcAngleStep;
+                var a = k * vcAngleStep;
                 sum += MathF.Abs(gxv * MathF.Cos(a) + gyv * MathF.Sin(a));
             }
+
             vcMag[i] = sum;
         }
 
@@ -1022,11 +1099,12 @@ public sealed class ResourcePackConverter
             var gyv = gy[i];
             gradMag[i] = MathF.Sqrt(gxv * gxv + gyv * gyv);
         }
+
         var maxGradMag = gradMag.Max();
         var maxVcMag = vcMag.Max();
-        const float Eps = 1e-6f;
-        if (maxGradMag < Eps) maxGradMag = 1f;
-        if (maxVcMag < Eps) maxVcMag = 1f;
+        const float eps = 1e-6f;
+        if (maxGradMag < eps) maxGradMag = 1f;
+        if (maxVcMag < eps) maxVcMag = 1f;
         // Scale VC magnitude to same range as gradient magnitude, then take max so we never reduce strength
         var vcScale = maxGradMag / maxVcMag;
         var maxValue = 0f;
@@ -1035,7 +1113,8 @@ public sealed class ResourcePackConverter
             var enhanced = MathF.Max(gradMag[i], vcMag[i] * vcScale);
             if (enhanced > maxValue) maxValue = enhanced;
         }
-        if (maxValue < Eps) maxValue = 1f;
+
+        if (maxValue < eps) maxValue = 1f;
 
         var intensity = 1f / normalIntensity;
         var z = intensity;
@@ -1054,7 +1133,7 @@ public sealed class ResourcePackConverter
                     var mag = gradMag[idx];
                     var enhancedMag = MathF.Max(mag, vcMag[idx] * vcScale);
                     // Direction from (-gx, -gy) unchanged; magnitude enhanced by VC-Filter (retain or boost)
-                    var scale = mag >= Eps ? enhancedMag / mag : 0f;
+                    var scale = mag >= eps ? enhancedMag / mag : 0f;
                     var nx = -gxv * scale / maxValue;
                     var ny = -gyv * scale / maxValue;
 
@@ -1102,6 +1181,7 @@ public sealed class ResourcePackConverter
                 sx += v * kx[oy + radius, ox + radius];
                 sy += v * ky[oy + radius, ox + radius];
             }
+
             gxOut[y * width + x] = sx;
             gyOut[y * width + x] = sy;
         }
@@ -1191,14 +1271,35 @@ public sealed class ResourcePackConverter
         {
             if (op == NormalOperator.ScharrVc)
             {
-                kx = new float[3, 3] { { -3, 0, 3 }, { -10, 0, 10 }, { -3, 0, 3 } };
-                ky = new float[3, 3] { { -3, -10, -3 }, { 0, 0, 0 }, { 3, 10, 3 } };
+                kx = new float[,]
+                {
+                    { -3, 0, 3 },
+                    { -10, 0, 10 },
+                    { -3, 0, 3 }
+                };
+                ky = new float[,]
+                {
+                    { -3, -10, -3 },
+                    { 0, 0, 0 },
+                    { 3, 10, 3 }
+                };
             }
             else
             {
-                kx = new float[3, 3] { { -1, 0, 1 }, { -2, 0, 2 }, { -1, 0, 1 } };
-                ky = new float[3, 3] { { -1, -2, -1 }, { 0, 0, 0 }, { 1, 2, 1 } };
+                kx = new float[,]
+                {
+                    { -1, 0, 1 },
+                    { -2, 0, 2 },
+                    { -1, 0, 1 }
+                };
+                ky = new float[,]
+                {
+                    { -1, -2, -1 },
+                    { 0, 0, 0 },
+                    { 1, 2, 1 }
+                };
             }
+
             radius = 1;
             return;
         }
@@ -1212,6 +1313,7 @@ public sealed class ResourcePackConverter
             for (var j = i - 1; j > 0; j--)
                 smooth[j] = smooth[j] + smooth[j - 1];
         }
+
         var smoothSum = smooth.Sum();
         if (smoothSum > 0)
         {
@@ -1240,7 +1342,7 @@ public sealed class ResourcePackConverter
         }
 
         // Normalize derivative kernel.
-        var derivSum = deriv.Sum(v => Math.Abs(v));
+        var derivSum = deriv.Sum(Math.Abs);
         if (derivSum > 0)
         {
             for (var i = 0; i < n; i++)
@@ -1269,14 +1371,12 @@ public sealed class ResourcePackConverter
         public required int Width { get; init; }
         public required int Height { get; init; }
         public required byte[] Data { get; init; }
-        public byte this[int x, int y]
-        {
-            get => Data[y * Width + x];
-            set => Data[y * Width + x] = value;
-        }
+
+        public byte this[int x, int y] => Data[y * Width + x];
     }
 
-    private static HeightMap GenerateHeightMap(Image<Rgba32> cropped, int width, int height, float heightIntensity, float brightness, bool invertHeight)
+    private static HeightMap GenerateHeightMap(Image<Rgba32> cropped, int width, int height, float heightIntensity,
+        float brightness, bool invertHeight)
     {
         var grey = new byte[width * height];
         cropped.ProcessPixelRows(acc =>
@@ -1341,7 +1441,7 @@ public sealed class ResourcePackConverter
         if (img.Width == s && img.Height == s)
             return img.Clone();
 
-        return img.Clone(ctx => ctx.Crop(new SixLabors.ImageSharp.Rectangle(0, 0, s, s)));
+        return img.Clone(ctx => ctx.Crop(new Rectangle(0, 0, s, s)));
     }
 
     /// <summary>Upscale diffuse to at least 256 on each dimension with nearest-neighbor for DeepBump (pixel-art friendly).</summary>
@@ -1349,9 +1449,11 @@ public sealed class ResourcePackConverter
     {
         if (width >= 256 && height >= 256)
             return img.Clone();
+
         var scale = Math.Max(256.0 / width, 256.0 / height);
         var targetW = (int)Math.Ceiling(width * scale);
         var targetH = (int)Math.Ceiling(height * scale);
+
         return img.Clone(ctx => ctx.Resize(targetW, targetH, KnownResamplers.NearestNeighbor));
     }
 

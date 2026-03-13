@@ -4,32 +4,28 @@ using CommunityToolkit.Mvvm.ComponentModel;
 namespace AutoPBR.App.Models;
 
 /// <summary>Lazy node in the scanned archive tree. Children are loaded on expand; override state is stored in the host.</summary>
-public partial class ArchiveNode : ObservableObject
+public partial class ArchiveNode(string name, string fullPath, bool isFolder, ArchiveNode? parent, IArchiveNodeHost? host) : ObservableObject
 {
-    private readonly IArchiveNodeHost? _host;
-
-    public string Name { get; }
-    public string FullPath { get; }
-    public bool IsFolder { get; }
-    public ArchiveNode? Parent { get; set; }
+    public string Name { get; } = name;
+    public string FullPath { get; } = fullPath;
+    public bool IsFolder { get; } = isFolder;
+    public ArchiveNode? Parent { get; set; } = parent;
     public ObservableCollection<ArchiveNode> Children { get; } = new();
 
-    [ObservableProperty]
-    private bool _isExpanded;
+    [ObservableProperty] private bool _isExpanded;
 
     /// <summary>When true, this node is shown in the tree; when false, hidden by the Resource Explorer search filter.</summary>
-    [ObservableProperty]
-    private bool _isVisibleByFilter = true;
+    [ObservableProperty] private bool _isVisibleByFilter = true;
 
     /// <summary>Include/exclude override: null = use rules, true = include, false = exclude. Stored in host, not in node.</summary>
     public bool? ManualOverride
     {
-        get => _host?.GetOverride(FullPath);
+        get => host?.GetOverride(FullPath);
         set
         {
-            if (_host is null)
+            if (host is null)
                 return;
-            _host.SetOverride(FullPath, value);
+            host.SetOverride(FullPath, value);
             OnPropertyChanged();
         }
     }
@@ -37,31 +33,22 @@ public partial class ArchiveNode : ObservableObject
     /// <summary>Call when host overrides were updated externally so the checkbox binding re-reads ManualOverride.</summary>
     public void NotifyOverrideChanged() => OnPropertyChanged(nameof(ManualOverride));
 
-    public ArchiveNode(string name, string fullPath, bool isFolder, ArchiveNode? parent, IArchiveNodeHost? host)
-    {
-        Name = name;
-        FullPath = fullPath;
-        IsFolder = isFolder;
-        Parent = parent;
-        _host = host;
-    }
-
     partial void OnIsExpandedChanged(bool value)
     {
         if (!IsFolder)
             return;
-        if (value && _host is not null)
+        if (value && host is not null)
         {
             // Load this folder's children if needed.
             if (Children.Count == 0)
-                _host.EnsureChildrenLoaded(this);
+                host.EnsureChildrenLoaded(this);
 
             // Also pre-load one level of children for immediate subfolders
             // so their expand/collapse arrows are visible right away.
             foreach (var child in Children)
             {
                 if (child.IsFolder)
-                    _host.EnsureChildrenLoaded(child);
+                    host.EnsureChildrenLoaded(child);
             }
         }
     }

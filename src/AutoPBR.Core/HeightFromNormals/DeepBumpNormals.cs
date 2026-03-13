@@ -65,7 +65,7 @@ public sealed class DeepBumpNormalsGenerator : IDisposable
             bool useGpu = false;
             try
             {
-                using var gpuOptions = SessionOptions.MakeSessionOptionWithCudaProvider(0);
+                using var gpuOptions = SessionOptions.MakeSessionOptionWithCudaProvider();
                 session = new InferenceSession(modelPath, gpuOptions);
                 useGpu = true;
             }
@@ -73,13 +73,15 @@ public sealed class DeepBumpNormalsGenerator : IDisposable
             {
                 session = new InferenceSession(modelPath);
             }
+
             var inputName = session.InputMetadata.Keys.FirstOrDefault() ?? "input";
             var outputIsNhwc = false;
             if (session.OutputMetadata.Values.FirstOrDefault() is { } outMeta && outMeta.Dimensions.Length == 4)
             {
                 var dims = outMeta.Dimensions;
-                outputIsNhwc = dims[dims.Length - 1] == ExpectedChannels;
+                outputIsNhwc = dims[^1] == ExpectedChannels;
             }
+
             return new DeepBumpNormalsGenerator(session, inputName, outputIsNhwc, useGpu);
         }
         catch
@@ -117,7 +119,9 @@ public sealed class DeepBumpNormalsGenerator : IDisposable
                 predTiles.Add(pred);
             }
         }
-        var merged = TilesMerge(predTiles, stride, 3, height + paddings.padTop + paddings.padBottom, width + paddings.padLeft + paddings.padRight, paddings);
+
+        var merged = TilesMerge(predTiles, stride, 3, height + paddings.padTop + paddings.padBottom,
+            width + paddings.padLeft + paddings.padRight, paddings);
         NormalizeInPlace(merged, 3, height, width);
         return ToNormalImage(merged, height, width);
     }
@@ -142,7 +146,8 @@ public sealed class DeepBumpNormalsGenerator : IDisposable
         return data;
     }
 
-    private void TilesSplit(float[] img, int imgW, int imgH, int stride, out List<float[]> tiles, out (int padLeft, int padRight, int padTop, int padBottom) paddings)
+    private void TilesSplit(float[] img, int imgW, int imgH, int stride, out List<float[]> tiles,
+        out (int padLeft, int padRight, int padTop, int padBottom) paddings)
     {
         int padH = 0, padW = 0;
         var remainderH = (imgH - TileSize) % stride;
@@ -170,6 +175,7 @@ public sealed class DeepBumpNormalsGenerator : IDisposable
                 padded[y * fullW + x] = img[sy * imgW + sx];
             }
         }
+
         tiles = new List<float[]>();
         var hRange = (fullH - TileSize) / stride + 1;
         var wRange = (fullW - TileSize) / stride + 1;
@@ -188,8 +194,8 @@ public sealed class DeepBumpNormalsGenerator : IDisposable
 
     private float[] RunTile(float[] tile)
     {
-        var inputTensor = new DenseTensor<float>(tile, new[] { 1, 1, TileSize, TileSize });
-        var inputs = new List<NamedOnnxValue> { NamedOnnxValue.CreateFromTensor(_inputName, inputTensor) };
+        var inputTensor = new DenseTensor<float>(tile, [1, 1, TileSize, TileSize]);
+        List<NamedOnnxValue> inputs = [NamedOnnxValue.CreateFromTensor(_inputName, inputTensor)];
         using var outputs = _session.Run(inputs);
         var outTensor = outputs[0];
         var outputFloats = outTensor.AsEnumerable<float>().ToArray();
@@ -239,14 +245,33 @@ public sealed class DeepBumpNormalsGenerator : IDisposable
             {
                 // Corners: utils_inference uses rot90(corner_mask,2) for top-left, then flip for top-right, flip for bottom-right, flip for bottom-left
                 int ch, cw;
-                if (y < ramp && x < ramp) { ch = ramp - 1 - y; cw = ramp - 1 - x; } // top-left
-                else if (y < ramp && x >= TileSize - ramp) { ch = ramp - 1 - y; cw = x - (TileSize - ramp); } // top-right
-                else if (y >= TileSize - ramp && x >= TileSize - ramp) { ch = y - (TileSize - ramp); cw = x - (TileSize - ramp); } // bottom-right
-                else { ch = TileSize - 1 - y; cw = ramp - 1 - x; } // bottom-left
+                if (y < ramp && x < ramp)
+                {
+                    ch = ramp - 1 - y;
+                    cw = ramp - 1 - x;
+                } // top-left
+                else if (y < ramp && x >= TileSize - ramp)
+                {
+                    ch = ramp - 1 - y;
+                    cw = x - (TileSize - ramp);
+                } // top-right
+                else if (y >= TileSize - ramp && x >= TileSize - ramp)
+                {
+                    ch = y - (TileSize - ramp);
+                    cw = x - (TileSize - ramp);
+                } // bottom-right
+                else
+                {
+                    ch = TileSize - 1 - y;
+                    cw = ramp - 1 - x;
+                } // bottom-left
+
                 v = CornerMaskValue(ramp, ch, cw);
             }
+
             mask[y * TileSize + x] = v;
         }
+
         return mask;
     }
 
@@ -277,7 +302,8 @@ public sealed class DeepBumpNormalsGenerator : IDisposable
         return 0f;
     }
 
-    private static float[] TilesMerge(List<float[]> tiles, int stride, int channels, int fullH, int fullW, (int padLeft, int padRight, int padTop, int padBottom) paddings)
+    private static float[] TilesMerge(List<float[]> tiles, int stride, int channels, int fullH, int fullW,
+        (int padLeft, int padRight, int padTop, int padBottom) paddings)
     {
         var merged = new float[channels * fullH * fullW];
         var mask = GenerateMask(stride);
@@ -297,9 +323,11 @@ public sealed class DeepBumpNormalsGenerator : IDisposable
                 var my = y0 + y;
                 var mx = x0 + x;
                 if (my < fullH && mx < fullW)
-                    merged[(c * fullH + my) * fullW + mx] += tile[c * TileSize * TileSize + y * TileSize + x] * mask[y * TileSize + x];
+                    merged[(c * fullH + my) * fullW + mx] +=
+                        tile[c * TileSize * TileSize + y * TileSize + x] * mask[y * TileSize + x];
             }
         }
+
         var padLeft = paddings.padLeft;
         var padTop = paddings.padTop;
         var padRight = paddings.padRight;
@@ -326,6 +354,7 @@ public sealed class DeepBumpNormalsGenerator : IDisposable
                 data[(c * height * width) + i] = v;
                 sumSq += v * v;
             }
+
             var norm = MathF.Sqrt(sumSq);
             if (norm < 1e-8f) norm = 1f;
             for (var c = 0; c < channels; c++)

@@ -35,9 +35,11 @@ var ignorePlants = args.Any(a => a.Equals("--ignore-plants", StringComparison.Or
 
 for (var i = 2; i < args.Length; i++)
 {
-    if (args[i].Equals("--normal", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length && float.TryParse(args[i + 1], out var n))
+    if (args[i].Equals("--normal", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length &&
+        float.TryParse(args[i + 1], out var n))
         normal = n;
-    if (args[i].Equals("--height", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length && float.TryParse(args[i + 1], out var h))
+    if (args[i].Equals("--height", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length &&
+        float.TryParse(args[i + 1], out var h))
         height = h;
     if (args[i].Equals("--normal-operator", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
     {
@@ -52,6 +54,7 @@ for (var i = 2; i < args.Length; i++)
             return 2;
         }
     }
+
     if (args[i].Equals("--normal-kernel", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
     {
         var val = args[i + 1];
@@ -66,12 +69,14 @@ for (var i = 2; i < args.Length; i++)
             Console.Error.WriteLine("Invalid value for --normal-kernel. Expected 3, 5, or 7.");
             return 2;
         }
+
         if (normalOperator == NormalOperator.ScharrVc && normalKernelSize == NormalKernelSize.K7)
         {
             Console.Error.WriteLine("Scharr supports kernel sizes 3 or 5 only (7x7 is invalid).");
             return 2;
         }
     }
+
     if (args[i].Equals("--normal-derivative", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
     {
         var val = args[i + 1];
@@ -85,7 +90,8 @@ for (var i = 2; i < args.Length; i++)
             normalDerivative = NormalDerivative.ColorLuminanceMax;
         else
         {
-            Console.Error.WriteLine("Invalid value for --normal-derivative. Expected 'luminance', 'color', 'blend', or 'max'.");
+            Console.Error.WriteLine(
+                "Invalid value for --normal-derivative. Expected 'luminance', 'color', 'blend', or 'max'.");
             return 2;
         }
     }

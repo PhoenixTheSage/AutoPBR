@@ -15,7 +15,11 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <!-- CUDA/cuDNN runtime DLLs from Core Data; copied to runtimes\win-x64\native for ONNX GPU -->
-    <Content Include="..\AutoPBR.Core\Data\native\*.dll" Link="runtimes\win-x64\native\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content
+      Include="..\AutoPBR.Core\Data\native\*.dll"
+      Link="runtimes\win-x64\native\%(Filename)%(Extension)"
+      CopyToOutputDirectory="PreserveNewest"
+    />
   </ItemGroup>
 
   <PropertyGroup>

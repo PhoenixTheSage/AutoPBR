@@ -1,19 +1,15 @@
 namespace AutoPBR.App.Models;
 
 /// <summary>Result of scanning an archive: child index (path -> immediate children) and total file count. No full tree in memory.</summary>
-public sealed class ScannedArchiveData
+public sealed class ScannedArchiveData(
+    IReadOnlyDictionary<string, IReadOnlyList<ArchiveChildEntry>> childIndex,
+    int fileCount)
 {
-    public IReadOnlyDictionary<string, IReadOnlyList<ArchiveChildEntry>> ChildIndex { get; }
-    public int FileCount { get; }
-
-    public ScannedArchiveData(IReadOnlyDictionary<string, IReadOnlyList<ArchiveChildEntry>> childIndex, int fileCount)
-    {
-        ChildIndex = childIndex;
-        FileCount = fileCount;
-    }
+    public IReadOnlyDictionary<string, IReadOnlyList<ArchiveChildEntry>> ChildIndex { get; } = childIndex;
+    public int FileCount { get; } = fileCount;
 
     public IReadOnlyList<ArchiveChildEntry>? GetChildren(string parentPath) =>
-        ChildIndex.TryGetValue(parentPath, out var list) ? list : null;
+        ChildIndex.GetValueOrDefault(parentPath);
 
     /// <summary>Enumerate all file paths (not directories) in the archive by walking the index.</summary>
     public IEnumerable<string> EnumerateAllFilePaths()

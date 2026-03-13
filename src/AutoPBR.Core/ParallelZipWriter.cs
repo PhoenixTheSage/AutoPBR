@@ -44,26 +44,23 @@ internal static class ParallelZipWriter
             progress?.Report(new ConversionProgress(stage, n, total));
         });
 
-        using (var fs = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None))
+        using var fs = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None);
+        var centralDirEntries = new List<(string name, uint crc32, int compressedSize, int uncompressedSize, long localHeaderOffset)>();
+
+        foreach (var (relativePath, crc32, uncompressedSize, compressed) in entries)
         {
-            var centralDirEntries = new List<(string name, uint crc32, int compressedSize, int uncompressedSize, long localHeaderOffset)>();
-
-            for (var i = 0; i < entries.Length; i++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var (relativePath, crc32, uncompressedSize, compressed) = entries[i];
-                var localHeaderOffset = fs.Position;
-                WriteLocalFileHeader(fs, relativePath, crc32, compressed.Length, uncompressedSize);
-                fs.Write(compressed, 0, compressed.Length);
-                centralDirEntries.Add((relativePath, crc32, compressed.Length, uncompressedSize, localHeaderOffset));
-            }
-
-            var centralDirOffset = fs.Position;
-            foreach (var (name, crc32, compressedSize, uncompressedSize, localHeaderOffset) in centralDirEntries)
-                WriteCentralFileHeader(fs, name, crc32, compressedSize, uncompressedSize, localHeaderOffset);
-            var centralDirSize = (int)(fs.Position - centralDirOffset);
-            WriteEndOfCentralDirectory(fs, centralDirEntries.Count, centralDirSize, centralDirOffset);
+            cancellationToken.ThrowIfCancellationRequested();
+            var localHeaderOffset = fs.Position;
+            WriteLocalFileHeader(fs, relativePath, crc32, compressed.Length, uncompressedSize);
+            fs.Write(compressed, 0, compressed.Length);
+            centralDirEntries.Add((relativePath, crc32, compressed.Length, uncompressedSize, localHeaderOffset));
         }
+
+        var centralDirOffset = fs.Position;
+        foreach (var (name, crc32, compressedSize, uncompressedSize, localHeaderOffset) in centralDirEntries)
+            WriteCentralFileHeader(fs, name, crc32, compressedSize, uncompressedSize, localHeaderOffset);
+        var centralDirSize = (int)(fs.Position - centralDirOffset);
+        WriteEndOfCentralDirectory(fs, centralDirEntries.Count, centralDirSize, centralDirOffset);
     }
 
     private static byte[] Compress(byte[] data)
@@ -79,16 +76,16 @@ internal static class ParallelZipWriter
         var nameBytes = System.Text.Encoding.UTF8.GetBytes(fileName);
         var (time, date) = GetDosDateTime(DateTimeOffset.Now);
         s.Write(BitConverter.GetBytes(LocalFileHeaderSignature), 0, 4);
-        WriteLe(s, (ushort)VersionNeeded);
-        WriteLe(s, (ushort)0); // flags
-        WriteLe(s, (ushort)CompressionMethodDeflate);
+        WriteLe(s, VersionNeeded);
+        WriteLe(s, 0); // flags
+        WriteLe(s, CompressionMethodDeflate);
         WriteLe(s, time);
         WriteLe(s, date);
         WriteLe(s, crc32);
         WriteLe(s, (uint)compressedSize);
         WriteLe(s, (uint)uncompressedSize);
         WriteLe(s, (ushort)nameBytes.Length);
-        WriteLe(s, (ushort)0); // extra field length
+        WriteLe(s, 0); // extra field length
         s.Write(nameBytes, 0, nameBytes.Length);
     }
 
@@ -97,21 +94,21 @@ internal static class ParallelZipWriter
         var nameBytes = System.Text.Encoding.UTF8.GetBytes(fileName);
         var (time, date) = GetDosDateTime(DateTimeOffset.Now);
         s.Write(BitConverter.GetBytes(CentralFileHeaderSignature), 0, 4);
-        WriteLe(s, (ushort)0); // version made by
-        WriteLe(s, (ushort)VersionNeeded);
-        WriteLe(s, (ushort)0); // flags
-        WriteLe(s, (ushort)CompressionMethodDeflate);
+        WriteLe(s, 0); // version made by
+        WriteLe(s, VersionNeeded);
+        WriteLe(s, 0); // flags
+        WriteLe(s, CompressionMethodDeflate);
         WriteLe(s, time);
         WriteLe(s, date);
         WriteLe(s, crc32);
         WriteLe(s, (uint)compressedSize);
         WriteLe(s, (uint)uncompressedSize);
         WriteLe(s, (ushort)nameBytes.Length);
-        WriteLe(s, (ushort)0); // extra field length
-        WriteLe(s, (ushort)0); // comment length
-        WriteLe(s, (ushort)0); // disk number
-        WriteLe(s, (ushort)0); // internal attrs
-        WriteLe(s, (uint)0); // external attrs
+        WriteLe(s, 0); // extra field length
+        WriteLe(s, 0); // comment length
+        WriteLe(s, 0); // disk number
+        WriteLe(s, 0); // internal attrs
+        WriteLe(s, 0); // external attrs
         WriteLe(s, (uint)localHeaderOffset);
         s.Write(nameBytes, 0, nameBytes.Length);
     }
@@ -119,13 +116,13 @@ internal static class ParallelZipWriter
     private static void WriteEndOfCentralDirectory(Stream s, int entryCount, int centralDirSize, long centralDirOffset)
     {
         s.Write(BitConverter.GetBytes(EndOfCentralDirSignature), 0, 4);
-        WriteLe(s, (ushort)0); // disk number
-        WriteLe(s, (ushort)0); // disk with central dir
+        WriteLe(s, 0); // disk number
+        WriteLe(s, 0); // disk with central dir
         WriteLe(s, (ushort)entryCount);
         WriteLe(s, (ushort)entryCount);
         WriteLe(s, (uint)centralDirSize);
         WriteLe(s, (uint)centralDirOffset);
-        WriteLe(s, (ushort)0); // comment length
+        WriteLe(s, 0); // comment length
     }
 
     private static (ushort time, ushort date) GetDosDateTime(DateTimeOffset dt)
