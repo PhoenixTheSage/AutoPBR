@@ -46,7 +46,6 @@ public sealed class UserSettings
     public bool ProcessArmor { get; set; } = true;
     public bool ProcessEntity { get; set; } = true;
     public bool ProcessParticles { get; set; } = true;
-    public bool UseHeightFromNormals { get; set; }
     public bool UseDeepBumpNormals { get; set; }
 
     /// <summary>DeepBump tile overlap: "Small", "Medium", or "Large" (default Large = best quality).</summary>

@@ -8,10 +8,11 @@
         mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
         x:Class="AutoPBR.App.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
-        Icon="/Assets/avalonia-logo.ico"
+        Icon="/Assets/AutoPBR-logo.ico"
         Title="{Binding Strings.AppTitle}"
         Width="1000"
-        Height="720">
+        Height="720"
+        SystemDecorations="None">
 
     <Design.DataContext>
         <!-- This only sets the DataContext for the previewer in an IDE,
@@ -19,15 +20,80 @@
         <vm:MainWindowViewModel/>
     </Design.DataContext>
 
-    <Grid RowDefinitions="Auto,*,Auto" Background="{Binding WindowBackground}">
-        <Border Background="{DynamicResource SystemControlBackgroundBaseLowBrush}" Padding="16">
-            <StackPanel Spacing="4">
-                <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding Strings.AppTitle}" Foreground="{Binding ForegroundBrush}" />
-                <TextBlock Opacity="0.8" Text="{Binding Strings.AppSubtitle}" TextWrapping="Wrap" Foreground="{Binding ForegroundBrush}" />
-            </StackPanel>
+    <Grid>
+        <Border x:Name="RootBorder"
+                Background="{Binding WindowBackground}"
+                BorderBrush="{Binding CardBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Padding="1">
+        <Grid RowDefinitions="Auto,*,Auto" Background="{Binding WindowBackground}">
+        <!-- Custom title bar: logo (left), title (center), window controls (right); flush with content -->
+        <Border Grid.Row="0"
+                Background="{Binding WindowBackground}"
+                Height="40">
+            <Grid ColumnDefinitions="Auto,*,Auto">
+                <Border x:Name="TitleBarDragRegion"
+                        Grid.Column="0"
+                        Grid.ColumnSpan="2"
+                        Background="Transparent"
+                        VerticalAlignment="Stretch"
+                        HorizontalAlignment="Stretch"
+                        PointerPressed="TitleBarDragRegion_PointerPressed">
+                    <Grid ColumnDefinitions="Auto,*">
+                        <Image Grid.Column="0"
+                               Source="/Assets/AutoPBR-logo.png"
+                               Width="24"
+                               Height="24"
+                               Margin="12,0,12,0"
+                               VerticalAlignment="Center"
+                               IsHitTestVisible="False" />
+                        <TextBlock Grid.Column="1"
+                                   VerticalAlignment="Center"
+                                   HorizontalAlignment="Center"
+                                   FontSize="14"
+                                   FontWeight="SemiBold"
+                                   Text="{Binding Strings.AppTitle}"
+                                   Foreground="{Binding ForegroundBrush}"
+                                   IsHitTestVisible="False" />
+                    </Grid>
+                </Border>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="0">
+                    <Button x:Name="MinimizeButton"
+                            Width="46" Height="40"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            ToolTip.Tip="Minimize"
+                            Click="WindowMinimize_Click">
+                        <TextBlock Text="&#x2014;" FontSize="14" Foreground="{Binding ForegroundBrush}" />
+                    </Button>
+                    <Button x:Name="MaximizeButton"
+                            Width="46" Height="40"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            ToolTip.Tip="Maximize"
+                            Click="WindowMaximize_Click">
+                        <TextBlock Text="&#x25A1;" FontSize="12" Foreground="{Binding ForegroundBrush}" />
+                    </Button>
+                    <Button x:Name="CloseButton"
+                            Width="46" Height="40"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            ToolTip.Tip="Close"
+                            Click="WindowClose_Click">
+                        <TextBlock Text="&#x2715;" FontSize="12" Foreground="{Binding ForegroundBrush}" />
+                    </Button>
+                </StackPanel>
+            </Grid>
         </Border>
 
-        <ScrollViewer Grid.Row="1">
+        <Grid x:Name="ContentGrid" Grid.Row="1" Background="{Binding WindowBackground}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="280" MinWidth="260" MaxWidth="600" />
+            </Grid.ColumnDefinitions>
+            <ScrollViewer Grid.Column="0">
             <TabControl Margin="16">
                 <TabItem Header="{Binding Strings.TabScan}">
                     <StackPanel Margin="0,12,0,0" Spacing="16">
@@ -50,7 +116,12 @@
                                         <ItemsControl ItemsSource="{Binding LogLines}">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
-                                                    <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="12"/>
+                                                    <TextBox Text="{Binding}"
+                                                             FontFamily="Consolas"
+                                                             FontSize="12"
+                                                             IsReadOnly="True"
+                                                             BorderThickness="0"
+                                                             Background="Transparent"/>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
@@ -67,7 +138,7 @@
                         <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
                             <StackPanel Spacing="10">
                                 <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Strings.TextureTypes}" />
-                                <StackPanel Orientation="Horizontal" Spacing="16">
+                                <WrapPanel Orientation="Horizontal" ItemSpacing="16" LineSpacing="8">
                                     <CheckBox Content="{Binding Strings.Blocks}" IsChecked="{Binding ProcessBlocks, Mode=TwoWay}"
                                         ToolTip.Tip="{Binding Strings.BlocksTooltip}" />
                                     <CheckBox Content="{Binding Strings.Items}" IsChecked="{Binding ProcessItems, Mode=TwoWay}"
@@ -80,7 +151,7 @@
                                         ToolTip.Tip="{Binding Strings.ParticlesTooltip}">
                                         <TextBlock Text="{Binding Strings.Particles}" TextWrapping="Wrap" />
                                     </CheckBox>
-                                </StackPanel>
+                                </WrapPanel>
                             </StackPanel>
                         </Border>
 
@@ -109,8 +180,12 @@
                                         </ItemsControl>
                                         <Button Content="{Binding Strings.ExploreExpandAll}" Command="{Binding ExploreExpandAllCommand}" />
                                         <Button Content="{Binding Strings.ExploreCollapseAll}" Command="{Binding ExploreCollapseAllCommand}" />
+                                        <Button Content="Set selection as preview"
+                                                Command="{Binding SetPreviewFromSelectionCommand}" />
                                     </StackPanel>
-                                    <TreeView ItemsSource="{Binding ExploreViewItems}" x:Name="ExploreTreeView">
+                                    <TreeView ItemsSource="{Binding ExploreViewItems}"
+                                              x:Name="ExploreTreeView"
+                                              SelectedItem="{Binding SelectedExploreNode, Mode=TwoWay}">
                                         <TreeView.Styles>
                                             <Style Selector="TreeViewItem">
                                                 <Setter Property="IsExpanded" Value="{Binding $self.((m:ArchiveNode)DataContext).IsExpanded, Mode=TwoWay}" />
@@ -144,10 +219,14 @@
                                 <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="10">
                                     <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.NormalStrength}"
                                                ToolTip.Tip="{Binding Strings.NormalStrengthTooltip}" />
-                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="1" Maximum="3" SmallChange="0.01" LargeChange="0.1"
+                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="0.1" Maximum="8" SmallChange="0.01" LargeChange="0.1"
                                             Value="{Binding NormalIntensity, Mode=TwoWay}"
                                             ToolTip.Tip="{Binding Strings.NormalStrengthTooltip}" />
-                                    <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" Text="{Binding NormalIntensity, StringFormat={}{0:0.###}}" />
+                                    <TextBox Grid.Row="0" Grid.Column="2"
+                                             Width="70"
+                                             VerticalAlignment="Center"
+                                             HorizontalContentAlignment="Right"
+                                             Text="{Binding NormalIntensity, Mode=TwoWay, StringFormat={}{0:0.###}, UpdateSourceTrigger=PropertyChanged}" />
 
                                     <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="Operator" />
                                     <ComboBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Width="220"
@@ -209,24 +288,36 @@
                                 <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="10">
                                     <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.SmoothnessScale}"
                                                ToolTip.Tip="{Binding Strings.SmoothnessScaleTooltip}" />
-                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="0.5" Maximum="1.5" SmallChange="0.05" LargeChange="0.1"
+                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="0.2" Maximum="3" SmallChange="0.05" LargeChange="0.1"
                                             Value="{Binding SmoothnessScale, Mode=TwoWay}"
                                             ToolTip.Tip="{Binding Strings.SmoothnessScaleTooltip}" />
-                                    <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" Text="{Binding SmoothnessScale, StringFormat={}{0:0.##}}" />
+                                    <TextBox Grid.Row="0" Grid.Column="2"
+                                             Width="70"
+                                             VerticalAlignment="Center"
+                                             HorizontalContentAlignment="Right"
+                                             Text="{Binding SmoothnessScale, Mode=TwoWay, StringFormat={}{0:0.###}, UpdateSourceTrigger=PropertyChanged}" />
 
                                     <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.MetallicBoost}"
                                                ToolTip.Tip="{Binding Strings.MetallicBoostTooltip}" />
-                                    <Slider Grid.Row="1" Grid.Column="1" Minimum="0.5" Maximum="1.5" SmallChange="0.05" LargeChange="0.1"
+                                    <Slider Grid.Row="1" Grid.Column="1" Minimum="0" Maximum="3" SmallChange="0.05" LargeChange="0.1"
                                             Value="{Binding MetallicBoost, Mode=TwoWay}"
                                             ToolTip.Tip="{Binding Strings.MetallicBoostTooltip}" />
-                                    <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Text="{Binding MetallicBoost, StringFormat={}{0:0.##}}" />
+                                    <TextBox Grid.Row="1" Grid.Column="2"
+                                             Width="70"
+                                             VerticalAlignment="Center"
+                                             HorizontalContentAlignment="Right"
+                                             Text="{Binding MetallicBoost, Mode=TwoWay, StringFormat={}{0:0.###}, UpdateSourceTrigger=PropertyChanged}" />
 
                                     <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.PorosityBias}"
                                                ToolTip.Tip="{Binding Strings.PorosityBiasTooltip}" />
-                                    <Slider Grid.Row="2" Grid.Column="1" Minimum="-32" Maximum="32" SmallChange="1" LargeChange="8"
+                                    <Slider Grid.Row="2" Grid.Column="1" Minimum="-128" Maximum="128" SmallChange="1" LargeChange="8"
                                             Value="{Binding PorosityBias, Mode=TwoWay}"
                                             ToolTip.Tip="{Binding Strings.PorosityBiasTooltip}" />
-                                    <TextBlock Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Text="{Binding PorosityBias, StringFormat={}{0:0}}" />
+                                    <TextBox Grid.Row="2" Grid.Column="2"
+                                             Width="70"
+                                             VerticalAlignment="Center"
+                                             HorizontalContentAlignment="Right"
+                                             Text="{Binding PorosityBias, Mode=TwoWay, StringFormat={}{0:0.###}, UpdateSourceTrigger=PropertyChanged}" />
 
                                     <CheckBox Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" IsChecked="{Binding FastSpecular, Mode=TwoWay}" MaxWidth="280"
                                         ToolTip.Tip="{Binding Strings.FastSpecularTooltip}">
@@ -243,16 +334,16 @@
                                 <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="10">
                                     <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.HeightStrength}"
                                                ToolTip.Tip="{Binding Strings.HeightStrengthTooltip}" />
-                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="0.01" Maximum="0.5" SmallChange="0.001" LargeChange="0.01"
+                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="0.001" Maximum="2" SmallChange="0.001" LargeChange="0.01"
                                             Value="{Binding HeightIntensity, Mode=TwoWay}"
                                             ToolTip.Tip="{Binding Strings.HeightStrengthTooltip}" />
-                                    <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" Text="{Binding HeightIntensity, StringFormat={}{0:0.###}}" />
+                                    <TextBox Grid.Row="0" Grid.Column="2"
+                                             Width="70"
+                                             VerticalAlignment="Center"
+                                             HorizontalContentAlignment="Right"
+                                             Text="{Binding HeightIntensity, Mode=TwoWay, StringFormat={}{0:0.###}, UpdateSourceTrigger=PropertyChanged}" />
 
                                     <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Spacing="16">
-                                        <CheckBox IsChecked="{Binding UseHeightFromNormals, Mode=TwoWay}" MaxWidth="320"
-                                            ToolTip.Tip="{Binding Strings.HeightFromNormalsTooltip}">
-                                            <TextBlock Text="{Binding Strings.HeightFromNormals}" TextWrapping="Wrap" />
-                                        </CheckBox>
                                         <TextBlock VerticalAlignment="Center" Text="{Binding Strings.Foliage}"
                                                    ToolTip.Tip="{Binding Strings.FoliageTooltip}" />
                                         <ComboBox Width="140" ItemsSource="{Binding FoliageModeOptions}"
@@ -268,6 +359,7 @@
                                 </Grid>
                             </StackPanel>
                         </Border>
+
                     </StackPanel>
                 </TabItem>
 
@@ -318,7 +410,7 @@
                         <Border CornerRadius="8" Background="{Binding CardBackground}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" Padding="16">
                             <StackPanel Spacing="10">
                                 <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Strings.Appearance}" />
-                                <StackPanel Orientation="Horizontal" Spacing="16">
+                                <WrapPanel Orientation="Horizontal" ItemSpacing="16" LineSpacing="8">
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <TextBlock VerticalAlignment="Center" Text="{Binding Strings.ColorScheme}"
                                                    ToolTip.Tip="{Binding Strings.UIThemeTooltip}" />
@@ -345,13 +437,45 @@
                                             </ComboBox.ItemTemplate>
                                         </ComboBox>
                                     </StackPanel>
-                                </StackPanel>
+                                </WrapPanel>
                             </StackPanel>
                         </Border>
                     </StackPanel>
                 </TabItem>
             </TabControl>
-        </ScrollViewer>
+            </ScrollViewer>
+
+            <!-- Draggable splitter: 8px hit area; 1px line drawn on top (no nested Grid so splitter sees main Grid) -->
+            <GridSplitter Grid.Column="1"
+                          Background="Transparent"
+                          ResizeDirection="Columns"
+                          ResizeBehavior="PreviousAndNext"
+                          Cursor="LeftSide"
+                          HorizontalAlignment="Stretch" />
+            <Border Grid.Column="1" Width="1" HorizontalAlignment="Right" Background="{Binding CardBorderBrush}"
+                    IsHitTestVisible="False" />
+
+            <!-- Preview panel: right column, visible on all tabs; render view in main area with gradient fade top/bottom, no border top/bottom -->
+            <Border Grid.Column="2"
+                    Background="{Binding CardBackground}"
+                    BorderBrush="{Binding CardBorderBrush}"
+                    BorderThickness="1,0,0,0"
+                    Padding="12">
+                <Grid RowDefinitions="Auto,*" RowSpacing="8">
+                    <StackPanel Orientation="Vertical" Spacing="4">
+                        <TextBlock Text="Preview" FontWeight="SemiBold" Foreground="{Binding ForegroundBrush}" />
+                        <TextBlock Text="{Binding PreviewTextureName}"
+                                   Foreground="{Binding ForegroundBrush}"
+                                   TextTrimming="CharacterEllipsis"
+                                   TextWrapping="NoWrap"
+                                   Opacity="0.9" />
+                    </StackPanel>
+                    <Grid Grid.Row="1" ClipToBounds="True">
+                        <Image Source="{Binding PreviewImage}" Stretch="Uniform" />
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
 
         <Border Grid.Row="2" Background="{Binding WindowBackground}" Padding="12">
             <DockPanel LastChildFill="True">
@@ -366,6 +490,19 @@
                 </StackPanel>
             </DockPanel>
         </Border>
+        </Grid>
+    </Border>
+        <!-- Resize grips (drawn on top); left, right, bottom, corners -->
+        <Border Width="6" HorizontalAlignment="Left" VerticalAlignment="Stretch" Background="Transparent"
+                Cursor="LeftSide" PointerPressed="ResizeWest_PointerPressed" />
+        <Border Width="6" HorizontalAlignment="Right" VerticalAlignment="Stretch" Background="Transparent"
+                Cursor="RightSide" PointerPressed="ResizeEast_PointerPressed" />
+        <Border Height="6" VerticalAlignment="Bottom" HorizontalAlignment="Stretch" Background="Transparent"
+                Cursor="BottomSide" PointerPressed="ResizeSouth_PointerPressed" />
+        <Border Width="12" Height="12" HorizontalAlignment="Left" VerticalAlignment="Bottom" Background="Transparent"
+                Cursor="BottomLeftCorner" PointerPressed="ResizeSouthWest_PointerPressed" />
+        <Border Width="12" Height="12" HorizontalAlignment="Right" VerticalAlignment="Bottom" Background="Transparent"
+                Cursor="BottomRightCorner" PointerPressed="ResizeSouthEast_PointerPressed" />
     </Grid>
 
 </Window>

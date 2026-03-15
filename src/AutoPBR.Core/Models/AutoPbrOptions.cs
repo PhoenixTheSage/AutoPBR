@@ -83,9 +83,6 @@ public sealed class AutoPbrOptions
     /// <summary>Foliage handling: "Ignore All", "No Height", or "Convert All".</summary>
     public string FoliageMode { get; init; } = "Ignore All";
 
-    /// <summary>When true, derive height from the generated normal map via Frankot-Chellappa (DeepBump-style) instead of from diffuse luminance.</summary>
-    public bool UseHeightFromNormals { get; init; } = false;
-
     /// <summary>When true and DeepBumpModelPath is valid, generate normals from diffuse using the DeepBump ONNX model (deepbump256.onnx) instead of Sobel/VC.</summary>
     public bool UseDeepBumpNormals { get; init; } = false;
 

@@ -5,8 +5,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\AutoPBR-logo.ico</ApplicationIcon>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
+  <!-- Generate .ico from PNG for exe/shortcut icon (run when logo.png exists). -->
+  <Target Name="GenerateAppIcon" BeforeTargets="BeforeBuild" Condition="Exists('$(ProjectDir)Assets\AutoPBR-logo.png')">
+    <Exec Command="dotnet run --project &quot;$(ProjectDir)..\AutoPBR.Tools.GenerateIcon\AutoPBR.Tools.GenerateIcon.csproj&quot; -- &quot;$(ProjectDir)Assets\AutoPBR-logo.png&quot; &quot;$(ProjectDir)Assets\AutoPBR-logo.ico&quot;"
+          IgnoreExitCode="true" />
+  </Target>
 
   <ItemGroup>
     <Folder Include="Models\" />

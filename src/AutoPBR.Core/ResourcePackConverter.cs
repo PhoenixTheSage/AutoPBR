@@ -285,6 +285,150 @@ public sealed class ResourcePackConverter
         }
     }
 
+    /// <summary>
+    /// Build a 2D composite preview (diffuse, normal, specular, height) for a single texture from the pack.
+    /// Returns a PNG-encoded byte array suitable for UI display.
+    /// </summary>
+    public async Task<byte[]> RenderPreviewAsync(
+        string inputZipPath,
+        string archivePath,
+        AutoPbrOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(inputZipPath))
+            throw new FileNotFoundException("Input pack not found.", inputZipPath);
+
+        if (options.SpecularData is null)
+            throw new InvalidOperationException("SpecularData is required (load textures_data.json first).");
+
+        var baseTemp = string.IsNullOrWhiteSpace(options.TempDirectory)
+            ? Path.GetTempPath()
+            : options.TempDirectory;
+        var tempRoot = Path.Combine(baseTemp, "AutoPBR_Preview", Guid.NewGuid().ToString("N"));
+        var extracted = Path.Combine(tempRoot, "pack_unzipped");
+        Directory.CreateDirectory(extracted);
+
+        try
+        {
+            // Extract only the requested entry into the extracted root.
+            using (var archive = ZipFile.OpenRead(inputZipPath))
+            {
+                var entry = archive.GetEntry(archivePath)
+                            ?? throw new FileNotFoundException("Texture entry not found in pack.", archivePath);
+
+                var destPath = Path.Combine(extracted, entry.FullName.Replace('/', Path.DirectorySeparatorChar));
+                var dir = Path.GetDirectoryName(destPath);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+                if (!string.IsNullOrEmpty(entry.Name))
+                    entry.ExtractToFile(destPath, overwrite: true);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Let the existing scanner build a TextureWorkItem for this extracted texture.
+            var textures = ScanTextures(extracted, options);
+            if (textures.Count == 0)
+                throw new InvalidOperationException("No previewable textures found after extraction.");
+
+            TextureWorkItem target = textures[0];
+            var targetRel = archivePath.Replace('\\', '/');
+            foreach (var t in textures)
+            {
+                var rel = Path.GetRelativePath(extracted, t.DiffusePath).Replace('\\', '/');
+                if (string.Equals(rel, targetRel, StringComparison.OrdinalIgnoreCase))
+                {
+                    target = t;
+                    break;
+                }
+            }
+
+            var single = new List<TextureWorkItem> { target };
+
+            // Generate specular / normals / heights for this single texture.
+            await GenerateSpecularAsync(single, options, null, cancellationToken).ConfigureAwait(false);
+            await GenerateNormalsAndHeightsAsync(single, options, null, cancellationToken).ConfigureAwait(false);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Load images for composite.
+            using var diffuse = Image.Load<Rgba32>(target.DiffusePath);
+            Image<Rgba32>? normal = null;
+            Image<Rgba32>? spec = null;
+            Image<Rgba32>? height = null;
+
+            if (File.Exists(target.NormalPath))
+                normal = Image.Load<Rgba32>(target.NormalPath);
+            if (File.Exists(target.SpecularPath))
+                spec = Image.Load<Rgba32>(target.SpecularPath);
+
+            var tileWidth = diffuse.Width;
+            var tileHeight = diffuse.Height;
+            var finalWidth = tileWidth * 2;
+            var finalHeight = tileHeight * 2;
+
+            var output = new Image<Rgba32>(finalWidth, finalHeight);
+
+            static void Blit(Image<Rgba32>? src, Image<Rgba32> dst, int offsetX, int offsetY, int tileWidth, int tileHeight)
+            {
+                if (src is null)
+                    return;
+
+                var w = Math.Min(tileWidth, src.Width);
+                var h = Math.Min(tileHeight, src.Height);
+
+                for (var y = 0; y < h; y++)
+                {
+                    for (var x = 0; x < w; x++)
+                    {
+                        dst[offsetX + x, offsetY + y] = src[x, y];
+                    }
+                }
+            }
+
+            // Top-left: diffuse
+            Blit(diffuse, output, 0, 0, tileWidth, tileHeight);
+
+            // Top-right: normal map (or blank)
+            Blit(normal, output, tileWidth, 0, tileWidth, tileHeight);
+
+            // Bottom-left: specular (or blank)
+            Blit(spec, output, 0, tileHeight, tileWidth, tileHeight);
+
+            // Bottom-right: height (derived from normal alpha if available)
+            if (normal != null)
+            {
+                height = new Image<Rgba32>(normal.Width, normal.Height);
+                for (var y = 0; y < normal.Height; y++)
+                {
+                    for (var x = 0; x < normal.Width; x++)
+                    {
+                        var a = normal[x, y].A;
+                        height[x, y] = new Rgba32(a, a, a, 255);
+                    }
+                }
+
+                Blit(height, output, tileWidth, tileHeight, tileWidth, tileHeight);
+            }
+
+            // Encode as PNG and return bytes.
+            using var ms = new MemoryStream();
+            output.SaveAsPng(ms);
+            return ms.ToArray();
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+            catch
+            {
+                /* best-effort */
+            }
+        }
+    }
+
     private static void ExtractWithProgress(
         string inputZipPath,
         string extracted,
@@ -904,19 +1048,10 @@ public sealed class ResourcePackConverter
 
                     using (normal)
                     {
-                        HeightMap heightMap;
-                        if (options.UseHeightFromNormals)
-                        {
-                            var (w, h, data) = FrankotChellappaHeight.FromNormalMap(normal);
-                            heightMap = new HeightMap { Width = w, Height = h, Data = data };
-                        }
-                        else
-                        {
-                            var heightIntensity = t.Overrides.HeightIntensity ?? options.HeightIntensity;
-                            var brightness = t.Overrides.HeightBrightness ?? AutoPbrDefaults.DefaultHeightBrightness;
-                            heightMap = GenerateHeightMap(croppedDiffuse, width, height, heightIntensity, brightness,
-                                t.Overrides.InvertHeight);
-                        }
+                        var heightIntensity = t.Overrides.HeightIntensity ?? options.HeightIntensity;
+                        var brightness = t.Overrides.HeightBrightness ?? AutoPbrDefaults.DefaultHeightBrightness;
+                        var heightMap = GenerateHeightMap(croppedDiffuse, width, height, heightIntensity, brightness,
+                            t.Overrides.InvertHeight);
 
                         // No Height mode: skip height for plants (and for grass only when significant transparency, so grass blocks keep height).
                         var skipHeightInAlpha = t.IsPlantForNoHeight;
