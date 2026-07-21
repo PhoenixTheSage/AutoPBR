@@ -460,7 +460,7 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             {
                 _yFlipPath = 1;
                 EndFrame();
-                gl.Flush();
+                // Step 4: FenceSync alone publishes completion; skip Flush to cut CPU/driver overhead.
                 _resolveFences[write] = gl.FenceSync(SyncCondition.SyncGpuCommandsComplete, SyncBehaviorFlags.None);
                 _lastFailure = null;
                 return true;
@@ -475,7 +475,6 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             EndFrame();
             // Publish without waiting — Present shows the previous buffer; this fence is waited
             // when that buffer is presented next frame (after scene render has overlapped it).
-            gl.Flush();
             _resolveFences[write] = gl.FenceSync(SyncCondition.SyncGpuCommandsComplete, SyncBehaviorFlags.None);
 
             _lastFailure = null;
@@ -1104,15 +1103,17 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
         gl.BindTexture(TextureTarget.Texture2D, _flipTexture);
         unsafe
         {
+            // Step 3: R11G11B10F private scene color (half bandwidth). Shared/DXGI stay RGBA16F;
+            // blit/shader resolve converts into the scRGB interop target.
             gl.TexImage2D(
                 TextureTarget.Texture2D,
                 0,
-                InternalFormat.Rgba16f,
+                InternalFormat.R11fG11fB10f,
                 (uint)width,
                 (uint)height,
                 0,
-                PixelFormat.Rgba,
-                PixelType.HalfFloat,
+                PixelFormat.Rgb,
+                PixelType.UnsignedInt10f11f11fRev,
                 (void*)0);
         }
 
