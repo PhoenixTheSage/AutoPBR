@@ -30,6 +30,7 @@ uniform int uHasSceneDepth;
 uniform int uHasTaaSignal;
 uniform int uHasHistory;
 uniform int uForceFxaa;
+uniform int uHdrPresent;
 
 out vec4 FragColor;
 
@@ -395,5 +396,8 @@ void main()
         : clamp(fxaaEdgeMask * uFxaaEdgeStrength * 0.28, 0.0, 0.55);
     resolved = mix(resolved, taaTentBlur3x3FromTaps(colorTaps), postFxaaW);
 
-    FragColor = vec4(ditherSrgb8(resolved, gl_FragCoord.xy), 1.0);
+    vec3 outRgb = uHdrPresent > 0
+        ? max(resolved, vec3(0.0))
+        : ditherSrgb8(resolved, gl_FragCoord.xy);
+    FragColor = vec4(outRgb, 1.0);
 }

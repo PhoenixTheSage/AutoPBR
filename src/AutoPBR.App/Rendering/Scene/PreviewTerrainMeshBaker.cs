@@ -1,0 +1,693 @@
+using System.Numerics;
+
+using AutoPBR.App.Rendering.Abstractions;
+using AutoPBR.Preview;
+
+namespace AutoPBR.App.Rendering.Scene;
+
+/// <summary>
+/// Builds Minecraft-style 1m cuboid terrain from column heights with neighbor face occlusion,
+/// greedy coplanar merges, and world-tiled UVs. Supports legacy multi-chunk bake and streaming
+/// per-chunk Full bakes against infinite <see cref="PreviewTerrainHeightfield.SampleColumn"/>.
+/// </summary>
+public static class PreviewTerrainMeshBaker
+{
+    public static PreviewTerrainBakeResult Bake(
+        ReadOnlySpan<int> heights,
+        int halfExtent = PreviewStageConstants.TerrainHalfExtent,
+        int fillDepth = PreviewStageConstants.TerrainFillDepth,
+        int chunkSize = PreviewStageConstants.TerrainChunkSize,
+        float metersPerTile = PreviewStageConstants.MetersPerGrassTile,
+        float surfaceWorldY = PreviewStageConstants.GroundPlaneWorldY,
+        float nearPomRadius = PreviewStageConstants.TerrainNearPomRadius,
+        float lodMaxDistance = PreviewStageConstants.TerrainLodMaxDistance,
+        string name = "preview_terrain")
+    {
+        if (halfExtent <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(halfExtent));
+        }
+
+        var side = halfExtent * 2;
+        if (heights.Length < side * side)
+        {
+            throw new ArgumentException("Heightfield is smaller than 2*halfExtent squared.", nameof(heights));
+        }
+
+        fillDepth = Math.Max(1, fillDepth);
+        chunkSize = Math.Max(1, chunkSize);
+        if (metersPerTile <= 1e-6f)
+        {
+            metersPerTile = PreviewStageConstants.MetersPerGrassTile;
+        }
+
+        var minH = int.MaxValue;
+        var maxH = int.MinValue;
+        var heightCopy = heights.ToArray();
+        for (var i = 0; i < side * side; i++)
+        {
+            var h = heightCopy[i];
+            minH = Math.Min(minH, h);
+            maxH = Math.Max(maxH, h);
+        }
+
+        if (minH == int.MaxValue)
+        {
+            minH = 0;
+            maxH = 0;
+        }
+
+        var layerMin = minH - fillDepth + 1;
+        var layerMax = maxH;
+        int HeightAt(int x, int z) => PreviewTerrainHeightfield.GetHeight(heightCopy, x, z, halfExtent);
+
+        var verts = new List<float>(side * side * 24);
+        var indices = new List<uint>(side * side * 36);
+        var batches = new List<PreviewDrawBatch>();
+
+        for (var cz0 = -halfExtent; cz0 < halfExtent; cz0 += chunkSize)
+        {
+            for (var cx0 = -halfExtent; cx0 < halfExtent; cx0 += chunkSize)
+            {
+                var cx1 = Math.Min(cx0 + chunkSize, halfExtent);
+                var cz1 = Math.Min(cz0 + chunkSize, halfExtent);
+                var indexStart = indices.Count;
+
+                EmitChunkGreedy(
+                    HeightAt,
+                    fillDepth,
+                    layerMin,
+                    layerMax,
+                    cx0, cx1, cz0, cz1,
+                    surfaceWorldY,
+                    metersPerTile,
+                    verts,
+                    indices);
+
+                var indexCount = indices.Count - indexStart;
+                if (indexCount <= 0)
+                {
+                    continue;
+                }
+
+                var centerX = (cx0 + cx1) * 0.5f;
+                var centerZ = (cz0 + cz1) * 0.5f;
+                var padXZ = Math.Max(Math.Abs(centerX), Math.Abs(centerZ));
+                var enablePom = padXZ <= nearPomRadius;
+                var lod = lodMaxDistance <= 0f || padXZ <= nearPomRadius ? 0f : lodMaxDistance;
+                var minY = surfaceWorldY + layerMin - 1;
+                var maxY = surfaceWorldY + layerMax;
+                var boundsMin = new Vector3(cx0, minY, cz0);
+                var boundsMax = new Vector3(cx1, maxY, cz1);
+                var center = (boundsMin + boundsMax) * 0.5f;
+                var radius = Vector3.Distance(center, boundsMax);
+
+                batches.Add(new PreviewDrawBatch(indexStart, indexCount, MaterialIndex: 0)
+                {
+                    EnableParallax = enablePom,
+                    BoundsCenter = center,
+                    BoundsRadius = radius,
+                    LodMaxDistance = lod
+                });
+            }
+        }
+
+        return new PreviewTerrainBakeResult
+        {
+            Mesh = new PreviewMesh
+            {
+                Name = name,
+                InterleavedVertices = verts.ToArray(),
+                Indices = indices.ToArray()
+            },
+            ChunkBatches = batches.ToArray(),
+            MinRelativeHeight = minH,
+            MaxRelativeHeight = maxH
+        };
+    }
+
+    /// <summary>
+    /// Full-detail greedy bake for one streaming chunk. Neighbor occlusion uses infinite
+    /// <see cref="PreviewTerrainHeightfield.SampleColumn"/> (1-column halo, no resident neighbors required).
+    /// </summary>
+    public static PreviewTerrainChunkMesh? BakeFullChunk(
+        TerrainChunkKey key,
+        int chunkSize = PreviewStageConstants.TerrainChunkSize,
+        int fillDepth = PreviewStageConstants.TerrainFillDepth,
+        float metersPerTile = PreviewStageConstants.MetersPerGrassTile,
+        float surfaceWorldY = PreviewStageConstants.GroundPlaneWorldY,
+        int flatPadHalfExtent = PreviewStageConstants.TerrainFlatPadHalfExtent,
+        int transitionBlocks = PreviewStageConstants.TerrainTransitionBlocks,
+        int maxRelief = PreviewStageConstants.TerrainMaxReliefBlocks,
+        int seed = PreviewStageConstants.TerrainHeightSeed)
+    {
+        chunkSize = Math.Max(1, chunkSize);
+        fillDepth = Math.Max(1, fillDepth);
+        if (metersPerTile <= 1e-6f)
+        {
+            metersPerTile = PreviewStageConstants.MetersPerGrassTile;
+        }
+
+        var cx0 = key.OriginX(chunkSize);
+        var cz0 = key.OriginZ(chunkSize);
+        var cx1 = cx0 + chunkSize;
+        var cz1 = cz0 + chunkSize;
+
+        // Cache halo heights once (Lod already does this). Live SampleColumn inside IsSolid
+        // was tens of thousands of FBM evals per Full chunk.
+        var side = chunkSize + 2;
+        var board = new int[side * side];
+        var ox = cx0 - 1;
+        var oz = cz0 - 1;
+        var minH = int.MaxValue;
+        var maxH = int.MinValue;
+        for (var lz = 0; lz < side; lz++)
+        {
+            for (var lx = 0; lx < side; lx++)
+            {
+                var h = PreviewTerrainHeightfield.SampleColumn(
+                    ox + lx, oz + lz, flatPadHalfExtent, transitionBlocks, maxRelief, seed);
+                board[lz * side + lx] = h;
+                if (lx > 0 && lx < side - 1 && lz > 0 && lz < side - 1)
+                {
+                    minH = Math.Min(minH, h);
+                    maxH = Math.Max(maxH, h);
+                }
+            }
+        }
+
+        if (minH == int.MaxValue)
+        {
+            return null;
+        }
+
+        var layerMin = minH - fillDepth + 1;
+        var layerMax = maxH;
+        int HeightAt(int x, int z)
+        {
+            var lx = x - ox;
+            var lz = z - oz;
+            if ((uint)lx >= (uint)side || (uint)lz >= (uint)side)
+            {
+                return PreviewTerrainHeightfield.SampleColumn(
+                    x, z, flatPadHalfExtent, transitionBlocks, maxRelief, seed);
+            }
+
+            return board[lz * side + lx];
+        }
+
+        var verts = new List<float>(chunkSize * chunkSize * 48);
+        var indices = new List<uint>(chunkSize * chunkSize * 72);
+        EmitChunkGreedy(
+            HeightAt,
+            fillDepth,
+            layerMin,
+            layerMax,
+            cx0, cx1, cz0, cz1,
+            surfaceWorldY,
+            metersPerTile,
+            verts,
+            indices);
+
+        if (indices.Count == 0)
+        {
+            return null;
+        }
+
+        var minY = surfaceWorldY + layerMin - 1;
+        var maxY = surfaceWorldY + layerMax;
+        var boundsMin = new Vector3(cx0, minY, cz0);
+        var boundsMax = new Vector3(cx1, maxY, cz1);
+        var center = (boundsMin + boundsMax) * 0.5f;
+        return new PreviewTerrainChunkMesh
+        {
+            Key = key,
+            Lod = TerrainChunkLodKind.Full,
+            InterleavedVertices = verts.ToArray(),
+            Indices = indices.ToArray(),
+            BoundsCenter = center,
+            BoundsRadius = Vector3.Distance(center, boundsMax),
+            MinRelativeHeight = minH,
+            MaxRelativeHeight = maxH
+        };
+    }
+
+    private static void EmitChunkGreedy(
+        Func<int, int, int> heightAt,
+        int fillDepth,
+        int layerMin,
+        int layerMax,
+        int cx0,
+        int cx1,
+        int cz0,
+        int cz1,
+        float surfaceWorldY,
+        float metersPerTile,
+        List<float> verts,
+        List<uint> indices)
+    {
+        var sizeX = cx1 - cx0;
+        var sizeZ = cz1 - cz0;
+        var sizeY = layerMax - layerMin + 1;
+        if (sizeX <= 0 || sizeZ <= 0 || sizeY <= 0)
+        {
+            return;
+        }
+
+        EmitAxisSlices(heightAt, fillDepth, layerMin, layerMax, cx0, cx1, cz0, cz1,
+            surfaceWorldY, metersPerTile, axis: 1, verts, indices);
+        EmitAxisSlices(heightAt, fillDepth, layerMin, layerMax, cx0, cx1, cz0, cz1,
+            surfaceWorldY, metersPerTile, axis: 0, verts, indices);
+        EmitAxisSlices(heightAt, fillDepth, layerMin, layerMax, cx0, cx1, cz0, cz1,
+            surfaceWorldY, metersPerTile, axis: 2, verts, indices);
+    }
+
+    private static void EmitAxisSlices(
+        Func<int, int, int> heightAt,
+        int fillDepth,
+        int layerMin,
+        int layerMax,
+        int cx0,
+        int cx1,
+        int cz0,
+        int cz1,
+        float surfaceWorldY,
+        float metersPerTile,
+        int axis,
+        List<float> verts,
+        List<uint> indices)
+    {
+        int uSize, vSize, wMin, wMax;
+        if (axis == 0)
+        {
+            wMin = cx0;
+            wMax = cx1;
+            uSize = layerMax - layerMin + 1;
+            vSize = cz1 - cz0;
+        }
+        else if (axis == 1)
+        {
+            EmitYFaces(heightAt, fillDepth, layerMin, layerMax, cx0, cx1, cz0, cz1,
+                surfaceWorldY, metersPerTile, verts, indices);
+            return;
+        }
+        else
+        {
+            wMin = cz0;
+            wMax = cz1;
+            uSize = cx1 - cx0;
+            vSize = layerMax - layerMin + 1;
+        }
+
+        var mask = new byte[uSize * vSize];
+        for (var dir = 0; dir < 2; dir++)
+        {
+            var positive = dir == 0;
+            for (var w = wMin; w < wMax; w++)
+            {
+                Array.Clear(mask);
+                var any = false;
+                for (var v = 0; v < vSize; v++)
+                {
+                    for (var u = 0; u < uSize; u++)
+                    {
+                        int bx, by, bz;
+                        if (axis == 0)
+                        {
+                            bx = w;
+                            by = layerMin + u;
+                            bz = cz0 + v;
+                        }
+                        else
+                        {
+                            bx = cx0 + u;
+                            by = layerMin + v;
+                            bz = w;
+                        }
+
+                        if (!IsSolid(heightAt, fillDepth, bx, by, bz))
+                        {
+                            continue;
+                        }
+
+                        int nx = bx, ny = by, nz = bz;
+                        if (axis == 0)
+                        {
+                            nx += positive ? 1 : -1;
+                        }
+                        else
+                        {
+                            nz += positive ? 1 : -1;
+                        }
+
+                        if (IsSolid(heightAt, fillDepth, nx, ny, nz))
+                        {
+                            continue;
+                        }
+
+                        mask[v * uSize + u] = 1;
+                        any = true;
+                    }
+                }
+
+                if (!any)
+                {
+                    continue;
+                }
+
+                GreedyEmitMask(mask, uSize, vSize, axis, positive, w, cx0, cz0, layerMin,
+                    surfaceWorldY, metersPerTile, verts, indices);
+            }
+        }
+    }
+
+    private static void EmitYFaces(
+        Func<int, int, int> heightAt,
+        int fillDepth,
+        int layerMin,
+        int layerMax,
+        int cx0,
+        int cx1,
+        int cz0,
+        int cz1,
+        float surfaceWorldY,
+        float metersPerTile,
+        List<float> verts,
+        List<uint> indices)
+    {
+        var uSize = cx1 - cx0;
+        var vSize = cz1 - cz0;
+        var mask = new byte[uSize * vSize];
+        for (var dir = 0; dir < 2; dir++)
+        {
+            var positive = dir == 0;
+            for (var by = layerMin; by <= layerMax; by++)
+            {
+                Array.Clear(mask);
+                var any = false;
+                for (var v = 0; v < vSize; v++)
+                {
+                    for (var u = 0; u < uSize; u++)
+                    {
+                        var bx = cx0 + u;
+                        var bz = cz0 + v;
+                        if (!IsSolid(heightAt, fillDepth, bx, by, bz))
+                        {
+                            continue;
+                        }
+
+                        var ny = by + (positive ? 1 : -1);
+                        if (IsSolid(heightAt, fillDepth, bx, ny, bz))
+                        {
+                            continue;
+                        }
+
+                        mask[v * uSize + u] = 1;
+                        any = true;
+                    }
+                }
+
+                if (!any)
+                {
+                    continue;
+                }
+
+                GreedyEmitMask(mask, uSize, vSize, axis: 1, positive, w: by, cx0, cz0, layerMin,
+                    surfaceWorldY, metersPerTile, verts, indices);
+            }
+        }
+    }
+
+    private static void GreedyEmitMask(
+        byte[] mask,
+        int uSize,
+        int vSize,
+        int axis,
+        bool positive,
+        int w,
+        int cx0,
+        int cz0,
+        int layerMin,
+        float surfaceWorldY,
+        float metersPerTile,
+        List<float> verts,
+        List<uint> indices)
+    {
+        for (var v = 0; v < vSize; v++)
+        {
+            for (var u = 0; u < uSize;)
+            {
+                if (mask[v * uSize + u] == 0)
+                {
+                    u++;
+                    continue;
+                }
+
+                var width = 1;
+                while (u + width < uSize && mask[v * uSize + u + width] != 0)
+                {
+                    width++;
+                }
+
+                var height = 1;
+                var done = false;
+                while (v + height < vSize && !done)
+                {
+                    for (var k = 0; k < width; k++)
+                    {
+                        if (mask[(v + height) * uSize + u + k] == 0)
+                        {
+                            done = true;
+                            break;
+                        }
+                    }
+
+                    if (!done)
+                    {
+                        height++;
+                    }
+                }
+
+                for (var dv = 0; dv < height; dv++)
+                {
+                    for (var du = 0; du < width; du++)
+                    {
+                        mask[(v + dv) * uSize + u + du] = 0;
+                    }
+                }
+
+                EmitMergedQuad(axis, positive, w, u, v, width, height, cx0, cz0, layerMin,
+                    surfaceWorldY, metersPerTile, verts, indices);
+                u += width;
+            }
+        }
+    }
+
+    private static void EmitMergedQuad(
+        int axis,
+        bool positive,
+        int w,
+        int u,
+        int v,
+        int width,
+        int height,
+        int cx0,
+        int cz0,
+        int layerMin,
+        float surfaceWorldY,
+        float metersPerTile,
+        List<float> verts,
+        List<uint> indices)
+    {
+        Span<Vector3> corners = stackalloc Vector3[4];
+        Span<Vector2> uvs = stackalloc Vector2[4];
+        Vector3 n;
+        Vector3 tFallback;
+        float wSign = 1f;
+
+        if (axis == 1)
+        {
+            var y = positive ? surfaceWorldY + w : surfaceWorldY + w - 1f;
+            var x0 = cx0 + u;
+            var z0 = cz0 + v;
+            var x1 = x0 + width;
+            var z1 = z0 + height;
+            if (positive)
+            {
+                n = Vector3.UnitY;
+                tFallback = Vector3.UnitX;
+                corners[0] = new(x0, y, z0);
+                corners[1] = new(x1, y, z0);
+                corners[2] = new(x1, y, z1);
+                corners[3] = new(x0, y, z1);
+            }
+            else
+            {
+                n = -Vector3.UnitY;
+                tFallback = Vector3.UnitX;
+                wSign = -1f;
+                corners[0] = new(x0, y, z1);
+                corners[1] = new(x1, y, z1);
+                corners[2] = new(x1, y, z0);
+                corners[3] = new(x0, y, z0);
+            }
+
+            for (var i = 0; i < 4; i++)
+            {
+                uvs[i] = new(corners[i].X / metersPerTile, corners[i].Z / metersPerTile);
+            }
+        }
+        else if (axis == 0)
+        {
+            var x = positive ? w + 1f : w;
+            var y0 = surfaceWorldY + (layerMin + u) - 1f;
+            var y1 = surfaceWorldY + (layerMin + u + width - 1);
+            var z0 = cz0 + v;
+            var z1 = z0 + height;
+            if (positive)
+            {
+                n = Vector3.UnitX;
+                tFallback = new Vector3(0, 0, -1);
+                corners[0] = new(x, y0, z1);
+                corners[1] = new(x, y0, z0);
+                corners[2] = new(x, y1, z0);
+                corners[3] = new(x, y1, z1);
+            }
+            else
+            {
+                n = -Vector3.UnitX;
+                tFallback = new Vector3(0, 0, 1);
+                corners[0] = new(x, y0, z0);
+                corners[1] = new(x, y0, z1);
+                corners[2] = new(x, y1, z1);
+                corners[3] = new(x, y1, z0);
+            }
+
+            for (var i = 0; i < 4; i++)
+            {
+                uvs[i] = new(corners[i].Z / metersPerTile, corners[i].Y / metersPerTile);
+            }
+        }
+        else
+        {
+            var z = positive ? w + 1f : w;
+            var x0 = cx0 + u;
+            var x1 = x0 + width;
+            var y0 = surfaceWorldY + (layerMin + v) - 1f;
+            var y1 = surfaceWorldY + (layerMin + v + height - 1);
+            if (positive)
+            {
+                n = Vector3.UnitZ;
+                tFallback = Vector3.UnitX;
+                corners[0] = new(x0, y0, z);
+                corners[1] = new(x1, y0, z);
+                corners[2] = new(x1, y1, z);
+                corners[3] = new(x0, y1, z);
+            }
+            else
+            {
+                n = -Vector3.UnitZ;
+                tFallback = -Vector3.UnitX;
+                corners[0] = new(x1, y0, z);
+                corners[1] = new(x0, y0, z);
+                corners[2] = new(x0, y1, z);
+                corners[3] = new(x1, y1, z);
+            }
+
+            for (var i = 0; i < 4; i++)
+            {
+                uvs[i] = new(corners[i].X / metersPerTile, corners[i].Y / metersPerTile);
+            }
+        }
+
+        AddSolidFace(n, tFallback, wSign, corners, uvs, verts, indices);
+    }
+
+    internal static bool IsSolid(
+        ReadOnlySpan<int> heights,
+        int halfExtent,
+        int fillDepth,
+        int bx,
+        int by,
+        int bz)
+    {
+        var h = PreviewTerrainHeightfield.GetHeight(heights, bx, bz, halfExtent);
+        if (h == int.MinValue)
+        {
+            return false;
+        }
+
+        var bottom = h - fillDepth + 1;
+        return by >= bottom && by <= h;
+    }
+
+    internal static bool IsSolid(Func<int, int, int> heightAt, int fillDepth, int bx, int by, int bz)
+    {
+        var h = heightAt(bx, bz);
+        if (h == int.MinValue)
+        {
+            return false;
+        }
+
+        var bottom = h - fillDepth + 1;
+        return by >= bottom && by <= h;
+    }
+
+    private static void AddSolidFace(
+        Vector3 normal,
+        Vector3 fallbackTangent,
+        float fallbackWSign,
+        ReadOnlySpan<Vector3> cornersIn,
+        ReadOnlySpan<Vector2> uvsIn,
+        List<float> verts,
+        List<uint> indices)
+    {
+        Span<Vector3> corners = stackalloc Vector3[4];
+        Span<Vector2> uvs = stackalloc Vector2[4];
+        cornersIn.CopyTo(corners);
+        uvsIn.CopyTo(uvs);
+
+        var geo = Vector3.Cross(corners[1] - corners[0], corners[2] - corners[0]);
+        if (Vector3.Dot(geo, normal) < 0f)
+        {
+            (corners[1], corners[3]) = (corners[3], corners[1]);
+            (uvs[1], uvs[3]) = (uvs[3], uvs[1]);
+        }
+
+        PreviewTangentBasis.Derive(corners, uvs, normal, fallbackTangent, fallbackWSign, out var tangent, out var wSign);
+        var baseIndex = (uint)(verts.Count / PreviewMesh.FloatsPerVertex);
+        for (var i = 0; i < 4; i++)
+        {
+            var p = corners[i];
+            var uv = uvs[i];
+            verts.Add(p.X);
+            verts.Add(p.Y);
+            verts.Add(p.Z);
+            verts.Add(normal.X);
+            verts.Add(normal.Y);
+            verts.Add(normal.Z);
+            verts.Add(uv.X);
+            verts.Add(uv.Y);
+            verts.Add(tangent.X);
+            verts.Add(tangent.Y);
+            verts.Add(tangent.Z);
+            verts.Add(wSign);
+        }
+
+        indices.Add(baseIndex);
+        indices.Add(baseIndex + 1);
+        indices.Add(baseIndex + 2);
+        indices.Add(baseIndex);
+        indices.Add(baseIndex + 2);
+        indices.Add(baseIndex + 3);
+    }
+}
+
+/// <summary>Baked voxel terrain mesh plus per-chunk draw batches for cull/LOD.</summary>
+public sealed class PreviewTerrainBakeResult
+{
+    public required PreviewMesh Mesh { get; init; }
+    public required PreviewDrawBatch[] ChunkBatches { get; init; }
+    public int MinRelativeHeight { get; init; }
+    public int MaxRelativeHeight { get; init; }
+}

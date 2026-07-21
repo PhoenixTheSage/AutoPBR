@@ -2,8 +2,10 @@ using System.Runtime.Loader;
 
 using AutoPBR.App.Models;
 using AutoPBR.App.Rendering.OpenGL;
+using AutoPBR.App.Services;
 
 using Avalonia;
+using Avalonia.Threading;
 
 namespace AutoPBR.App;
 
@@ -15,8 +17,35 @@ sealed class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        RegisterEmergencyExceptionLogging();
         RegisterSatelliteAssemblyResolver();
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+    }
+
+    private static void RegisterEmergencyExceptionLogging()
+    {
+        AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>
+        {
+            var detail = eventArgs.ExceptionObject is Exception ex
+                ? ex.ToString()
+                : eventArgs.ExceptionObject?.ToString() ?? "Unknown unmanaged/untyped exception.";
+            LogService.AppendEmergencyDiagnostic(
+                eventArgs.IsTerminating ? "AppDomain terminating exception" : "AppDomain unhandled exception",
+                detail);
+        };
+
+        TaskScheduler.UnobservedTaskException += (_, eventArgs) =>
+            LogService.AppendEmergencyDiagnostic("Unobserved task exception", eventArgs.Exception.ToString());
+    }
+
+    /// <summary>
+    /// Must run after Avalonia platform setup — touching <see cref="Dispatcher.UIThread"/> beforehand
+    /// installs a null dispatcher and makes <c>MainLoop</c> throw <see cref="PlatformNotSupportedException"/>.
+    /// </summary>
+    private static void RegisterDispatcherExceptionLogging()
+    {
+        Dispatcher.UIThread.UnhandledException += (_, eventArgs) =>
+            LogService.AppendEmergencyDiagnostic("Avalonia dispatcher exception", eventArgs.Exception.ToString());
     }
 
     /// <summary>Load satellite assemblies from lang\[culture]\ so language folders stay grouped in build output.</summary>
@@ -49,6 +78,7 @@ sealed class Program
             .UsePlatformDetect()
             .With(PreviewOpenGlPlatformConfigurator.CreateWin32PlatformOptions(settings))
             .WithInterFont()
-            .LogToTrace();
+            .LogToTrace()
+            .AfterSetup(_ => RegisterDispatcherExceptionLogging());
     }
 }

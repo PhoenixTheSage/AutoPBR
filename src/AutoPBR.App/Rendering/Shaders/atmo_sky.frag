@@ -12,6 +12,7 @@ uniform vec3 uLightDir;
 uniform float uSunIntensity;
 uniform float uHorizonFogStrength;
 uniform float uSkyExposure;
+uniform int uHdrPresent;
 uniform float uSunDiscStrength;
 uniform float uSunDiscBrightness;
 uniform float uSunCosDiscEdge;
@@ -66,6 +67,10 @@ void main()
     }
 
     sky *= uSkyExposure * 1.4;
-    sky = skyTonemapLum(sky);
-    FragColor = vec4(linearToSrgb(max(sky, vec3(0.0))), 1.0);
+    vec3 outRgb = max(sky, vec3(0.0));
+    if (uHdrPresent <= 0)
+    {
+        outRgb = linearToSrgb(skyTonemapLum(outRgb));
+    }
+    FragColor = vec4(outRgb, 1.0);
 }

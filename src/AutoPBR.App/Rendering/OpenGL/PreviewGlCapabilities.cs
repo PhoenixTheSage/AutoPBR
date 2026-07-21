@@ -224,7 +224,7 @@ internal sealed record PreviewGlCapabilities(
             return set;
         }
 
-        foreach (var extension in extensions.Split([' ', '\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries))
+        foreach (var extension in extensions.Split((char[])[' ', '\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries))
         {
             set.Add(extension);
         }

@@ -363,6 +363,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             RefreshNormalKernelSizeOptions();
             RefreshNormalDerivativeOptions();
             RefreshColorSchemeOptions();
+            RefreshPreviewHdrModeOptions();
+            RecomputePreviewHdrDecision();
             SetStatus("Status_SelectPack");
             InitPreviewShaderPrewarm();
         }
@@ -552,6 +554,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 PreviewImage = new Bitmap(ms);
                 PreviewBrickProbeDebugText = PreviewBrickProbeDebug ? previewResult.BrickProbeDebugText : null;
                 ApplyPreviewDetailedResult(previewResult);
+                PushHdr2DCompositeFromPng(previewResult.PngBytes);
             });
         }
         catch (OperationCanceledException)

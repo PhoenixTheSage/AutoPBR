@@ -70,6 +70,27 @@ public sealed class GlIndirectDrawCommandBufferTests
     }
 
     [Fact]
+    public void CountMainPassMultiDrawGroup_ArraysAllowMaterialChangesWithinSameLayerState()
+    {
+        PreviewDrawBatch[] batches =
+        [
+            new(0, 6, 0),
+            new(6, 6, 1),
+            new(12, 6, 2),
+        ];
+
+        var group = OpenGlPreviewBackend.CountMainPassMultiDrawGroup(
+            batches,
+            startIndex: 0,
+            materialCount: 3,
+            entityBlendDraw: false,
+            enabled: true,
+            allowMaterialChanges: true);
+
+        Assert.Equal(3, group);
+    }
+
+    [Fact]
     public void CountShadowPassMultiDrawGroup_SkipsAtShadowModeBoundary()
     {
         PreviewDrawBatch[] batches =
@@ -147,6 +168,21 @@ public sealed class GlIndirectDrawCommandBufferTests
     }
 
     [Fact]
+    public void WriteCullRecord_PadsTessellatedBoundsBeforeModelScale()
+    {
+        Span<float> record = stackalloc float[8];
+        var batch = new PreviewDrawBatch(0, 3, 0)
+        {
+            BoundsRadius = 2f,
+        };
+        var model = Matrix4x4.CreateScale(3f);
+
+        GlGpuDrawCommandCompactor.WriteCullRecord(record, batch, model, boundsPadding: 0.2f);
+
+        Assert.Equal(6.6f, record[3], 5);
+    }
+
+    [Fact]
     public void GroupHasCullableBounds_RequiresValidRangeAndKnownBounds()
     {
         PreviewDrawBatch[] batches =
@@ -173,12 +209,19 @@ public sealed class GlIndirectDrawCommandBufferTests
             1f,
             0.1f,
             100f);
+        var vp = projection * view;
         Span<Vector4> planes = stackalloc Vector4[PreviewFrustumPlanes.PlaneCount];
 
-        PreviewFrustumPlanes.Extract(projection * view, planes);
+        PreviewFrustumPlanes.Extract(vp, planes);
 
         Assert.All(planes.ToArray(), plane => Assert.True(SignedDistance(plane, Vector3.Zero) >= 0f));
         Assert.Contains(planes.ToArray(), plane => SignedDistance(plane, new Vector3(100f, 0f, 0f)) < 0f);
+
+        // Screen-edge point must stay inside (column clip = vp * world matches GL upload path).
+        var forward = Vector3.Normalize(-Vector3.UnitZ);
+        var right = Vector3.UnitX;
+        var edge = new Vector3(0f, 0f, 5f) + forward * 10f + right * (MathF.Tan(MathF.PI / 6f) * 10f * 0.9f);
+        Assert.True(PreviewFrustumPlanes.SphereIntersects(planes, edge, 0.01f));
     }
 
     [Fact]

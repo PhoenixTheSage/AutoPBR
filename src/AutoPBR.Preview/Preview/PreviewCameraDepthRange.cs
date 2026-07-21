@@ -9,8 +9,15 @@ public static class PreviewCameraDepthRange
     public const float DefaultFar = 100f;
 
     /// <summary>
+    /// Far-plane cap when the orbit scene includes a large stage (voxel terrain / wide grid).
+    /// <see cref="DefaultFar"/> is too tight for ±48 terrain once the camera leaves the pad.
+    /// </summary>
+    public const float LargeEnvironmentFar = 250f;
+
+    /// <summary>
     /// Orbit camera depth range using subject bounds plus optional floor grid/ground extent.
     /// <paramref name="eye"/> must already be composed for the current frame.
+    /// When <paramref name="environmentCeilingY"/> is finite it replaces the thin floor slab max Y.
     /// </summary>
     public static (float NearPlane, float FarPlane) ForOrbitPreview(
         Vector3 subjectMin,
@@ -18,14 +25,18 @@ public static class PreviewCameraDepthRange
         float orbitDistance,
         Vector3 eye,
         float environmentHalfExtent = 0f,
-        float environmentFloorY = -0.56f)
+        float environmentFloorY = -0.56f,
+        float environmentCeilingY = float.NaN)
     {
         var sceneMin = subjectMin;
         var sceneMax = subjectMax;
         if (environmentHalfExtent > 0f)
         {
+            var ceiling = float.IsFinite(environmentCeilingY)
+                ? environmentCeilingY
+                : environmentFloorY + 0.05f;
             var envMin = new Vector3(-environmentHalfExtent, environmentFloorY, -environmentHalfExtent);
-            var envMax = new Vector3(environmentHalfExtent, environmentFloorY + 0.05f, environmentHalfExtent);
+            var envMax = new Vector3(environmentHalfExtent, ceiling, environmentHalfExtent);
             sceneMin = Vector3.Min(sceneMin, envMin);
             sceneMax = Vector3.Max(sceneMax, envMax);
         }
@@ -35,15 +46,34 @@ public static class PreviewCameraDepthRange
 
         // Near plane tracks eye-to-geometry distance so fly-to-orbit handoff does not pop when
         // boom-arm orbit distance is much larger than the current proximity to scene bounds.
+        // For a large stage AABB, minDist grows as soon as the eye leaves the box — do not let
+        // near scale with that (it carved a black slab through the foreground terrain).
         const float nearFloor = 0.01f;
-        var near = Math.Clamp(minDist * 0.35f, nearFloor, Math.Max(minDist * 0.92f, nearFloor));
+        var nearCeiling = environmentHalfExtent > 0f
+            ? Math.Clamp(environmentHalfExtent * 0.02f, 0.25f, 1.0f)
+            : Math.Max(minDist * 0.92f, nearFloor);
+        var near = Math.Clamp(minDist * 0.35f, nearFloor, nearCeiling);
 
         var far = Math.Max(maxDist + 2.5f, near * 8f);
-        far = Math.Min(far, DefaultFar);
+        // Streaming terrain rings can exceed LargeEnvironmentFar; size the cap from the stage extent.
+        var farCap = environmentHalfExtent > 20f
+            ? Math.Max(LargeEnvironmentFar, environmentHalfExtent * 2.5f + 48f)
+            : DefaultFar;
+        far = Math.Min(far, farCap);
 
         if (far / near > 5000f)
         {
-            far = near * 5000f;
+            if (environmentHalfExtent > 20f)
+            {
+                // Inside a huge stage AABB, minDist≈0 → near≈nearFloor. Crushing far to near*5000
+                // left a ~50m hard horizon when flying close over the pad. Keep far and lift near
+                // slightly for Z precision instead (still small enough not to clip the turf).
+                near = Math.Clamp(far / 5000f, nearFloor, 0.2f);
+            }
+            else
+            {
+                far = near * 5000f;
+            }
         }
 
         return (near, far);

@@ -50,6 +50,7 @@ public partial class MainWindowViewModel
         RefreshNormalKernelSizeOptions();
         RefreshNormalDerivativeOptions();
         RefreshColorSchemeOptions();
+        RefreshPreviewHdrModeOptions();
         UpdateStatusText();
     }
     private void RecomputeOutputZipPath()

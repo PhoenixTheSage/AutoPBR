@@ -76,6 +76,10 @@ public sealed partial class OpenGlPreviewBackend
         _mesh = null;
         _groundMesh?.Dispose();
         _groundMesh = null;
+        _groundChunkBatches = [];
+        DisposeTerrainGpuChunks();
+        _terrainStreamer?.Dispose();
+        _terrainStreamer = null;
         _grassGroundAlbedo?.Dispose();
         _grassGroundAlbedo = null;
         _grassGroundNormal?.Dispose();
@@ -498,8 +502,7 @@ public sealed partial class OpenGlPreviewBackend
                 _height = new GlTexture2D(gl);
                 _mesh = new GlMeshBuffer(gl);
                 _groundMesh = new GlMeshBuffer(gl);
-                var groundGeom = PreviewMeshFactory.CreatePreviewGroundPlane();
-                _groundMesh.Upload(groundGeom.InterleavedVertices, groundGeom.Indices);
+                InitTerrainStreaming(gl);
                 _neutralNormal = new GlTexture2D(gl);
                 _neutralNormal.UploadRgba(1, 1, [128, 128, 255, 255]);
                 _neutralSpec = new GlTexture2D(gl);

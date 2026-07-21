@@ -21,6 +21,8 @@ using Avalonia.Platform;
 using Avalonia.Rendering;
 using Avalonia.Threading;
 
+using Silk.NET.OpenGL;
+
 namespace AutoPBR.App.Controls;
 
 /// <summary>
@@ -55,8 +57,18 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
     private GlInterface? _glInterface;
     private GlInterface? _angleGlInterface;
     private PreviewNativeWglPresenter? _nativeWglPresenter;
+    private PreviewHdrDxgiSwapchain? _hdrSwapchain;
+    private IntPtr _nativeHwnd;
+    private bool _hdrPresentPathFailed;
     private bool _anglePathStarted;
     private bool _backendInitialized;
+    private bool _lastRaisedHdrNativeWglActive;
+    private bool _lastRaisedHdrPresentPathFailed;
+    private bool _lastRaisedHdrDisplaySupportsHdr;
+    private float _lastRaisedHdrPeakNits;
+
+    /// <summary>Raised on the UI thread when HDR display probe / present status changes.</summary>
+    public event Action<PreviewHdrDisplayInfo, bool, bool>? HdrProbeUpdated;
     private int _cachedPreviewPixelWidth = 1;
     private int _cachedPreviewPixelHeight = 1;
     /// <summary>
@@ -219,6 +231,14 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         void Core()
         {
             _backend.SetRenderSettings(settings);
+            // Settings-only pushes used to leave a null/stale scene after GPU init; keep the
+            // idle stage alive whenever there is no subject so terrain still renders.
+            if (!settings.DrawPreviewSubject)
+            {
+                _backend.SetScene(PreviewStageSceneFactory.CreateIdle(settings));
+                _backend.SetBlockModelPreview(null, null);
+            }
+
             RecoverPreviewFrame();
         }
 
@@ -267,6 +287,11 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
             else if (kind == PreviewSceneKind.ItemPlane)
             {
                 scene = ItemPreviewSceneFactory.Create(settings, material);
+            }
+            else if (!settings.DrawPreviewSubject)
+            {
+                // No texture/subject selected: keep the stage (terrain/sky/grid) alive without a unit cube.
+                scene = PreviewStageSceneFactory.CreateIdle(settings);
             }
             else
             {
@@ -352,10 +377,37 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
 
         _backend.GlInit(gl);
         ApplyPresentationVsync();
+        RaiseHdrProbeUpdated(
+            TryProbeHdrDisplayForTopLevel(),
+            nativeWglActive: false,
+            presentPathFailed: false);
         if (PreviewOpenGlSession.RequestedDesktopGl4)
         {
             _backend.ScheduleDesktopWglSidecarInit(RecoverPreviewFrame);
         }
+    }
+
+    private PreviewHdrDisplayInfo TryProbeHdrDisplayForTopLevel()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return PreviewHdrDisplayInfo.Unsupported;
+        }
+
+        try
+        {
+            var top = TopLevel.GetTopLevel(this);
+            if (top?.TryGetPlatformHandle() is { Handle: var hwnd } && hwnd != IntPtr.Zero)
+            {
+                return PreviewHdrDisplayProbe.ProbeForWindow(hwnd);
+            }
+        }
+        catch
+        {
+            // Probe is best-effort for status text.
+        }
+
+        return PreviewHdrDisplayInfo.Unsupported;
     }
 
     private void OnNativeHostWindowCreated(IntPtr hwnd)
@@ -378,6 +430,11 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         _ = hwnd;
         _nativeWglPresenter?.Dispose();
         _nativeWglPresenter = null;
+        _hdrSwapchain?.Dispose();
+        _hdrSwapchain = null;
+        _nativeHwnd = IntPtr.Zero;
+        _hdrPresentPathFailed = false;
+        RaiseHdrProbeUpdated(PreviewHdrDisplayInfo.Unsupported, nativeWglActive: false, presentPathFailed: false);
     }
 
     private bool TryStartNativeWglPresenter(IntPtr hwnd)
@@ -400,7 +457,48 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         }
 
         _nativeWglPresenter = presenter;
+        _nativeHwnd = hwnd;
         return true;
+    }
+
+    /// <summary>Upload a 2D preview composite for HDR scRGB present (sRGB 8-bit RGBA).</summary>
+    public void SetHdr2DCompositeRgba(byte[]? rgba, int width, int height) =>
+        _backend.SetHdr2DCompositeRgba(rgba, width, height);
+
+    public void SetPreferHdr2DPresent(bool prefer) => _backend.SetPreferHdr2DPresent(prefer);
+
+    private void RaiseHdrProbeUpdated(in PreviewHdrDisplayInfo display, bool nativeWglActive, bool presentPathFailed)
+    {
+        // Avoid per-frame UI posts (each one re-pushes render settings and can stall recovery).
+        if (_lastRaisedHdrNativeWglActive == nativeWglActive &&
+            _lastRaisedHdrPresentPathFailed == presentPathFailed &&
+            _lastRaisedHdrDisplaySupportsHdr == display.SupportsHdr &&
+            Math.Abs(_lastRaisedHdrPeakNits - display.MaxLuminanceNits) < 0.5f)
+        {
+            return;
+        }
+
+        _lastRaisedHdrNativeWglActive = nativeWglActive;
+        _lastRaisedHdrPresentPathFailed = presentPathFailed;
+        _lastRaisedHdrDisplaySupportsHdr = display.SupportsHdr;
+        _lastRaisedHdrPeakNits = display.MaxLuminanceNits;
+
+        var handler = HdrProbeUpdated;
+        if (handler is null)
+        {
+            return;
+        }
+
+        var copy = display;
+        void Raise() => handler(copy, nativeWglActive, presentPathFailed);
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            Raise();
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(Raise, DispatcherPriority.Background);
+        }
     }
 
     private void StartAngleFallbackFromNativeWgl()
@@ -1084,6 +1182,8 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         _disposed = true;
         _nativeWglPresenter?.Dispose();
         _nativeWglPresenter = null;
+        _hdrSwapchain?.Dispose();
+        _hdrSwapchain = null;
         _nativeHost.NativeWindowCreated -= OnNativeHostWindowCreated;
         _nativeHost.NativeWindowDestroyed -= OnNativeHostWindowDestroyed;
         _nativeHost.NativeWindowCreationFailed -= StartAngleFallbackFromNativeWgl;
@@ -1103,6 +1203,12 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         _glInterface = _nativeWglPresenter?.GlInterface;
         ApplyPresentationVsync();
         UpdateNativeWglOverlayBitmaps();
+        if (_nativeHwnd != IntPtr.Zero)
+        {
+            var display = PreviewHdrDisplayProbe.ProbeForWindow(_nativeHwnd);
+            RaiseHdrProbeUpdated(display, nativeWglActive: true, _hdrPresentPathFailed);
+        }
+
         RecoverPreviewFrame();
     }
 
@@ -1213,9 +1319,139 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         RecordRenderFrame(dt);
         var w = Math.Max(1, Volatile.Read(ref _cachedPreviewPixelWidth));
         var h = Math.Max(1, Volatile.Read(ref _cachedPreviewPixelHeight));
-        _backend.GlRenderNativeWglPresenter(w, h);
-        context.SwapBuffers();
+        var presentedHdr = TryPresentNativeHdr(context, w, h);
+        if (!presentedHdr)
+        {
+            _backend.GlRenderNativeWglPresenter(w, h);
+            context.SwapBuffers();
+        }
+
         Volatile.Write(ref _lastOpenGlRenderTicks, now);
+    }
+
+    private bool TryPresentNativeHdr(PreviewDesktopWglBootstrap.ISwapBuffersContext context, int width, int height)
+    {
+        if (!_backend.TryGetSilkGl(out var gl))
+        {
+            gl = null;
+        }
+
+        if (_hdrPresentPathFailed || !_backend.HdrPresentActive || _nativeHwnd == IntPtr.Zero ||
+            context.GlInterface is null)
+        {
+            // DXGI CreateSwapChainForHwnd owns this HWND while alive; WGL SwapBuffers can hang until released.
+            ReleaseHdrSwapchain(gl);
+            var display = _nativeHwnd != IntPtr.Zero
+                ? PreviewHdrDisplayProbe.ProbeForWindow(_nativeHwnd)
+                : PreviewHdrDisplayInfo.Unsupported;
+            RaiseHdrProbeUpdated(display, nativeWglActive: _nativeWglPresenter is not null, _hdrPresentPathFailed);
+            return false;
+        }
+
+        var displayInfo = PreviewHdrDisplayProbe.ProbeForWindow(_nativeHwnd);
+        RaiseHdrProbeUpdated(displayInfo, nativeWglActive: true, presentPathFailed: false);
+        if (!displayInfo.SupportsHdr)
+        {
+            ReleaseHdrSwapchain(gl);
+            return false;
+        }
+
+        if (gl is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            _hdrSwapchain ??= new PreviewHdrDxgiSwapchain();
+
+            if (!_hdrSwapchain.TryEnsure(_nativeHwnd, width, height, context.GlInterface, gl, out var ensureFailure))
+            {
+                return FailHdrPresent(displayInfo, gl, "HDR DXGI present unavailable: " + (ensureFailure ?? "unknown"));
+            }
+
+            if (!_hdrSwapchain.TryBeginFrame(gl, out var beginFailure))
+            {
+                return FailHdrPresent(displayInfo, gl, "HDR frame begin failed: " + (beginFailure ?? "unknown"));
+            }
+
+            try
+            {
+                _backend.GlRenderNativeWglPresenter(width, height, _hdrSwapchain.Framebuffer);
+                // DXGI is top-down; flip after overlays so the full frame (including HUD) is upright.
+                // Orientation-only failure must not kill the HDR session.
+                if (!_hdrSwapchain.TryFlipFramebufferY(gl))
+                {
+                    _backend.EmitPreviewDiagnostic(
+                        "[3D preview] HDR Y-flip failed (" +
+                        (_hdrSwapchain.LastFailure ?? "unknown") +
+                        "); presenting without flip.");
+                }
+
+                // Shared-texture path: bounded drain is enough before NV_DX unlock + CopyResource.
+                _ = PreviewGlCommandDrain.Drain(gl);
+            }
+            finally
+            {
+                _hdrSwapchain.EndFrame();
+            }
+
+            if (!_hdrSwapchain.TryPresent(_presentationVsyncEnabled, out var presentFailure))
+            {
+                return FailHdrPresent(displayInfo, gl, "HDR Present failed: " + (presentFailure ?? "unknown"));
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            return FailHdrPresent(
+                displayInfo,
+                gl,
+                $"HDR present crashed ({ex.GetType().Name}: {ex.Message}); falling back to SDR for this session.");
+        }
+    }
+
+    private void ReleaseHdrSwapchain(GL? gl)
+    {
+        var swapchain = _hdrSwapchain;
+        if (swapchain is null)
+        {
+            return;
+        }
+
+        _hdrSwapchain = null;
+        try
+        {
+            swapchain.Dispose(gl);
+        }
+        catch
+        {
+            // Best-effort: HWND must return to WGL even if interop teardown throws.
+        }
+    }
+
+    private bool FailHdrPresent(in PreviewHdrDisplayInfo displayInfo, GL? gl, string detail)
+    {
+        _hdrPresentPathFailed = true;
+        _backend.SuppressHdrPresentForSession();
+        ReleaseHdrSwapchain(gl);
+        RaiseHdrProbeUpdated(displayInfo, nativeWglActive: true, presentPathFailed: true);
+        _backend.EmitPreviewDiagnostic("[3D preview] " + detail);
+        return false;
+    }
+
+    /// <summary>Clears a prior HDR present-path latch so Auto can retry after settings changes.</summary>
+    public void ClearHdrPresentFailureLatch()
+    {
+        _hdrPresentPathFailed = false;
+        _backend.ClearHdrPresentSuppression();
+        // Force the next probe raise even if display flags are unchanged.
+        _lastRaisedHdrPresentPathFailed = true;
+        var display = _nativeHwnd != IntPtr.Zero
+            ? PreviewHdrDisplayProbe.ProbeForWindow(_nativeHwnd)
+            : PreviewHdrDisplayInfo.Unsupported;
+        RaiseHdrProbeUpdated(display, nativeWglActive: _nativeWglPresenter is not null, presentPathFailed: false);
     }
 
     internal void OnNativeWglFrameCompleted()

@@ -1,6 +1,7 @@
 using System.Threading.Tasks;
 
 using AutoPBR.App.Lang;
+using AutoPBR.App.Rendering.Scene;
 
 using Avalonia.OpenGL;
 using Avalonia.Threading;
@@ -258,6 +259,13 @@ public sealed partial class OpenGlPreviewBackend
             if (bootstrap.IsComplete)
             {
                 _forceSyncSidecarPresent = true;
+                // Ensure an idle stage exists as soon as core GPU resources (incl. terrain) are up,
+                // even if the VM has not pushed a subject yet.
+                if (_scene is null)
+                {
+                    _scene = PreviewStageSceneFactory.CreateIdle(_settings);
+                    _meshDirty = true;
+                }
             }
 
             _gpuBootstrap = null;

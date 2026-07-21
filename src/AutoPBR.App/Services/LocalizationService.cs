@@ -96,4 +96,10 @@ internal static class LocalizationService
         new FoliageModeOption(Resources.GetString("ColorSchemeOcean"), "Ocean"),
         new FoliageModeOption(Resources.GetString("ColorSchemeSunset"), "Sunset")
     ];
+
+    public static IReadOnlyList<FoliageModeOption> GetPreviewHdrModeOptions() =>
+    [
+        new FoliageModeOption(Resources.PreviewHdrModeAuto, "Auto"),
+        new FoliageModeOption(Resources.PreviewHdrModeSdr, "Sdr")
+    ];
 }

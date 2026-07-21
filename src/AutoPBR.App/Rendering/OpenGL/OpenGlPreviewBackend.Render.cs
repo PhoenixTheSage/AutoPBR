@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using AutoPBR.App.Lang;
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.Scene;
+using AutoPBR.App.Services;
 using AutoPBR.Core.Models;
 using AutoPBR.Preview;
 
@@ -19,6 +20,8 @@ namespace AutoPBR.App.Rendering.OpenGL;
 /// <summary>OpenGL implementation of <see cref="IRenderPreviewBackend"/>; GPU entry points must run on the OpenGL thread (Avalonia <see cref="AutoPBR.App.Controls.GlPbrPreviewControl"/> callbacks).</summary>
 public sealed partial class OpenGlPreviewBackend
 {
+    private string? _lastRenderFaultSignature;
+
     /// <summary>Called from <see cref="AutoPBR.App.Controls.GlPbrPreviewControl.OnOpenGlRender"/> only.</summary>
     internal void GlRender(GlInterface glInterface, int framebuffer, int pixelWidth, int pixelHeight)
     {
@@ -148,10 +151,38 @@ public sealed partial class OpenGlPreviewBackend
         GlRenderCore(framebuffer, pixelWidth, pixelHeight);
     }
 
-    internal void GlRenderNativeWglPresenter(int pixelWidth, int pixelHeight) =>
-        GlRenderCore(framebuffer: 0, pixelWidth, pixelHeight);
+    internal void GlRenderNativeWglPresenter(int pixelWidth, int pixelHeight, int framebuffer = 0) =>
+        GlRenderCore(framebuffer, pixelWidth, pixelHeight);
+
+    private int _hdrPresentSuppressed;
+
+    internal bool HdrPresentActive =>
+        _settings.HdrPresentActive && Volatile.Read(ref _hdrPresentSuppressed) == 0;
+
+    /// <summary>Immediately disable HDR GPU encode/present after a native fault (SDR SwapBuffers fallback).</summary>
+    internal void SuppressHdrPresentForSession() => Volatile.Write(ref _hdrPresentSuppressed, 1);
+
+    internal void ClearHdrPresentSuppression() => Volatile.Write(ref _hdrPresentSuppressed, 0);
+
+    internal bool TryGetSilkGl(out GL? gl)
+    {
+        gl = _gl;
+        return gl is not null;
+    }
 
     private void GlRenderCore(int framebuffer, int pixelWidth, int pixelHeight)
+    {
+        try
+        {
+            GlRenderCoreUnsafe(framebuffer, pixelWidth, pixelHeight);
+        }
+        catch (Exception ex)
+        {
+            HandleUnhandledRenderException(framebuffer, pixelWidth, pixelHeight, ex);
+        }
+    }
+
+    private void GlRenderCoreUnsafe(int framebuffer, int pixelWidth, int pixelHeight)
     {
         PreviewRenderSettingsSnapshot settings;
         int settingsRevision;
@@ -183,6 +214,11 @@ public sealed partial class OpenGlPreviewBackend
             }
 
             settings = _settings;
+            if (Volatile.Read(ref _hdrPresentSuppressed) != 0 && settings.HdrPresentActive)
+            {
+                settings = settings with { HdrPresentActive = false };
+            }
+
             settingsRevision = _settingsRevision;
             _previewPixelWidth = Math.Max(1, pixelWidth);
             _previewPixelHeight = Math.Max(1, pixelHeight);
@@ -207,6 +243,12 @@ public sealed partial class OpenGlPreviewBackend
                     RaiseGpuInitProgress(phase, settings);
                     if (bootstrap.IsComplete || _gpuBootstrapAborted)
                     {
+                        if (bootstrap.IsComplete && _scene is null)
+                        {
+                            _scene = PreviewStageSceneFactory.CreateIdle(settings);
+                            _meshDirty = true;
+                        }
+
                         _gpuBootstrap = null;
                         _gpuBootstrapAborted = false;
                     }
@@ -299,9 +341,8 @@ public sealed partial class OpenGlPreviewBackend
 
         if (scene is null)
         {
-            gl.ClearColor(0.12f, 0.12f, 0.14f, 1f);
-            gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
-            return;
+            // GPU ready but VM has not pushed a scene yet — still render the idle stage.
+            scene = PreviewStageSceneFactory.CreateIdle(settings);
         }
 
         var frame = new GlRenderFrame
@@ -333,6 +374,11 @@ public sealed partial class OpenGlPreviewBackend
             MaterialDirty = materialDirty,
         };
 
+        if (TryPresentHdr2DComposite(ref frame))
+        {
+            return;
+        }
+
         _ = BeginGpuTimerFrame(gl);
         try
         {
@@ -351,10 +397,7 @@ public sealed partial class OpenGlPreviewBackend
                 GlRenderPassScene(ref frame);
             }
 
-            using (BeginGpuTimerScope(GlGpuTimerScope.Post))
-            {
-                GlRenderPassPost(ref frame);
-            }
+            GlRenderPassPost(ref frame);
 
             using (BeginGpuTimerScope(GlGpuTimerScope.Overlay))
             {
@@ -364,6 +407,56 @@ public sealed partial class OpenGlPreviewBackend
         finally
         {
             EndGpuTimerFrame(renderTime);
+        }
+    }
+
+    private void HandleUnhandledRenderException(int framebuffer, int pixelWidth, int pixelHeight, Exception exception)
+    {
+        PreviewRenderSettingsSnapshot settings;
+        Vector3 flyPosition;
+        float flyYaw;
+        float flyPitch;
+        lock (_sync)
+        {
+            settings = _settings;
+            flyPosition = _flyPosition;
+            flyYaw = _flyYaw;
+            flyPitch = _flyPitch;
+        }
+
+        var signature = exception.GetType().FullName + ":" + exception.Message;
+        if (!string.Equals(_lastRenderFaultSignature, signature, StringComparison.Ordinal))
+        {
+            _lastRenderFaultSignature = signature;
+            var detail = FormattableString.Invariant($"Framebuffer: {framebuffer}; viewport: {pixelWidth}x{pixelHeight}\nFly camera: ({flyPosition.X:R}, {flyPosition.Y:R}, {flyPosition.Z:R}); yaw={flyYaw:R}; pitch={flyPitch:R}\nClouds: enabled={settings.EnableVolumetricClouds}; runtimeFaulted={_cloudRuntimeFaulted}; region={_cloudCameraRegion?.ToString() ?? "Unknown"}; cloudQuality={settings.CloudQuality}; volumetricQuality={settings.VolumetricQuality}\nContext: {_glCapabilities?.FormatContextSuffix() ?? "unavailable"}\n{exception}");
+            LogService.AppendEmergencyDiagnostic("3D preview render exception", detail);
+            EmitDiagnostic(
+                $"[3D preview] Render exception contained ({exception.GetType().Name}: {exception.Message}). " +
+                $"Emergency log: {LogService.EmergencyLogPath}");
+        }
+
+        try
+        {
+            var gl = _gl;
+            if (gl is null)
+            {
+                return;
+            }
+
+            gl.BindFramebuffer(FramebufferTarget.Framebuffer, (uint)Math.Max(framebuffer, 0));
+            gl.Viewport(0, 0, (uint)Math.Max(pixelWidth, 1), (uint)Math.Max(pixelHeight, 1));
+            gl.Disable(EnableCap.ScissorTest);
+            gl.Disable(EnableCap.Blend);
+            gl.Enable(EnableCap.DepthTest);
+            gl.DepthMask(true);
+            gl.ClearColor(0.01f, 0.012f, 0.02f, 1f);
+            gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+        }
+        catch (Exception recoveryException)
+        {
+            LogService.AppendEmergencyDiagnostic(
+                "3D preview render recovery failure",
+                recoveryException.ToString());
         }
     }
 

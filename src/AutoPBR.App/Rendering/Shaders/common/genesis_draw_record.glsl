@@ -36,6 +36,32 @@ void genesisWriteDrawRecordIndexVarying()
 {
     vGenesisDrawRecordIndex = genesisDrawRecordIndexValue();
 }
+#elif defined(GENESIS_TESS_CONTROL_STAGE)
+flat in int vGenesisDrawRecordIndex[];
+flat out int tcGenesisDrawRecordIndex[];
+
+int genesisDrawRecordIndexValue()
+{
+    return vGenesisDrawRecordIndex[0];
+}
+
+void genesisWriteDrawRecordIndexVarying()
+{
+    tcGenesisDrawRecordIndex[gl_InvocationID] = vGenesisDrawRecordIndex[gl_InvocationID];
+}
+#elif defined(GENESIS_TESS_EVALUATION_STAGE)
+flat in int tcGenesisDrawRecordIndex[];
+flat out int vGenesisDrawRecordIndex;
+
+int genesisDrawRecordIndexValue()
+{
+    return tcGenesisDrawRecordIndex[0];
+}
+
+void genesisWriteDrawRecordIndexVarying()
+{
+    vGenesisDrawRecordIndex = genesisDrawRecordIndexValue();
+}
 #elif defined(GENESIS_FRAGMENT_STAGE)
 flat in int vGenesisDrawRecordIndex;
 
@@ -76,6 +102,11 @@ GenesisMaterialDrawRecord genesisMaterialDrawRecord()
 int genesisFlag(float value)
 {
     return int(floor(value + 0.5));
+}
+#else
+// Vertex/tess stages call this unconditionally; keep a no-op when the SSBO table is unavailable (GLES/ANGLE).
+void genesisWriteDrawRecordIndexVarying()
+{
 }
 #endif
 

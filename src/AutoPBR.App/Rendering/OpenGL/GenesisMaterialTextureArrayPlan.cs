@@ -31,34 +31,29 @@ internal sealed record GenesisMaterialTextureArrayPlan(
             return false;
         }
 
-        var first = slots[0];
-        var width = Math.Max(1, first.Width);
-        var height = Math.Max(1, first.Height);
-        if (!HasValidAlbedo(first, width, height))
+        var width = 1;
+        var height = 1;
+        foreach (var slot in slots)
         {
-            reason = "slot 0 has invalid albedo dimensions";
-            return false;
+            width = Math.Max(width, Math.Max(1, slot.Width));
+            height = Math.Max(height, Math.Max(1, slot.Height));
         }
 
         var keys = new PreviewMaterialContentKey.Value[slots.Count];
         for (var i = 0; i < slots.Count; i++)
         {
             var slot = slots[i];
-            if (Math.Max(1, slot.Width) != width || Math.Max(1, slot.Height) != height)
-            {
-                reason = $"slot {i} dimensions {slot.Width}x{slot.Height} differ from {width}x{height}";
-                return false;
-            }
-
-            if (!HasValidAlbedo(slot, width, height))
+            var slotWidth = Math.Max(1, slot.Width);
+            var slotHeight = Math.Max(1, slot.Height);
+            if (!HasValidAlbedo(slot, slotWidth, slotHeight))
             {
                 reason = $"slot {i} has invalid albedo dimensions";
                 return false;
             }
 
-            if (!OptionalMapIsCompatible(slot.NormalRgba, width, height) ||
-                !OptionalMapIsCompatible(slot.SpecularRgba, width, height) ||
-                !OptionalMapIsCompatible(slot.HeightRgba, width, height))
+            if (!OptionalMapIsCompatible(slot.NormalRgba, slotWidth, slotHeight) ||
+                !OptionalMapIsCompatible(slot.SpecularRgba, slotWidth, slotHeight) ||
+                !OptionalMapIsCompatible(slot.HeightRgba, slotWidth, slotHeight))
             {
                 reason = $"slot {i} has mixed map dimensions";
                 return false;

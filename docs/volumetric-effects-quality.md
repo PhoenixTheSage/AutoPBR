@@ -140,11 +140,27 @@ Quick wins first: debug overlay (P0.4), projection test (P0.5), radial blur (P1.
 | Debug overlay | Done | P0.4 — `ShowSunProjectionDebug` |
 | Projection unit test | Done | P0.5 — `PreviewSunScreenProjectionTests.cs` |
 
+## Volumetric cloud quality roadmap
+
+The proposed desktop cloud-quality program is tracked in the
+[Volumetric Cloud Quality Roadmap](volumetric-cloud-quality-roadmap.md). It sequences precision and
+reconstruction, density textures, a dedicated cloud-light cache, and the optional Cinematic sparse
+backend as CQ1 → CQ2 → CQ3 → CQ4 while preserving the current GLES/ANGLE shell renderer.
+
 ## Current pipeline
 
 1. **Sky-view LUT** (`atmo_skyview.frag`) — precomputed in-scatter from sun direction, turbidity, and exposure.
 2. **Sky composite** (`atmo_sky.frag`) — full-screen LUT sample + optional sun-disc bloom.
-3. **God rays** — froxel inject + Mie integrate → half-res history → bilateral/temporal upsample → additive composite. Quality preset drives froxel resolution, slice count, cloud detail, and temporal weights. Unified volumetric clouds share the froxel density when both are enabled.
+3. **Detailed clouds** — curved cumulus shell plus a separate wind-sheared cirrus ice layer. Cloud rays are clipped by opaque scene depth and the solid preview planet; the half-resolution upsample repeats the packed cloud-distance test at full resolution.
+4. **God rays** — froxel fog inject + Mie integrate consuming resolved detailed-cloud opacity/depth → half-res history → bilateral/temporal upsample. Detailed clouds composite first, then cloud-aware shaft radiance is added so foreground shafts remain visible while samples behind clouds are attenuated.
+
+### Phase 6 visual-correctness contract
+
+- Cumulus follows the WMO morphology target: detached dense masses, a shared nearly horizontal condensation base, and vertically organized domes/towers. Weather type now controls horizontal footprint, vertical lobe frequency, and upper-level drift; detail erosion remains concentrated at the silhouette so the interior does not break into foam islands.
+- Cirrus follows the WMO morphology target: detached delicate patches with a fibrous or silky character. A broad warped moisture field gates two differently oriented filament families, producing forks, hooks, and feathered edges instead of uniform parallel streaks. High quality samples twice through the thin ice shell; Beer-Lambert opacity remains intentionally lower than cumulus.
+- The artistic planet radius is 72,000 world units. Surface drop is about 1.74 units at 500 units and 6.94 units at 1,000 units, while the default cloud base still rolls over at a roughly 1,610-unit geometric horizon. Curvature is therefore a far-distance cue rather than a visible near-scene arc.
+- The planet sphere is an occluder. A very narrow angular visibility feather lets clouds recede a few pixels behind the geometric horizon before disappearing, leaving the sky pass's below-horizon atmospheric fog visible without a hard cutout.
+- Opaque scene depth remains authoritative during both tracing and full-resolution reconstruction. The half-resolution trace conservatively keeps the farthest sample in each reconstruction footprint, while the full-resolution pass compares every cloud tap against the destination pixel's reconstructed scene distance. This prevents terrain from erasing adjacent sky clouds without allowing cloud bleed over the ground mesh or nearby subjects.
 
 ## Sky LUT bloom (tuning)
 
@@ -216,25 +232,27 @@ Legacy screen-space radial blur (`genesis_godrays.frag`) removed; volume path is
 
 ## Screen-space volumetric clouds (preview)
 
-Froxels own fog and god rays only; clouds are ray-marched in `genesis_clouds.frag` against the sky depth buffer.
+Froxels own fog and god rays only; clouds are ray-marched through a curved spherical shell in `genesis_clouds.frag` and clipped to reconstructed opaque-scene depth.
 
 | Layer | Model |
 |-------|--------|
-| Cumulus slab | Weather-map coverage → Perlin-Worley shape atlas → detail erosion; bell height profile |
-| Cirrus | Single-plane procedural sample above the slab; independent wind drift |
+| Cumulus shell | Weather-map coverage → altitude-local, weather-type-shaped Perlin-Worley lobes → coherent vapor body → edge-focused detail erosion |
+| Cirrus | Thin curved shell above cumulus; warped detached moisture patches plus branching primary/secondary ice filaments; two shell samples on High |
 | Lighting | Multi-scatter sun + sky-LUT ambient; exposure matched to `atmo_sky.frag` |
-| Integration | Half-res march + depth-aware upsample; cloud-distance temporal; shared `temporal_reproject.glsl`; optional final preview TAA |
-| Compositing | God rays additive, then clouds alpha-blended; no shared temporal masks between passes |
+| Integration | Always half-res march → cloud-specific temporal resolve → depth-aware upsample; scene-depth-clipped shell segment; optional final preview TAA |
+| Compositing | Detailed clouds publish opacity/depth to froxel integration; clouds composite first, followed by cloud-aware additive shafts |
 
 **Temporal ownership (independent histories)**
 
 | System | When active | Reprojection anchor | Disabled when |
 |--------|-------------|---------------------|---------------|
-| Cloud shader | Clouds only (no god rays) | Cloud slab world distance | God rays on, or Cloud debug “Disable temporal” |
+| Cloud temporal resolve | Clouds on, Medium/High | Packed representative cloud distance + camera motion + cumulus/cirrus wind advection | Low quality, cloud debug view, or Cloud debug “Disable temporal” |
 | God-ray upsample | God rays on, stabilize off | Scene geometry depth | God-ray stabilize debug |
 | Preview TAA | Preview TAA on, Medium+ | Scene geometry depth only (sky passthrough) | Low quality, toggle off |
 
-When **god rays + clouds** are both on, cloud in-shader temporal is off by design; preview TAA does not accumulate sky pixels (far-plane depth). God rays never sample cloud alpha for attenuation.
+Cloud history stays independent when **god rays + clouds** are both on. The resolve rejects history by representative-distance disagreement, cloud-layer identity, motion, viewport borders, luminance/coverage changes, and a current-frame 3×3 YCoCg neighborhood clamp. Large camera cuts and material cloud-setting changes invalidate the history on the CPU. Final preview TAA still reduces the cloud history weight by half to avoid stacked persistence.
+
+The trace target publishes premultiplied radiance/opacity plus a second portable RGBA8 attachment containing packed cloud distance and cumulus/cirrus identity. Wind-aware reprojection follows both layers rather than pinning history to the screen. An eight-frame low-discrepancy jitter sequence replaces the unstructured phase increment.
 
 **Render tab → Cloud layer:** density, coverage, layer height/thickness, feature scale, wind, cirrus strength. **Cloud debug** expander: coverage/density overlays, temporal off, march step override, freeze wind.
 
@@ -244,9 +262,11 @@ When **god rays + clouds** are both on, cloud in-shader temporal is off by desig
 - **Cirrus 0–0.5** — upper wisps; set 0 to hide the high layer.
 - Restart the preview (or reload GPU resources) after shader/noise-bake changes so procedural textures regenerate.
 
-**Horizon / gaps (Phase 6)**
+**Horizon / gaps**
 
-- `cloudHorizonLifetime` fades density and alpha by elevation, grazing angle, and distance to the slab so clouds do not stack on the horizon line.
+- Analytic inner/outer sphere intersections give every ray a finite cloud interval below, inside, and above the layer; no camera-elevation discard or horizon-lifetime fade is used.
+- Opaque scene depth clips the interval rather than discarding all non-sky pixels, so geometry is correctly obscured while the camera is inside cloud.
+- Coarse weather mips provide a conservative empty-space test before detailed 3D density and sun-light evaluation.
 - Skylight fill along clear ray segments keeps gaps between puffs bright in daylight instead of reading as night void.
 - Stars fade with `dayAmt` in `atmo_sky.frag` so clear sky gaps at dusk do not show a full star field.
 

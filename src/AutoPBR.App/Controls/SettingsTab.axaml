@@ -150,6 +150,38 @@
                                         </ComboBox>
                                     </StackPanel>
                                 </WrapPanel>
+                                <StackPanel Spacing="6">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock VerticalAlignment="Center"
+                                                   Text="{Binding Strings.PreviewHdrMode}"
+                                                   ToolTip.Tip="{Binding Strings.PreviewHdrModeTooltip}" />
+                                        <ComboBox Width="160"
+                                                  ItemsSource="{Binding PreviewHdrModeOptions}"
+                                                  SelectedItem="{Binding SelectedPreviewHdrModeOption, Mode=TwoWay}"
+                                                  ToolTip.Tip="{Binding Strings.PreviewHdrModeTooltip}">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:FoliageModeOption">
+                                                    <TextBlock Text="{Binding DisplayName}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="8"
+                                                IsEnabled="{Binding PreviewHdrPaperWhiteControlsEnabled}">
+                                        <TextBlock VerticalAlignment="Center"
+                                                   Text="{Binding Strings.PreviewHdrPaperWhiteNits}"
+                                                   ToolTip.Tip="{Binding Strings.PreviewHdrPaperWhiteNitsTooltip}" />
+                                        <ctrls:OverlaySlider Minimum="80" Maximum="2000" SmallChange="1" LargeChange="50"
+                                                             TickFrequency="1" IsSnapToTickEnabled="True"
+                                                             Value="{Binding PreviewHdrPaperWhiteNits, Mode=TwoWay}"
+                                                             Increment="1" FormatString="0"
+                                                             ToolTip.Tip="{Binding Strings.PreviewHdrPaperWhiteNitsTooltip}"
+                                                             HorizontalAlignment="Left" Width="220" />
+                                    </StackPanel>
+                                    <TextBlock FontSize="12" Opacity="0.85"
+                                               Text="{Binding PreviewHdrStatusText}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
                             </StackPanel>
                         </Border>
                     </StackPanel>

@@ -218,9 +218,10 @@ public sealed partial class OpenGlPreviewBackend
         var scratchTarget = _taaScratchTarget!;
         var resolveTarget = _taaResolveTarget!;
         var historyTarget = _taaHistoryTarget!;
-        if (!scratchTarget.EnsureSize(w, h) ||
-            !resolveTarget.EnsureSize(w, h) ||
-            !historyTarget.EnsureSize(w, h))
+        var useFloat = frame.Settings.HdrPresentActive;
+        if (!scratchTarget.EnsureSize(w, h, useFloat) ||
+            !resolveTarget.EnsureSize(w, h, useFloat) ||
+            !historyTarget.EnsureSize(w, h, useFloat))
         {
             return;
         }
@@ -322,8 +323,13 @@ public sealed partial class OpenGlPreviewBackend
             gl.Disable(EnableCap.CullFace);
         }
 
-        if (!TryPresentPreviewTaaResolveToDefault(ref frame, resolveTarget) &&
-            !resolveTarget.BlitColorToFramebuffer(readFbo, frame.VpX, frame.VpY, w, h))
+        var presented = TryPresentPreviewTaaResolveToDefault(ref frame, resolveTarget);
+        if (!presented && !frame.Settings.HdrPresentActive)
+        {
+            presented = resolveTarget.BlitColorToFramebuffer(readFbo, frame.VpX, frame.VpY, w, h);
+        }
+
+        if (!presented)
         {
             EmitDiagnostic("[3D preview] TAA resolve present to preview framebuffer failed.");
             BindDefaultFramebuffer(ref frame);
@@ -375,7 +381,7 @@ public sealed partial class OpenGlPreviewBackend
         _scenePresentProgram.Use();
         gl.ActiveTexture(TextureUnit.Texture0);
         gl.BindTexture(TextureTarget.Texture2D, resolveTarget.ColorTextureHandle);
-        SetIntOnProgramLoc(_scenePresentProgram, _scenePresentUniformLocs.SceneColor, 0);
+        BindScenePresentUniforms(frame.Settings, sceneIsLinear: frame.Settings.HdrPresentActive);
         gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
         var err = gl.GetError();
         gl.BindVertexArray(0);

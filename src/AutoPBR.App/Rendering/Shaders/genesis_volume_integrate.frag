@@ -1,7 +1,7 @@
 #version 330 core
 // GENESIS_GLES_PACK rev29
 // Full froxel integrate: view-ray Mie in-scatter march with froxel-space + screen-space temporal reuse.
-// God rays / fog only; volumetric clouds are owned by the screen-space march (genesis_clouds.frag).
+// Fog/shaft medium with detailed cloud opacity/depth supplied by genesis_clouds.frag.
 // ANGLE-safe: texture()-based froxel sampling (no texelFetch), ASCII-only sources, single FragColor write.
 
 //!include "common/common.glsl"
@@ -12,6 +12,7 @@
 //!include "common/volume_froxel_math.glsl"
 //!include "common/volume_integrate_sample.glsl"
 //!include "common/volume_integrate_sparse.glsl"
+//!include "common/cloud_shared_transmittance.glsl"
 
 in vec2 vUv;
 uniform sampler2DArray uFroxelVolume;
@@ -19,6 +20,8 @@ uniform sampler2DArray uFroxelOccupancy;
 uniform sampler2DArray uPrevFroxelVolume;
 uniform sampler2D uSceneDepth;
 uniform sampler2D uPrevIntegrate;
+uniform sampler2D uCloudTransmittance;
+uniform sampler2D uCloudData;
 uniform mat4 uInvViewProj;
 uniform mat4 uPrevViewProj;
 uniform vec3 uCameraPos;
@@ -43,6 +46,7 @@ uniform float uScatterGain;
 uniform float uExtinction;
 uniform int uHasPrevIntegrate;
 uniform int uHasPrevFroxel;
+uniform int uHasCloudTransmittance;
 
 out vec4 FragColor;
 
@@ -78,6 +82,10 @@ void main()
     float transmittance = 1.0;
 #endif
     float jitter = uJitter * stepLen;
+    vec2 sharedCloudSignal = cstResolveViewSignal(
+        uCloudTransmittance, uCloudData, vUv, uHasCloudTransmittance);
+    float sharedCloudOpacity = sharedCloudSignal.x;
+    float sharedCloudDistance = sharedCloudSignal.y;
 #ifdef GENESIS_VOLUME_TEMPORAL
     float froxelTemporal = (uHasPrevFroxel > 0) ? uFroxelTemporalWeight : 0.0;
 #else
@@ -129,7 +137,8 @@ void main()
 
         vec3 sunScatter = vec3(voxel.g, voxel.b, voxel.b * 0.92) * miePhase;
         float inscatterW = vmSegmentInscatterWeight(density, stepLen, uExtinction);
-        accum += transmittance * sunScatter * inscatterW * uScatterGain * edgeW;
+        float cloudViewT = cstViewTransmittance(t, sharedCloudDistance, sharedCloudOpacity, stepLenFine);
+        accum += transmittance * cloudViewT * sunScatter * inscatterW * uScatterGain * edgeW;
         transmittance *= mix(1.0, vmSegmentTransmittance(density, stepLen, uExtinction), edgeW);
         if (transmittance < 0.02)
         {
@@ -148,7 +157,8 @@ void main()
             vec3 history = texture(uPrevIntegrate, prevUv).rgb;
             float histDepth = texture(uSceneDepth, prevUv).r;
             float depthValid = trDepthDisocclusionWeight(receiverDepth, histDepth, 0.002, 0.02);
-            vol = mix(vol, history, uTemporalWeight * depthValid);
+            float reactive = trLuminanceReactiveWeight(vol, history);
+            vol = mix(vol, history, uTemporalWeight * depthValid * reactive);
         }
     }
 #endif

@@ -25,6 +25,7 @@ public readonly struct PreviewRenderSettingsSnapshot
     public bool ItemFlatSpritePreview { get; init; }
     public bool ShowBackgroundGrid { get; init; }
     public bool ShowGroundMesh { get; init; }
+    public int ChunkViewDistance { get; init; }
     public bool ShowCornerAxes { get; init; }
     public bool DrawPreviewSubject { get; init; }
     public bool EnableSss { get; init; }
@@ -112,6 +113,9 @@ public readonly struct PreviewRenderSettingsSnapshot
     public float PreviewTaaFxaaLumaThreshold { get; init; }
     public bool PreviewTaaForceFxaa { get; init; }
     public bool ShowSunProjectionDebug { get; init; }
+    public bool HdrPresentActive { get; init; }
+    public float HdrPaperWhiteNits { get; init; }
+    public float HdrPeakNits { get; init; }
 
     public static PreviewRenderSettingsSnapshot From(PreviewRenderSettings s) => new()
     {
@@ -138,6 +142,7 @@ public readonly struct PreviewRenderSettingsSnapshot
         ItemFlatSpritePreview = s.ItemFlatSpritePreview,
         ShowBackgroundGrid = s.ShowBackgroundGrid,
         ShowGroundMesh = s.ShowGroundMesh,
+        ChunkViewDistance = s.ChunkViewDistance,
         ShowCornerAxes = s.ShowCornerAxes,
         DrawPreviewSubject = s.DrawPreviewSubject,
         EnableSss = s.EnableSss,
@@ -225,5 +230,8 @@ public readonly struct PreviewRenderSettingsSnapshot
         PreviewTaaFxaaLumaThreshold = s.PreviewTaaFxaaLumaThreshold,
         PreviewTaaForceFxaa = s.PreviewTaaForceFxaa,
         ShowSunProjectionDebug = s.ShowSunProjectionDebug,
+        HdrPresentActive = s.HdrPresentActive,
+        HdrPaperWhiteNits = s.HdrPaperWhiteNits,
+        HdrPeakNits = s.HdrPeakNits,
     };
 }

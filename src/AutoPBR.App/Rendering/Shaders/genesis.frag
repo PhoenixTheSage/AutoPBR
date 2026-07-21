@@ -50,6 +50,7 @@ uniform float uHeightStrength;
 uniform float uSpecularStrength;
 uniform float uRoughnessScale;
 uniform float uExposure;
+uniform int uHdrPresent;
 uniform float uParallaxAoStrength;
 uniform int   uEnableParallax;
 uniform int   uEnableParallaxAo;
@@ -79,6 +80,8 @@ uniform vec3  uSkyTint;
 uniform vec3  uGroundTint;
 uniform float uAtmosphereSunIntensity;
 uniform float uAerialFogStrength;
+uniform float uTerrainFogStart;
+uniform float uTerrainFogEnd;
 
 // Genesis directional shadow map (Phase 2).
 uniform mat4  uLightViewProj;
@@ -370,17 +373,38 @@ void main()
     vec3 emission = albedoLinear * mat.emissionStrength * uEmissionStrength;
 
     vec3 hdr = (direct + indirect + emission) * uExposure;
-    vec3 mapped = tonemapAcesNarkowicz(hdr);
-
-    if (uAerialFogStrength > 0.0 && uEnableAtmosphericSky > 0)
+    vec3 outRgb;
+    if (uHdrPresent > 0)
     {
-        float dist = length(vWorldPos - uCameraPos);
-        float fogAmt = (1.0 - exp(-dist * 0.042 * uAerialFogStrength)) * 0.65;
-        vec3 fogCol = mix(uGroundTint, uSkyTint, 0.55);
-        mapped = mix(mapped, fogCol, fogAmt);
+        outRgb = hdr;
+        if (uAerialFogStrength > 0.0 && uEnableAtmosphericSky > 0)
+        {
+            float dist = length(vWorldPos - uCameraPos);
+            float fogSpan = max(uTerrainFogEnd - uTerrainFogStart, 1.0);
+            float fogT = saturate1((dist - uTerrainFogStart) / fogSpan);
+            fogT = fogT * fogT * (3.0 - 2.0 * fogT);
+            float fogAmt = fogT * saturate1(uAerialFogStrength) * 0.92;
+            vec3 fogCol = mix(uGroundTint, uSkyTint, 0.55);
+            outRgb = mix(outRgb, fogCol, fogAmt);
+        }
     }
+    else
+    {
+        vec3 mapped = tonemapAcesNarkowicz(hdr);
+        if (uAerialFogStrength > 0.0 && uEnableAtmosphericSky > 0)
+        {
+            float dist = length(vWorldPos - uCameraPos);
+            float fogSpan = max(uTerrainFogEnd - uTerrainFogStart, 1.0);
+            float fogT = saturate1((dist - uTerrainFogStart) / fogSpan);
+            // Smoothstep so the LOD unload rim softens instead of a hard pop.
+            fogT = fogT * fogT * (3.0 - 2.0 * fogT);
+            float fogAmt = fogT * saturate1(uAerialFogStrength) * 0.92;
+            vec3 fogCol = mix(uGroundTint, uSkyTint, 0.55);
+            mapped = mix(mapped, fogCol, fogAmt);
+        }
 
-    vec3 srgb = ditherSrgb8(linearToSrgb(mapped), gl_FragCoord.xy);
+        outRgb = ditherSrgb8(linearToSrgb(mapped), gl_FragCoord.xy);
+    }
 
     float a = 1.0;
     if (uSceneKind == 1 && uItemAlphaBlend > 0)
@@ -400,7 +424,7 @@ void main()
     reactivity = max(reactivity, genesisEntityAlphaMode(uEntityAlphaMode) == 1 ? mix(0.20, 0.72, alphaEdge) : 0.0);
     reactivity = max(reactivity, genesisEntityAlphaMode(uEntityAlphaMode) == 2 ? max(0.65, 1.0 - alb.a) : 0.0);
 
-    FragColor = vec4(srgb, a);
+    FragColor = vec4(outRgb, a);
     float motion = 0.0;
     if (vCurrClip.w > 1e-6 && vPrevClip.w > 1e-6)
     {

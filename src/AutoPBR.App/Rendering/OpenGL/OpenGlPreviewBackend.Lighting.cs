@@ -588,6 +588,7 @@ public sealed partial class OpenGlPreviewBackend
             SetFloatOnProgramLoc(_atmoSkyProgram, sky.RenderTime, (float)frame.RenderTime);
             SetFloatOnProgramLoc(_atmoSkyProgram, sky.ViewportAspect, aspect);
             SetFloatOnProgramLoc(_atmoSkyProgram, sky.SunDiscRadiusUv, sunDiscRadiusUv);
+            SetIntOnProgramLoc(_atmoSkyProgram, sky.HdrPresent, frame.Settings.HdrPresentActive ? 1 : 0);
             gl.BindVertexArray(_atmoQuadVao);
             gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
             gl.BindVertexArray(0);

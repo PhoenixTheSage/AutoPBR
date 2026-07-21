@@ -6,6 +6,7 @@ internal sealed class GlTexture2D : IDisposable
 {
     private readonly GL _gl;
     private readonly uint _id;
+    private readonly bool _mipmapped;
     private bool _disposed;
     private int _cachedWidth;
     private int _cachedHeight;
@@ -13,9 +14,10 @@ internal sealed class GlTexture2D : IDisposable
     private ulong _cachedFingerprint;
     private bool _hasCache;
 
-    public GlTexture2D(GL gl, bool nearestFilter = true)
+    public GlTexture2D(GL gl, bool nearestFilter = true, bool mipmapped = false)
     {
         _gl = gl;
+        _mipmapped = mipmapped;
         _id = _gl.GenTexture();
         Bind(0);
         ApplyFilter(nearestFilter);
@@ -33,7 +35,9 @@ internal sealed class GlTexture2D : IDisposable
     private void ApplyFilter(bool nearestFilter)
     {
         var mag = nearestFilter ? (int)GLEnum.Nearest : (int)GLEnum.Linear;
-        var min = nearestFilter ? (int)GLEnum.Nearest : (int)GLEnum.Linear;
+        var min = _mipmapped
+            ? (nearestFilter ? (int)GLEnum.NearestMipmapNearest : (int)GLEnum.LinearMipmapLinear)
+            : (nearestFilter ? (int)GLEnum.Nearest : (int)GLEnum.Linear);
         _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, min);
         _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, mag);
         _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.Repeat);
@@ -79,6 +83,11 @@ internal sealed class GlTexture2D : IDisposable
         _cachedNearest = nearestFilter;
         _cachedFingerprint = fingerprint;
         _hasCache = true;
+        if (_mipmapped)
+        {
+            _gl.GenerateMipmap(TextureTarget.Texture2D);
+        }
+
         return true;
     }
 

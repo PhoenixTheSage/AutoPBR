@@ -18,4 +18,9 @@ internal sealed class GlSpirVShaderManifest
         _assets.Contains(assetName.Replace('\\', '/').Trim());
 
     public static GlSpirVShaderManifest Empty { get; } = new([]);
+
+    public static GlSpirVShaderManifest Bundled { get; } = new(
+    [
+        "spv/genesis_indirect_compact.comp.spv",
+    ]);
 }

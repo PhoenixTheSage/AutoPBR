@@ -393,12 +393,28 @@ public sealed partial class OpenGlPreviewBackend
 
         var su = _shadowUniformLocs;
 
-        if (frame.Settings.ShowGroundMesh)
-
+        if (frame.Settings.ShowGroundMesh && HasTerrainChunksToDraw)
         {
+            SetIntOnProgramLoc(_shadowProgram!, su.SceneKind, 0);
+            SetIntOnProgramLoc(_shadowProgram!, su.EntityAlphaMode, 0);
+            SetIntOnProgramLoc(_shadowProgram!, su.GenesisUseMaterialDrawRecord, 0);
+            SetIntOnProgramLoc(_shadowProgram!, su.GenesisUseMaterialTextureArray, 0);
+            if (_grassGroundAlbedo is not null)
+            {
+                frame.Gl.ActiveTexture(TextureUnit.Texture0);
+                _grassGroundAlbedo.Bind(0);
+                SetIntOnProgramLoc(_shadowProgram!, su.Albedo, 0);
+            }
 
-            _groundMesh!.Draw();
-
+            BindFallbackShadowMaterialTextureArrayIfPresent(su);
+            DrawGroundTerrainChunks(
+                frame.Gl,
+                shadowViewProjection,
+                frame.Eye,
+                patches: false,
+                enableParallaxSetting: false,
+                setParallaxEnabled: static _ => { },
+                shadowFullOnly: true);
         }
 
 
@@ -566,7 +582,8 @@ public sealed partial class OpenGlPreviewBackend
                     blockModel.DrawBatches,
                     batchIndex,
                     blockSlots.Length,
-                    useIndirectDrawCommands && CanUseGenesisMultiDrawGroups(useMaterialDrawRecords, patches: false));
+                    useIndirectDrawCommands && CanUseGenesisMultiDrawGroups(useMaterialDrawRecords),
+                    allowMaterialChanges: useMaterialTextureArrays);
 
                 var gpuCulledDrawn =
                     batchGroupCount > 1 &&
@@ -597,6 +614,11 @@ public sealed partial class OpenGlPreviewBackend
 
 
             _mesh.UnbindVertexArray();
+            if (useMaterialDrawRecords)
+            {
+                MarkGenesisMaterialDrawRecordsSubmitted();
+            }
+
             SetIntOnProgramLoc(_shadowProgram!, su.GenesisUseMaterialDrawRecord, 0);
             SetIntOnProgramLoc(_shadowProgram!, su.GenesisUseMaterialTextureArray, 0);
             SetIntOnProgramLoc(_shadowProgram!, su.GenesisDrawRecordIndex, 0);

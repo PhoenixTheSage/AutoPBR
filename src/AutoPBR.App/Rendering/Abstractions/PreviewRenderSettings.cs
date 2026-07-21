@@ -55,6 +55,11 @@ public sealed class PreviewRenderSettings
     /// <summary>Draw the textured grass ground plane under the preview object in 3D mode.</summary>
     public bool ShowGroundMesh { get; init; } = true;
 
+    /// <summary>
+    /// Hard Full-detail Chebyshev radius in chunks for streamed terrain (LOD + fog extend beyond).
+    /// </summary>
+    public int ChunkViewDistance { get; init; } = 8;
+
     /// <summary>Draw RGB world-axis lines in a corner (matches block Y-rotation).</summary>
     public bool ShowCornerAxes { get; init; } = true;
 
@@ -314,4 +319,13 @@ public sealed class PreviewRenderSettings
 
     /// <summary>Debug overlay: sun projection frustum lines in the preview viewport.</summary>
     public bool ShowSunProjectionDebug { get; init; }
+
+    /// <summary>When true, scene passes write linear scene-referred color and present encodes to scRGB.</summary>
+    public bool HdrPresentActive { get; init; }
+
+    /// <summary>Paper-white reference luminance (nits) for scRGB present scale.</summary>
+    public float HdrPaperWhiteNits { get; init; } = 200f;
+
+    /// <summary>Display peak luminance (nits) for soft knee; 0 = unknown.</summary>
+    public float HdrPeakNits { get; init; }
 }

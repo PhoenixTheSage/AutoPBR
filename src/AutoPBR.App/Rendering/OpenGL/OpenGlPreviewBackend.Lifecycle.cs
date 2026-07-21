@@ -50,6 +50,9 @@ public sealed partial class OpenGlPreviewBackend
             out _grassGroundHasNormal,
             out _grassGroundHasSpecular,
             out _grassGroundHasHeight);
+        // Bootstrap sets ready via bundled fallback; VM-driven SetGroundMaterial uploads must also
+        // open the draw gate (idle 3D never reaches subject selection to "accidentally" fix this).
+        _grassGroundReady = _grassGroundAlbedo is not null;
     }
 
     private void UploadMaterial(GL gl, PreviewMaterial? material, bool nearest)
@@ -770,7 +773,7 @@ public sealed partial class OpenGlPreviewBackend
         _useOpenGlEs = sidecar is null &&
                        versionStr.Contains("OpenGL ES", StringComparison.OrdinalIgnoreCase);
         _glCapabilities = PreviewGlCapabilities.FromGl(_gl, _useOpenGlEs, _glVersionString);
-        _shaderToolchainPlan = GlShaderToolchainPlan.FromCapabilities(_glCapabilities, GlSpirVShaderManifest.Empty.Count);
+        _shaderToolchainPlan = GlShaderToolchainPlan.FromCapabilities(_glCapabilities, GlSpirVShaderManifest.Bundled.Count);
         _gpuBootstrap = new GpuBootstrapRunner();
         _gpuBootstrapAborted = false;
         RaiseGpuInitProgress(PreviewGpuInitPhases.Preparing, _settings);
@@ -903,6 +906,10 @@ public sealed partial class OpenGlPreviewBackend
         _mesh = null;
         _groundMesh?.Dispose();
         _groundMesh = null;
+        _groundChunkBatches = [];
+        DisposeTerrainGpuChunks();
+        _terrainStreamer?.Dispose();
+        _terrainStreamer = null;
         _grassGroundAlbedo?.Dispose();
         _grassGroundAlbedo = null;
         _grassGroundNormal?.Dispose();
@@ -961,6 +968,10 @@ public sealed partial class OpenGlPreviewBackend
         _gl = null;
         _mesh = null;
         _groundMesh = null;
+        _groundChunkBatches = [];
+        _terrainGpuChunks.Clear();
+        _terrainStreamer?.Dispose();
+        _terrainStreamer = null;
         _grassGroundAlbedo = null;
         _grassGroundNormal = null;
         _grassGroundSpec = null;
@@ -999,6 +1010,7 @@ public sealed partial class OpenGlPreviewBackend
         DestroyVolumeResources();
         DestroyVolumetricCloudResources();
         DestroyPreviewTaaResources();
+        DestroyHdr2DResources(_gl);
         DestroyMoonBillboard();
         DestroyLineOverlay();
         _nativeOverlayRenderer = null;

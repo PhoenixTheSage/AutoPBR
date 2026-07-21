@@ -4,7 +4,7 @@ Design notes for replacing screen-space god rays with a single participating-med
 
 ## Goals
 
-- One density field for **clouds + height fog + ray extinction**
+- Coherent extinction between detailed clouds, height fog, and light shafts
 - Sun in-scatter uses the same **Mie phase** as `atmosphere.glsl` (g ≈ 0.76)
 - God rays emerge from medium integration, not a separate radial blur
 - Stable under orbit (temporal accumulation on the volume, not just 2D history)
@@ -34,8 +34,9 @@ Design notes for replacing screen-space god rays with a single participating-med
 
 `common/volumetric_medium.glsl`:
 
-- `vmMediumDensity` — cloud slab today; height-fog term can be added as second slab
+- `vmMediumDensity` — height fog plus a coarse analytic cloud fallback used only when the detailed cloud signal is unavailable
 - `vmMediumTransmittance` — Beer–Lambert extinction
+- `cloud_shared_transmittance.glsl` — resolved detailed-cloud opacity and representative view distance consumed by both full and lite froxel integration
 
 God rays (P2.1) already call this during screen-space march as a stepping-stone.
 
@@ -44,7 +45,7 @@ God rays (P2.1) already call this during screen-space march as a stepping-stone.
 1. **P3 foundation** — `volumetric_medium.glsl` + god-ray cloud/shadow gates (done)
 2. **Froxel inject pass** — write density + sun energy into 3D RT
 3. **Replace genesis_godrays.frag** — sample froxel integrate instead of radial blur — [x] deleted; upsample/composite only
-4. **Unify clouds** — cloud composite reads same froxel buffer (deprecate separate cloud march)
+4. **Share cloud transmittance** — detailed cloud pass publishes opacity/depth for shafts; high-frequency clouds are no longer duplicated in the coarse froxel grid — [x]
 5. **Remove legacy** — delete screen-space god-ray passes when parity reached
 
 ## ANGLE / GLES constraints
@@ -72,5 +73,8 @@ Current half-res radial blur + upsample ≈ 0.8–1.2 ms; froxels should match b
 - [x] Shadow-map sampling in inject pass (`grShadowGate` in `genesis_volume_inject.frag`)
 - [x] Height fog slab in `vmMediumDensity` (world-anchored ground mist)
 - [x] Temporal accumulation on froxel integrate (half-res history + reprojection in `genesis_volume_integrate.frag`)
+- [x] Detailed cloud opacity/depth integration with cloud-first, foreground-safe shaft composition
+- [x] Phase 6 cloud/scene occlusion contract: planet horizon clipping, conservative half-resolution depth footprints, and per-tap full-resolution scene/cloud distance rejection
+- [x] Phase 6 morphology pass: subtle 72k-radius far-horizon curvature, altitude-local cumulus domes/flat bases, and detached branching cirrus fibers
 - [ ] Cascaded shadow sampling in inject pass
 - [ ] Cutover flag: `EnableFroxelGodRays` vs screen-space fallback

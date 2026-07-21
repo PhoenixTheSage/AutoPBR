@@ -2,6 +2,7 @@ using System.Numerics;
 
 using AutoPBR.App.Lang;
 using AutoPBR.App.Rendering.Abstractions;
+using AutoPBR.App.Rendering.Scene;
 using AutoPBR.Core.Models;
 using AutoPBR.Preview;
 
@@ -35,11 +36,21 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private GlTexture2DArray? _materialNormalArray;
     private GlTexture2DArray? _materialSpecArray;
     private GlTexture2DArray? _materialHeightArray;
+    private GlTexture2DArray? _fallbackMaterialAlbedoArray;
+    private GlTexture2DArray? _fallbackMaterialNormalArray;
+    private GlTexture2DArray? _fallbackMaterialSpecArray;
+    private GlTexture2DArray? _fallbackMaterialHeightArray;
     private GenesisMaterialTextureArrayPlan? _materialTextureArrayPlan;
     private byte[]? _materialTextureArrayScratch;
     private byte[]? _rgbaUploadScratch;
     private GlMeshBuffer? _mesh;
     private GlMeshBuffer? _groundMesh;
+    private PreviewDrawBatch[] _groundChunkBatches = [];
+    private readonly Dictionary<TerrainChunkKey, TerrainGpuChunk> _terrainGpuChunks = new();
+    private TerrainChunkStreamer? _terrainStreamer;
+    private bool _terrainStreamingNeedsFrames;
+    private float _terrainEnvFloorY = PreviewStageConstants.GroundPlaneWorldY;
+    private float _terrainEnvCeilingY = PreviewStageConstants.GroundPlaneWorldY + 0.05f;
     private GlTexture2D? _grassGroundAlbedo;
     private GlTexture2D? _grassGroundNormal;
     private GlTexture2D? _grassGroundSpec;
@@ -124,6 +135,7 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private GlShaderProgram? _gpuDrawCommandCompactionProgram;
     private GlGpuDrawCommandCompactor? _gpuDrawCommandCompactor;
     private GlGpuTimerProfiler? _gpuTimerProfiler;
+    private readonly GlGpuTimingWindow _gpuTimingWindow = new();
     private uint _entityBoneUbo;
     private uint _entityPrevBoneUbo;
     private uint _entityNormalBoneUbo;
@@ -270,6 +282,9 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
                        ShouldContinuouslyAccumulatePreviewTaa(_settings) ||
                        (_settings.EnableEntityAnimation && _blockModelSubject?.EnableRenderTimeAnimation == true) ||
                        (_settings.EnableVolumetricClouds && !_settings.CloudFreezeWind) ||
+                       // Idle stage with ground still needs frames after bootstrap (no subject animation).
+                       (_settings.ShowGroundMesh && _scene is not null && !_settings.DrawPreviewSubject) ||
+                       (_settings.ShowGroundMesh && _terrainStreamingNeedsFrames) ||
                        (_debugFlyRmbHeld && _flyEngaged) ||
                        _userCameraDragging;
             }
@@ -1132,18 +1147,21 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private void TickFlyMovementLocked(TimeSpan elapsed)
     {
         var dt = (float)elapsed.TotalSeconds;
-        if (dt <= 0f)
+        if (dt <= 0f || !float.IsFinite(dt))
         {
             return;
         }
 
         var forward = ForwardFromYawPitch(_flyYaw, _flyPitch);
         var worldUp = Vector3.UnitY;
-        var right = Vector3.Normalize(Vector3.Cross(forward, worldUp));
-        if (right.LengthSquared() < 1e-8f)
+        var rightRaw = Vector3.Cross(forward, worldUp);
+        if (rightRaw.LengthSquared() < 1e-8f)
         {
-            right = Vector3.Normalize(Vector3.Cross(forward, Vector3.UnitZ));
+            rightRaw = Vector3.Cross(forward, Vector3.UnitZ);
         }
+        var right = rightRaw.LengthSquared() > 1e-12f
+            ? Vector3.Normalize(rightRaw)
+            : Vector3.UnitX;
 
         var moveIntent = Vector3.Zero;
         if (_flyKeyW)
@@ -1180,6 +1198,7 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
         var maxSpeed = 5f * _flyMoveSpeed * _flySpeedSessionMultiplier * speedScale *
                        MathF.Max(0.35f, _orbitDistance * 0.15f);
 
+        var previousPosition = _flyPosition;
         if (_flySmoothAcceleration)
         {
             var targetVelocity = moveIntent.LengthSquared() > 1e-8f
@@ -1196,7 +1215,16 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
         {
             _flyPosition += Vector3.Normalize(moveIntent) * maxSpeed * dt;
         }
+
+        if (!IsFinite(_flyPosition) || !IsFinite(_flyMoveVelocity))
+        {
+            _flyPosition = previousPosition;
+            _flyMoveVelocity = Vector3.Zero;
+        }
     }
+
+    private static bool IsFinite(Vector3 value) =>
+        float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
 
     private bool TryGetSubjectBoundsLocked(out Vector3 min, out Vector3 max)
     {

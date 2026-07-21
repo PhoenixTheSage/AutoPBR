@@ -193,13 +193,13 @@ vec3 sunDiscAureole(vec3 viewDir, vec3 lightPropagationDir, float cosDiscEdge, f
     float spread = mix(2.5, 9.0, clamp(bloomRadiusUv * 36.0, 0.0, 1.0)) * (1.0 + turbidityT * 1.6);
     float circumsolar = exp(-pow(max(r - 1.0, 0.0) / (spread * 0.4), 1.5));
     float skirt = 1.0 / (1.0 + pow(r / spread, 2.0));
-    vec3 discCol = mix(vec3(1.0, 0.97, 0.92), vec3(1.0, 0.55, 0.22), lowSun);
-    vec3 glowCol = mix(vec3(1.0, 0.88, 0.70), vec3(0.92, 0.93, 1.0), turbidityT * 0.7);
-    glowCol = mix(glowCol, vec3(1.0, 0.48, 0.20), lowSun * 0.85);
-    vec3 glow = glowCol * (circumsolar * 1.6 + skirt * 0.35) * glowCut;
+    vec3 discCol = mix(vec3(1.0, 0.90, 0.72), vec3(1.0, 0.46, 0.12), lowSun);
+    vec3 glowCol = mix(vec3(1.0, 0.80, 0.52), vec3(0.92, 0.93, 1.0), turbidityT * 0.7);
+    glowCol = mix(glowCol, vec3(1.0, 0.40, 0.10), lowSun * 0.85);
+    vec3 glow = glowCol * (circumsolar * 1.85 + skirt * 0.4) * glowCut;
     float discBright = max(discBrightness, 0.0);
     float bloom = max(bloomStrength, 0.0);
-    return (discCol * disc * 22.0 * discBright + glow) * bloom;
+    return (discCol * disc * 34.0 * discBright + glow) * bloom;
 }
 
 vec2 moonDiscUv(vec3 viewDir, vec3 towardMoon, float cosDiscEdge)

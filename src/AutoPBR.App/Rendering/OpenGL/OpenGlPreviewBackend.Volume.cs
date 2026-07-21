@@ -32,6 +32,9 @@ public sealed partial class OpenGlPreviewBackend
     private Vector3 _volumePrevHalfExtent;
     private int _volumeHistoryHalfW;
     private int _volumeHistoryHalfH;
+    private bool _loggedSharedCloudTransmittance;
+    private bool _volumeSharedCloudSignalInitialized;
+    private bool _volumePreviousSharedCloudSignal;
 
     private const float VolumeHeightFogScale = 0.42f;
     private const uint VolumeFroxelImageUnit = 0;
@@ -181,6 +184,8 @@ public sealed partial class OpenGlPreviewBackend
         _volumeIntegrateHistoryValid = false;
         _volumeFroxelHistoryValid = false;
         _volumeUseLiteShaders = false;
+        _loggedSharedCloudTransmittance = false;
+        _volumeSharedCloudSignalInitialized = false;
     }
 
     private bool CanUseVolumeGodRays(in PreviewRenderSettingsSnapshot settings) =>
@@ -239,6 +244,16 @@ public sealed partial class OpenGlPreviewBackend
 
     private static float ResolveVolumeHeightFogStrength(in PreviewRenderSettingsSnapshot settings) =>
         settings.EnableAtmosphericSky ? settings.AerialFogStrength * VolumeHeightFogScale : 0f;
+
+    private float ResolveFroxelCloudDensity(in PreviewRenderSettingsSnapshot settings)
+    {
+        if (!settings.EnableVolumetricClouds)
+        {
+            return 0f;
+        }
+
+        return ResolveSharedCloudTransmittanceTarget(settings) is not null ? 0f : settings.CloudDensity;
+    }
 
     private static IReadOnlyDictionary<string, int>? BuildVolumeIntegrateDefines(bool useOpenGlEs, bool temporal)
     {
@@ -303,6 +318,7 @@ public sealed partial class OpenGlPreviewBackend
 
         _volumeInjectProgram.Use();
         var vi = _volumeInjectUniformLocs;
+        SetFloatOnProgramLoc(_volumeInjectProgram, vi.CloudDensity, ResolveFroxelCloudDensity(frame.Settings));
         SetVec3OnProgramLoc(_volumeInjectProgram, vi.CameraPos, frame.Eye);
         SetVec3OnProgramLoc(_volumeInjectProgram, vi.CamRight, camRight);
         SetVec3OnProgramLoc(_volumeInjectProgram, vi.CamUp, camUp);
@@ -398,6 +414,8 @@ public sealed partial class OpenGlPreviewBackend
         var gl = frame.Gl;
         _volumeInjectComputeProgram.Use();
         var vci = _volumeInjectComputeUniformLocs;
+        SetFloatOnProgramLoc(_volumeInjectComputeProgram, vci.CloudDensity,
+            ResolveFroxelCloudDensity(frame.Settings));
         SetVec3OnProgramLoc(_volumeInjectComputeProgram, vci.CameraPos, frame.Eye);
         SetVec3OnProgramLoc(_volumeInjectComputeProgram, vci.CamRight, camRight);
         SetVec3OnProgramLoc(_volumeInjectComputeProgram, vci.CamUp, camUp);
@@ -539,6 +557,7 @@ public sealed partial class OpenGlPreviewBackend
                 new Vector2(1f / _volumeFroxelTarget.Width, 1f / _volumeFroxelTarget.Height));
             SetFloatOnProgramLoc(_volumeIntegrateProgram, iu.Strength, strength);
             SetFloatOnProgramLoc(_volumeIntegrateProgram, iu.Jitter, jitter);
+            BindSharedCloudTransmittance(frame, _volumeIntegrateProgram, iu);
             return;
         }
 
@@ -590,6 +609,7 @@ public sealed partial class OpenGlPreviewBackend
         gl.ActiveTexture(TextureUnit.Texture4);
         gl.BindTexture(TextureTarget.Texture2DArray, _volumeFroxelTarget.OccupancyTextureHandle);
         SetIntOnProgramLoc(_volumeIntegrateProgram, iu.FroxelOccupancy, 4);
+        BindSharedCloudTransmittance(frame, _volumeIntegrateProgram, iu);
 
         SetMatrixOnProgramLoc(_volumeIntegrateProgram, iu.InvViewProj, invViewProj);
         SetMatrixOnProgramLoc(_volumeIntegrateProgram, iu.PrevViewProj, _volumePrevViewProj);
@@ -616,6 +636,31 @@ public sealed partial class OpenGlPreviewBackend
         SetFloatOnProgramLoc(_volumeIntegrateProgram, iu.FroxelTemporalWeight,
             stabilize ? 0f : PreviewVolumetricQuality.EffectivePassTemporalWeight(
                 quality.FroxelTemporal3DWeight, frame.Settings));
+    }
+
+    private void BindSharedCloudTransmittance(
+        GlRenderFrame frame,
+        GlShaderProgram program,
+        VolumeIntegrateUniformLocs uniforms)
+    {
+        var gl = frame.Gl;
+        var sharedClouds = ResolveSharedCloudTransmittanceTarget(frame.Settings);
+        var fallbackTexture = _sceneCapture?.DepthTextureHandle ?? 0;
+        gl.ActiveTexture(TextureUnit.Texture5);
+        gl.BindTexture(TextureTarget.Texture2D, sharedClouds?.ColorTextureHandle ?? fallbackTexture);
+        SetIntOnProgramLoc(program, uniforms.CloudTransmittance, 5);
+        gl.ActiveTexture(TextureUnit.Texture6);
+        gl.BindTexture(TextureTarget.Texture2D, sharedClouds?.DataTextureHandle ?? fallbackTexture);
+        SetIntOnProgramLoc(program, uniforms.CloudData, 6);
+        SetIntOnProgramLoc(program, uniforms.HasCloudTransmittance, sharedClouds is not null ? 1 : 0);
+
+        if (sharedClouds is not null && !_loggedSharedCloudTransmittance)
+        {
+            _loggedSharedCloudTransmittance = true;
+            EmitDiagnostic(
+                "[3D preview] Froxel integration using detailed cloud transmittance/depth; " +
+                "analytic slab cloud injection disabled.");
+        }
     }
 
     private void CommitFroxelHistory(
@@ -683,6 +728,17 @@ public sealed partial class OpenGlPreviewBackend
     {
         injectMs = 0;
         integrateMs = 0;
+        var hasSharedCloudSignal = ResolveSharedCloudTransmittanceTarget(frame.Settings) is not null;
+        if (_volumeSharedCloudSignalInitialized &&
+            hasSharedCloudSignal != _volumePreviousSharedCloudSignal)
+        {
+            _volumeIntegrateHistoryValid = false;
+            _volumeFroxelHistoryValid = false;
+            _godRayHistoryValid = false;
+        }
+
+        _volumePreviousSharedCloudSignal = hasSharedCloudSignal;
+        _volumeSharedCloudSignalInitialized = true;
         var halfExtent = ResolveVolumeHalfExtent(ref frame);
         var quality = PreviewVolumetricQuality.Resolve(frame.Settings.VolumetricQuality);
         var froxelW = quality.ResolveFroxelWidth(frame.Vw);

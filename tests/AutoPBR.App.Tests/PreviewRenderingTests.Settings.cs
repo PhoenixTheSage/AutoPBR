@@ -99,6 +99,83 @@ public sealed partial class PreviewRenderingTests
     }
 
     [Fact]
+    public void ScenePass_GroundDrawDisablesTessellationAndMaterialDrawRecords()
+    {
+        var source = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.Render.PassScene.cs");
+
+        var groundBlockStart = source.IndexOf(
+            "if (frame.Settings.ShowGroundMesh &&",
+            StringComparison.Ordinal);
+        Assert.True(groundBlockStart >= 0);
+        var groundDraw = source.IndexOf("_groundMesh.Draw(_mainProgramUsesTessellation);", groundBlockStart, StringComparison.Ordinal);
+        Assert.True(groundDraw > groundBlockStart);
+        var groundBlock = source[groundBlockStart..groundDraw];
+
+        Assert.Contains("SetIntLoc(u.EnableTessellationDisplacement, 0);", groundBlock, StringComparison.Ordinal);
+        Assert.Contains("SetIntLoc(u.GenesisUseMaterialDrawRecord, 0);", groundBlock, StringComparison.Ordinal);
+        Assert.Contains("SetIntLoc(u.GenesisDrawRecordIndex, 0);", groundBlock, StringComparison.Ordinal);
+        Assert.Contains("SetIntLoc(u.IsGroundPass, 1);", groundBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GenesisProgram_IdleFramesSkipTessellationProgram()
+    {
+        var source = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.GenesisProgram.cs");
+
+        Assert.Contains("frame.EnableTessellationDisplacementEff &&", source, StringComparison.Ordinal);
+        Assert.Contains("frame.Settings.DrawPreviewSubject;", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UploadGroundMaterial_MarksGrassGroundReady()
+    {
+        var lifecycle = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.Lifecycle.cs");
+
+        var uploadStart = lifecycle.IndexOf("private void UploadGroundMaterial(", StringComparison.Ordinal);
+        Assert.True(uploadStart >= 0);
+        var uploadEnd = lifecycle.IndexOf("private void UploadMaterial(", uploadStart, StringComparison.Ordinal);
+        Assert.True(uploadEnd > uploadStart);
+        var upload = lifecycle[uploadStart..uploadEnd];
+        Assert.Contains("_grassGroundReady = _grassGroundAlbedo is not null;", upload, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RegisterGlPreview_SchedulesGroundTextureRefreshAfterIdleScenePush()
+    {
+        var viewModel = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "ViewModels",
+            "MainWindowViewModel.Preview.cs");
+
+        var registerStart = viewModel.IndexOf("internal void RegisterGlPreview(", StringComparison.Ordinal);
+        Assert.True(registerStart >= 0);
+        var registerEnd = viewModel.IndexOf("private void OnPreviewGpuInitProgressChanged", registerStart, StringComparison.Ordinal);
+        Assert.True(registerEnd > registerStart);
+        var register = viewModel[registerStart..registerEnd];
+        Assert.Contains("Apply3DPreviewIfNeeded();", register, StringComparison.Ordinal);
+        Assert.Contains("SchedulePreviewGroundTextureRefresh();", register, StringComparison.Ordinal);
+        Assert.True(
+            register.IndexOf("Apply3DPreviewIfNeeded();", StringComparison.Ordinal) <
+            register.IndexOf("SchedulePreviewGroundTextureRefresh();", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ScenePass_EntityParallaxCanBeDisabledPerBatchWithoutAffectingBlocks()
     {
         var source = LoadSource(ThisFilePath(),
@@ -251,17 +328,37 @@ public sealed partial class PreviewRenderingTests
 
         var godRays = source.IndexOf("DrawGodRayComposite(ref frame)", StringComparison.Ordinal);
         var clouds = source.IndexOf("CompositeCloudRenderTargetToDefault(ref frame)", StringComparison.Ordinal);
+        var deferredRays = source.IndexOf("CompositePendingGodRays(ref frame)", StringComparison.Ordinal);
         var axes = source.IndexOf("DrawCornerAxes(", StringComparison.Ordinal);
         var taa = source.IndexOf("DrawPreviewTaa(ref frame);", StringComparison.Ordinal);
         var fingerprint = source.IndexOf("MaybeLogPreviewFingerprint(ref frame);", StringComparison.Ordinal);
 
         Assert.True(godRays >= 0);
         Assert.True(clouds >= 0);
+        Assert.True(deferredRays > clouds);
         Assert.True(axes >= 0);
         Assert.True(taa > godRays);
         Assert.True(taa > clouds);
+        Assert.True(taa > deferredRays);
         Assert.True(taa > axes);
         Assert.True(fingerprint > taa);
+    }
+
+    [Fact]
+    public void FroxelCloudDensity_UsesDetailedSignalOrDisabledFallback()
+    {
+        var source = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.Volume.cs");
+
+        Assert.Contains("if (!settings.EnableVolumetricClouds)", source, StringComparison.Ordinal);
+        Assert.Contains("ResolveSharedCloudTransmittanceTarget(settings) is not null ? 0f : settings.CloudDensity",
+            source, StringComparison.Ordinal);
+        Assert.Contains("BindSharedCloudTransmittance(frame, _volumeIntegrateProgram, iu)",
+            source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -718,6 +815,25 @@ public sealed partial class PreviewRenderingTests
     }
 
     [Fact]
+    public void PreviewHdrSettings_AreWiredThroughPersistenceAndUi()
+    {
+        var userSettings = LoadSource(ThisFilePath(), "src", "AutoPBR.App", "Models", "UserSettings.cs");
+        var synchronizer = LoadSource(ThisFilePath(), "src", "AutoPBR.App", "Services", "UserSettingsSynchronizer.cs");
+        var settingsTab = LoadSource(ThisFilePath(), "src", "AutoPBR.App", "Controls", "SettingsTab.axaml");
+        var hdrVm = LoadSource(ThisFilePath(), "src", "AutoPBR.App", "ViewModels", "MainWindowViewModel.Settings.Hdr.cs");
+        var renderSettings = LoadSource(ThisFilePath(), "src", "AutoPBR.App", "Rendering", "Abstractions", "PreviewRenderSettings.cs");
+
+        Assert.Contains("public string PreviewHdrMode { get; set; }", userSettings, StringComparison.Ordinal);
+        Assert.Contains("public double PreviewHdrPaperWhiteNits { get; set; }", userSettings, StringComparison.Ordinal);
+        Assert.Contains("vm.PreviewHdrMode = PreviewHdrPresentPolicy.FormatMode(", synchronizer, StringComparison.Ordinal);
+        Assert.Contains("settings.PreviewHdrMode = PreviewHdrPresentPolicy.FormatMode(", synchronizer, StringComparison.Ordinal);
+        Assert.Contains("SelectedItem=\"{Binding SelectedPreviewHdrModeOption, Mode=TwoWay}\"", settingsTab, StringComparison.Ordinal);
+        Assert.Contains("PreviewHdrStatusText", settingsTab, StringComparison.Ordinal);
+        Assert.Contains("[ObservableProperty] private string _previewHdrMode", hdrVm, StringComparison.Ordinal);
+        Assert.Contains("public bool HdrPresentActive { get; init; }", renderSettings, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PreviewWglPresentation_WiresSwapIntervalToVSyncToggle()
     {
         var previewControl = LoadSource(ThisFilePath(),
@@ -750,6 +866,45 @@ public sealed partial class PreviewRenderingTests
         Assert.Contains("PreviewWglPresentation.TrySetSwapInterval(glInterface, interval)", lifecycle, StringComparison.Ordinal);
         Assert.Contains("wglSwapIntervalEXT", wglPresentation, StringComparison.Ordinal);
         Assert.Contains("GetDeviceCaps(dc, VRefresh)", displayRefresh, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PreviewRenderExceptions_AreContainedAndPersisted()
+    {
+        var program = LoadSource(ThisFilePath(),
+            "src", "AutoPBR.App", "Program.cs");
+        var render = LoadSource(ThisFilePath(),
+            "src", "AutoPBR.App", "Rendering", "OpenGL", "OpenGlPreviewBackend.Render.cs");
+        var post = LoadSource(ThisFilePath(),
+            "src", "AutoPBR.App", "Rendering", "OpenGL", "OpenGlPreviewBackend.Render.PassPost.cs");
+        var clouds = LoadSource(ThisFilePath(),
+            "src", "AutoPBR.App", "Rendering", "OpenGL", "OpenGlPreviewBackend.VolumetricClouds.cs");
+
+        Assert.Contains("RegisterEmergencyExceptionLogging();", program, StringComparison.Ordinal);
+        Assert.Contains("AppDomain.CurrentDomain.UnhandledException", program, StringComparison.Ordinal);
+        Assert.Contains("Dispatcher.UIThread.UnhandledException", program, StringComparison.Ordinal);
+        Assert.Contains("GlRenderCoreUnsafe(framebuffer, pixelWidth, pixelHeight);", render, StringComparison.Ordinal);
+        Assert.Contains("HandleUnhandledRenderException(framebuffer, pixelWidth, pixelHeight, ex);", render, StringComparison.Ordinal);
+        Assert.Contains("LogService.AppendEmergencyDiagnostic(\"3D preview render exception\"", render, StringComparison.Ordinal);
+        Assert.Contains("HandleCloudRuntimeFailure(ref frame, \"trace/temporal\", ex);", post, StringComparison.Ordinal);
+        Assert.Contains("HandleCloudRuntimeFailure(ref frame, \"composite\", ex);", post, StringComparison.Ordinal);
+        Assert.Contains("!_cloudRuntimeFaulted", clouds, StringComparison.Ordinal);
+        Assert.Contains("Cloud camera region transition", clouds, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FlyCamera_RightVectorChecksDegeneracyBeforeNormalize()
+    {
+        var backend = LoadSource(ThisFilePath(),
+            "src", "AutoPBR.App", "Rendering", "OpenGL", "OpenGlPreviewBackend.cs");
+
+        var cross = backend.IndexOf("var rightRaw = Vector3.Cross(forward, worldUp);", StringComparison.Ordinal);
+        var guard = backend.IndexOf("if (rightRaw.LengthSquared() < 1e-8f)", cross, StringComparison.Ordinal);
+        var normalize = backend.IndexOf("Vector3.Normalize(rightRaw)", guard, StringComparison.Ordinal);
+
+        Assert.True(cross >= 0);
+        Assert.True(guard > cross);
+        Assert.True(normalize > guard);
     }
 
     private static string ThisFilePath([System.Runtime.CompilerServices.CallerFilePath] string sourceFilePath = "") =>

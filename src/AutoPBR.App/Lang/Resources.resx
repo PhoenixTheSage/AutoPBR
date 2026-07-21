@@ -922,6 +922,45 @@
   <data name="PreviewOpenGlFallbackWarning" xml:space="preserve">
     <value>OpenGL 4.x was requested but the app started on OpenGL ES (ANGLE). Update GPU drivers or leave the toggle off.</value>
   </data>
+  <data name="PreviewHdrMode" xml:space="preserve">
+    <value>Preview HDR</value>
+  </data>
+  <data name="PreviewHdrModeTooltip" xml:space="preserve">
+    <value>Auto uses Windows HDR (scRGB) for the 2D/3D preview when the monitor supports Advanced Color and OpenGL 4.x preview is active. SDR only keeps the classic ACES → sRGB path.</value>
+  </data>
+  <data name="PreviewHdrModeAuto" xml:space="preserve">
+    <value>Auto</value>
+  </data>
+  <data name="PreviewHdrModeSdr" xml:space="preserve">
+    <value>SDR only</value>
+  </data>
+  <data name="PreviewHdrPaperWhiteNits" xml:space="preserve">
+    <value>Paper white (nits)</value>
+  </data>
+  <data name="PreviewHdrPaperWhiteNitsTooltip" xml:space="preserve">
+    <value>Reference white luminance for scRGB preview presentation (80–2000 nits). Only used when HDR present is active.</value>
+  </data>
+  <data name="PreviewHdrStatusActive" xml:space="preserve">
+    <value>HDR: Active (scRGB, {0})</value>
+  </data>
+  <data name="PreviewHdrStatusForcedSdr" xml:space="preserve">
+    <value>HDR: SDR only (user preference)</value>
+  </data>
+  <data name="PreviewHdrStatusDisplayNotHdr" xml:space="preserve">
+    <value>HDR: SDR fallback — display not HDR</value>
+  </data>
+  <data name="PreviewHdrStatusOpenGl4Required" xml:space="preserve">
+    <value>HDR: SDR fallback — enable OpenGL 4.x preview</value>
+  </data>
+  <data name="PreviewHdrStatusPlatformUnsupported" xml:space="preserve">
+    <value>HDR: SDR fallback — Windows Advanced Color required</value>
+  </data>
+  <data name="PreviewHdrStatusPresentFailed" xml:space="preserve">
+    <value>HDR: SDR fallback — present path failed</value>
+  </data>
+  <data name="PreviewHdrBadge" xml:space="preserve">
+    <value>HDR</value>
+  </data>
   <data name="MaxThreads" xml:space="preserve">
     <value>Max Threads</value>
   </data>
@@ -1698,6 +1737,12 @@
   </data>
   <data name="Preview3DShowGroundMeshTooltip" xml:space="preserve">
     <value>Show the textured grass ground plane under the object in 3D preview.</value>
+  </data>
+  <data name="Preview3DChunkViewDistance" xml:space="preserve">
+    <value>Chunk view distance</value>
+  </data>
+  <data name="Preview3DChunkViewDistanceTooltip" xml:space="preserve">
+    <value>Hard radius (in 16-block chunks) of full-detail terrain around the camera. A merged LOD ring and fog extend beyond this to hide the unload edge.</value>
   </data>
   <data name="Preview3DAutoRotate" xml:space="preserve">
     <value>3D auto-rotate</value>

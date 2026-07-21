@@ -1,7 +1,8 @@
 #version 330 core
 // GENESIS_GLES_PACK rev29
 // Lite froxel inject for GLES fallback: no shadow maps. uDebugDensity adds a uniform
-// participating-medium floor so god rays are visible/tunable without fog or clouds enabled.
+// participating-medium floor so god rays are visible/tunable without fog. Analytic cloud density is
+// a fallback only when the detailed cloud opacity/depth signal is unavailable.
 
 
 

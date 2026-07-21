@@ -184,9 +184,19 @@ internal sealed class PreviewNativeWglPresenter : IDisposable
             return;
         }
 
-        using (context.MakeCurrent())
+        try
         {
-            _owner.RenderNativeWglFrame(context);
+            using (context.MakeCurrent())
+            {
+                _owner.RenderNativeWglFrame(context);
+            }
+        }
+        catch (Exception ex)
+        {
+            _backend.EmitPreviewDiagnostic(
+                $"[3D preview] Native WGL frame failed ({ex.GetType().Name}: {ex.Message}).");
+            // Avoid a tight crash loop from continuous RequestFrame after a native fault.
+            return;
         }
 
         if (!_disposed && _backend.NeedsContinuousRendering)

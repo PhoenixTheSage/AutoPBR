@@ -11,6 +11,9 @@ internal enum GlGpuTimerScope
     Scene = 2,
     Post = 3,
     Overlay = 4,
+    CloudTrace = 5,
+    GodRays = 6,
+    CloudComposite = 7,
 }
 
 internal readonly record struct GlGpuTimingSnapshot(
@@ -18,20 +21,33 @@ internal readonly record struct GlGpuTimingSnapshot(
     double ShadowMs,
     double SceneMs,
     double PostMs,
-    double OverlayMs)
+    double OverlayMs,
+    double CloudTraceMs,
+    double GodRaysMs,
+    double CloudCompositeMs)
 {
-    public double TotalMs => SetupMs + ShadowMs + SceneMs + PostMs + OverlayMs;
+    public GlGpuTimingSnapshot(double SetupMs, double ShadowMs, double SceneMs, double PostMs, double OverlayMs)
+        : this(SetupMs, ShadowMs, SceneMs, PostMs, OverlayMs, 0.0, 0.0, 0.0)
+    {
+    }
+
+    public double PostTotalMs => PostMs + CloudTraceMs + GodRaysMs + CloudCompositeMs;
+    public double TotalMs => SetupMs + ShadowMs + SceneMs + PostTotalMs + OverlayMs;
 
     public string FormatHudLine(bool expanded = false) =>
         expanded
             ? string.Format(
                 CultureInfo.InvariantCulture,
-                "GPU {0:0.0} ms | set {1:0.0} sh {2:0.0} scn {3:0.0} post {4:0.0} ovl {5:0.0}",
+                "GPU {0:0.0} ms | set {1:0.0} sh {2:0.0} scn {3:0.0} post {4:0.0} " +
+                "(cloud {5:0.0}+{6:0.0}, rays {7:0.0}) ovl {8:0.0}",
                 TotalMs,
                 SetupMs,
                 ShadowMs,
                 SceneMs,
-                PostMs,
+                PostTotalMs,
+                CloudTraceMs,
+                CloudCompositeMs,
+                GodRaysMs,
                 OverlayMs)
             : string.Format(
                 CultureInfo.InvariantCulture,
@@ -41,18 +57,24 @@ internal readonly record struct GlGpuTimingSnapshot(
     public string FormatDiagnostic() =>
         string.Format(
             CultureInfo.InvariantCulture,
-            "setup={0:0.###}ms, shadow={1:0.###}ms, scene={2:0.###}ms, post={3:0.###}ms, overlay={4:0.###}ms, total={5:0.###}ms",
+            "setup={0:0.###}ms, shadow={1:0.###}ms, scene={2:0.###}ms, " +
+            "cloudTrace={3:0.###}ms, cloudComposite={4:0.###}ms, godRays={5:0.###}ms, " +
+            "post={7:0.###}ms, postOther={6:0.###}ms, overlay={8:0.###}ms, total={9:0.###}ms",
             SetupMs,
             ShadowMs,
             SceneMs,
+            CloudTraceMs,
+            CloudCompositeMs,
+            GodRaysMs,
             PostMs,
+            PostTotalMs,
             OverlayMs,
             TotalMs);
 }
 
 internal sealed class GlGpuTimerProfiler : IDisposable
 {
-    private const int ScopeCount = 5;
+    private const int ScopeCount = 8;
     private const int FrameSlots = 5;
     private const uint TimeElapsed = 0x88BF;
     private const uint QueryResult = 0x8866;
@@ -244,7 +266,10 @@ internal sealed class GlGpuTimerProfiler : IDisposable
                 elapsed[(int)GlGpuTimerScope.Shadow] * NanosecondsToMilliseconds,
                 elapsed[(int)GlGpuTimerScope.Scene] * NanosecondsToMilliseconds,
                 elapsed[(int)GlGpuTimerScope.Post] * NanosecondsToMilliseconds,
-                elapsed[(int)GlGpuTimerScope.Overlay] * NanosecondsToMilliseconds);
+                elapsed[(int)GlGpuTimerScope.Overlay] * NanosecondsToMilliseconds,
+                elapsed[(int)GlGpuTimerScope.CloudTrace] * NanosecondsToMilliseconds,
+                elapsed[(int)GlGpuTimerScope.GodRays] * NanosecondsToMilliseconds,
+                elapsed[(int)GlGpuTimerScope.CloudComposite] * NanosecondsToMilliseconds);
         }
     }
 

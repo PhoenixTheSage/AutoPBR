@@ -48,7 +48,8 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         ReadOnlySpan<uint> visibilityFlags,
         bool readBackCounter = false,
         bool collectDiagnostics = false,
-        int outputCapacity = 0)
+        int outputCapacity = 0,
+        bool preserveOrder = false)
     {
         if (_disposed ||
             program is not { IsValid: true } ||
@@ -87,7 +88,8 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         SetFirstCommand(program, 0);
         SetOutputCapacity(program, outputCapacity);
         SetCollectDiagnostics(program, collectDiagnostics);
-        _gl.DispatchCompute((uint)((commandCount + LocalSizeX - 1) / LocalSizeX), 1, 1);
+        SetPreserveOrder(program, preserveOrder);
+        _gl.DispatchCompute(preserveOrder ? 1u : (uint)((commandCount + LocalSizeX - 1) / LocalSizeX), 1, 1);
         _gl.MemoryBarrier(ShaderStorageBarrierBit | CommandBarrierBit | BufferUpdateBarrierBit);
 
         if (readBackCounter)
@@ -116,7 +118,9 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         Vector3 cameraPosition,
         bool readBackCounter = false,
         bool collectDiagnostics = false,
-        int outputCapacity = 0) =>
+        int outputCapacity = 0,
+        bool preserveOrder = false,
+        float boundsPadding = 0f) =>
         DispatchWithGpuCulling(
             program,
             sourceCommands,
@@ -128,7 +132,9 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
             sourceCommands.CommandCount,
             readBackCounter,
             collectDiagnostics,
-            outputCapacity);
+            outputCapacity,
+            preserveOrder,
+            boundsPadding);
 
     public bool DispatchWithGpuCulling(
         GlShaderProgram program,
@@ -141,7 +147,9 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         int commandCount,
         bool readBackCounter = false,
         bool collectDiagnostics = false,
-        int outputCapacity = 0)
+        int outputCapacity = 0,
+        bool preserveOrder = false,
+        float boundsPadding = 0f)
     {
         if (_disposed ||
             program is not { IsValid: true } ||
@@ -164,7 +172,7 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
             return false;
         }
 
-        UploadCullRecords(batches, sourceCommands.CommandCount, modelMatrix);
+        UploadCullRecords(batches, sourceCommands.CommandCount, modelMatrix, boundsPadding);
         UploadAllVisibleFlags(commandCount);
         ResetCounter();
 
@@ -185,10 +193,11 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         SetFirstCommand(program, firstCommand);
         SetOutputCapacity(program, outputCapacity);
         SetCollectDiagnostics(program, collectDiagnostics);
+        SetPreserveOrder(program, preserveOrder);
         SetCameraPosition(program, cameraPosition);
         SetFrustumPlanes(program, frustumPlanes[..6]);
 
-        _gl.DispatchCompute((uint)((commandCount + LocalSizeX - 1) / LocalSizeX), 1, 1);
+        _gl.DispatchCompute(preserveOrder ? 1u : (uint)((commandCount + LocalSizeX - 1) / LocalSizeX), 1, 1);
         _gl.MemoryBarrier(ShaderStorageBarrierBit | CommandBarrierBit | BufferUpdateBarrierBit);
 
         if (readBackCounter)
@@ -270,7 +279,8 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
     private void UploadCullRecords(
         IReadOnlyList<PreviewDrawBatch> batches,
         int commandCount,
-        Matrix4x4 modelMatrix)
+        Matrix4x4 modelMatrix,
+        float boundsPadding)
     {
         var floatCount = checked(commandCount * CullRecordFloats);
         if (_cullRecordScratch.Length < floatCount)
@@ -282,7 +292,7 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         records.Clear();
         for (var i = 0; i < commandCount; i++)
         {
-            WriteCullRecord(records.Slice(i * CullRecordFloats, CullRecordFloats), batches[i], modelMatrix);
+            WriteCullRecord(records.Slice(i * CullRecordFloats, CullRecordFloats), batches[i], modelMatrix, boundsPadding);
         }
 
         _cullRecordBuffer = _cullRecordBuffer == 0 ? _gl.GenBuffer() : _cullRecordBuffer;
@@ -307,7 +317,8 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
     internal static void WriteCullRecord(
         Span<float> destination,
         PreviewDrawBatch batch,
-        Matrix4x4 modelMatrix)
+        Matrix4x4 modelMatrix,
+        float boundsPadding = 0f)
     {
         if (destination.Length < CullRecordFloats)
         {
@@ -328,7 +339,7 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
                 new Vector3(modelMatrix.M21, modelMatrix.M22, modelMatrix.M23).Length(),
                 new Vector3(modelMatrix.M31, modelMatrix.M32, modelMatrix.M33).Length()));
         var radius = batch.HasBounds
-            ? MathF.Max(0f, batch.BoundsRadius) * modelScale
+            ? (MathF.Max(0f, batch.BoundsRadius) + MathF.Max(0f, boundsPadding)) * modelScale
             : -1f;
         destination[0] = center.X;
         destination[1] = center.Y;
@@ -369,6 +380,15 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
     private void SetCollectDiagnostics(GlShaderProgram program, bool enabled)
     {
         var loc = program.GetUniformLocation("uCollectDiagnostics");
+        if (loc >= 0)
+        {
+            _gl.Uniform1(loc, enabled ? 1 : 0);
+        }
+    }
+
+    private void SetPreserveOrder(GlShaderProgram program, bool enabled)
+    {
+        var loc = program.GetUniformLocation("uPreserveOrder");
         if (loc >= 0)
         {
             _gl.Uniform1(loc, enabled ? 1 : 0);

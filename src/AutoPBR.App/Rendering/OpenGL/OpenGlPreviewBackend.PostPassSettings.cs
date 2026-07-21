@@ -44,6 +44,22 @@ public sealed partial class OpenGlPreviewBackend
         SetFloatOnProgramLoc(_taaResolveProgram, tu.FxaaLumaThreshold,
             Math.Clamp(settings.PreviewTaaFxaaLumaThreshold, 0.001f, 0.12f));
         SetIntOnProgramLoc(_taaResolveProgram, tu.ForceFxaa, settings.PreviewTaaForceFxaa ? 1 : 0);
+        SetIntOnProgramLoc(_taaResolveProgram, tu.HdrPresent, settings.HdrPresentActive ? 1 : 0);
+    }
+
+    private void BindScenePresentUniforms(in PreviewRenderSettingsSnapshot settings, bool sceneIsLinear)
+    {
+        if (_scenePresentProgram is not { IsValid: true })
+        {
+            return;
+        }
+
+        var pu = _scenePresentUniformLocs;
+        SetIntOnProgramLoc(_scenePresentProgram, pu.SceneColor, 0);
+        SetIntOnProgramLoc(_scenePresentProgram, pu.HdrPresent, settings.HdrPresentActive ? 1 : 0);
+        SetIntOnProgramLoc(_scenePresentProgram, pu.SceneIsLinear, sceneIsLinear ? 1 : 0);
+        SetFloatOnProgramLoc(_scenePresentProgram, pu.HdrPaperWhiteNits, settings.HdrPaperWhiteNits);
+        SetFloatOnProgramLoc(_scenePresentProgram, pu.HdrPeakNits, settings.HdrPeakNits);
     }
 
     private void ApplyGodRayPerSettingsUniforms(in PreviewRenderSettingsSnapshot settings)

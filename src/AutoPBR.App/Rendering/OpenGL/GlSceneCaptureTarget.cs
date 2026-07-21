@@ -5,7 +5,7 @@ namespace AutoPBR.App.Rendering.OpenGL;
 /// <summary>
 /// Offscreen color + depth target for Genesis god rays: scene renders here, then presents to the default FBO.
 /// </summary>
-internal sealed class GlSceneCaptureTarget(GL gl, bool useOpenGlEs) : IDisposable
+internal sealed class GlSceneCaptureTarget(GL gl, bool useOpenGlEs, bool useFloatColor = false) : IDisposable
 {
     private uint _fbo;
     private uint _colorTexture;
@@ -13,6 +13,7 @@ internal sealed class GlSceneCaptureTarget(GL gl, bool useOpenGlEs) : IDisposabl
     private uint _depthTexture;
     private int _width;
     private int _height;
+    private bool _useFloatColor = useFloatColor;
     private bool _disposed;
 
     public uint DepthTextureHandle => _depthTexture;
@@ -20,11 +21,22 @@ internal sealed class GlSceneCaptureTarget(GL gl, bool useOpenGlEs) : IDisposabl
     public int Width => _width;
     public int Height => _height;
     public bool IsValid => _fbo != 0 && _colorTexture != 0 && _taaSignalTexture != 0 && _depthTexture != 0;
+    public bool UsesFloatColor => _useFloatColor;
 
-    public bool EnsureSize(int width, int height)
+    public bool EnsureSize(int width, int height, bool? useFloatColor = null)
     {
         width = Math.Max(1, width);
         height = Math.Max(1, height);
+        if (useFloatColor is { } floatColor)
+        {
+            if (_useFloatColor != floatColor && IsValid)
+            {
+                DestroyGpuResources();
+            }
+
+            _useFloatColor = floatColor;
+        }
+
         if (_width == width && _height == height && IsValid)
         {
             return true;
@@ -38,8 +50,16 @@ internal sealed class GlSceneCaptureTarget(GL gl, bool useOpenGlEs) : IDisposabl
         gl.BindTexture(TextureTarget.Texture2D, _colorTexture);
         unsafe
         {
-            gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, (uint)width, (uint)height, 0,
-                PixelFormat.Rgba, PixelType.UnsignedByte, (void*)0);
+            if (_useFloatColor)
+            {
+                gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba16f, (uint)width, (uint)height, 0,
+                    PixelFormat.Rgba, PixelType.HalfFloat, (void*)0);
+            }
+            else
+            {
+                gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, (uint)width, (uint)height, 0,
+                    PixelFormat.Rgba, PixelType.UnsignedByte, (void*)0);
+            }
         }
 
         gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Linear);

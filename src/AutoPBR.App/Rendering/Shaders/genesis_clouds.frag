@@ -1,14 +1,16 @@
 #version 330 core
-// Screen-space volumetric cloud layer (sky pixels only) with Beer-Powder lighting.
+// Curved-shell volumetric clouds with conservative empty-space marching.
 
 //!include "common/common.glsl"
 //!include "common/atmosphere.glsl"
 //!include "common/sky_dome.glsl"
+//!include "common/cloud_shell.glsl"
 //!include "common/volumetric_clouds.glsl"
 //!include "common/volumetric_medium.glsl"
 //!include "common/volumetric_clouds_density_maps.glsl"
-//!include "common/temporal_reproject.glsl"
+//!include "common/cloud_temporal.glsl"
 //!include "common/ray_reconstruct.glsl"
+//!include "common/cloud_scene_depth.glsl"
 
 in vec2 vUv;
 uniform mat4 uInvViewProj;
@@ -16,13 +18,14 @@ uniform vec3 uCameraPos;
 uniform vec3 uSunDir;
 uniform float uSunIntensity;
 uniform float uSkyExposure;
+uniform int uHdrPresent;
 uniform sampler2D uSkyViewLut;
 uniform sampler3D uCloudNoise;
 uniform sampler3D uDetailNoise;
 uniform sampler2D uCoverageMap;
 uniform sampler2D uSceneDepth;
-uniform sampler2D uPrevClouds;
-uniform mat4 uPrevViewProj;
+uniform float uGroundWorldY;
+uniform float uPlanetRadius;
 uniform float uLayerHeight;
 uniform float uVolumeHeight;
 uniform float uDensity;
@@ -31,26 +34,23 @@ uniform float uVolumeSize;
 uniform vec3 uWindOffset;
 uniform float uCirrusStrength;
 uniform vec2 uCirrusWindOffset;
+uniform vec2 uCirrusWindDir;
 uniform int uQuality;
 uniform int uMarchSteps;
 uniform int uDebugView;
-uniform int uGateSkyDepth;
+uniform int uHasSceneDepth;
 uniform int uHasCloudNoise;
 uniform int uHasDetailNoise;
 uniform int uHasCoverageMap;
 uniform int uHasSkyLut;
-uniform int uHasPrevClouds;
-uniform float uTemporalWeight;
 uniform float uFramePhase;
 
-out vec4 FragColor;
+layout(location = 0) out vec4 FragColor;
+layout(location = 1) out vec4 FragCloudData;
 
-const int CLOUD_STEPS = 24;
-const float SKY_DEPTH_EPS = 0.9992;
+const int CLOUD_MAX_STEPS = 64;
+const float CLOUD_HORIZON_FEATHER = 0.0025;
 
-// Ambient in-scatter from the sky dome, blended toward the night zenith as the sun sets.
-// Uses the sky-view LUT's actual parameterization and decodes its sRGB storage; sampling
-// is lifted above the horizon so the ambient reads the bright sky band, not the ground fog.
 vec3 sampleSkyAmbient(vec3 rd, sampler2D skyLut, int hasSkyLut, float dayAmt)
 {
     vec3 night = skyNightZenith(rd) * 2.0;
@@ -59,387 +59,252 @@ vec3 sampleSkyAmbient(vec3 rd, sampler2D skyLut, int hasSkyLut, float dayAmt)
         return mix(night, vec3(0.42, 0.50, 0.63), dayAmt);
     }
 
-    // Zenith-dominant sample: cloud ambient tracks the overhead sky brightness (dark at
-    // dusk like the dome) while keeping some azimuthal sunset tint, instead of reading
-    // the bright horizon band and glowing against a dark sky.
     vec3 ambientDir = normalize(vec3(rd.x * 0.35, max(rd.y, 0.45), rd.z * 0.35));
     vec3 lut = srgbToLinear(sampleSkyViewLutSrgb(skyLut, ambientDir));
     return mix(night, lut, dayAmt);
 }
 
-// 1 when the camera is physically under the layer base (horizon dissolve applies).
-float cloudUnderSlabFactor(float camY, float layerBase)
+float cloudSceneDistance(vec3 rd)
 {
-    return smoothstep(layerBase + 0.5, layerBase - 3.0, camY);
-}
-
-// 1 when the camera is inside the cumulus slab (between base and top).
-float cloudInsideSlabFactor(float camY, float layerBase, float layerTop)
-{
-    float enter = smoothstep(layerBase - 0.5, layerBase + 1.5, camY);
-    float exit = 1.0 - smoothstep(layerTop - 1.5, layerTop + 2.0, camY);
-    return enter * exit;
-}
-
-// 1 when the camera is above the layer top; ramps in across a few meters above the deck.
-float cloudDeckAboveFactor(float camY, float layerTop)
-{
-    return smoothstep(layerTop - 1.0, layerTop + 8.0, camY);
-}
-
-// Minimum ray elevation for the cloud pass.
-float cloudMinRayElevation(float underSlab, float aboveDeck)
-{
-    float under = mix(-0.08, 0.02, underSlab);
-    return mix(under, -0.14, aboveDeck);
-}
-
-// Maximum ray elevation (discard steep upward sky) when above the deck.
-float cloudMaxRayElevation(float aboveDeck)
-{
-    return mix(1.0, 0.38, aboveDeck);
-}
-
-// Intersect a world-horizontal plane along rd; returns -1 when the hit is behind the camera.
-float cloudPlaneHitDist(vec3 rd, float camY, float planeY)
-{
-    if (abs(rd.y) < 1e-5)
+    if (uHasSceneDepth < 1)
     {
-        return -1.0;
+        return CSD_NO_SCENE_HIT;
     }
 
-    float t = (planeY - camY) / rd.y;
-    return t > 0.0 ? t : -1.0;
-}
-
-// Cumulus slab segment along rd (xy = enter/exit). Caller checks seg.y > seg.x for a hit.
-vec2 cloudIntersectCumulusSlab(vec3 rd, float camY, float layerBase, float layerTop, float underSlab,
-    float aboveDeck, float volumeSize)
-{
-    if (aboveDeck > 0.01)
-    {
-        if (rd.y >= -1e-4)
-        {
-            return vec2(0.0, -1.0);
-        }
-    }
-
-    bool camInSlab = camY >= layerBase && camY <= layerTop;
-    if (camInSlab && abs(rd.y) < 1e-4)
-    {
-        float horizReach = max(volumeSize * 6.0, 160.0);
-        return vec2(0.0, horizReach);
-    }
-
-    if (abs(rd.y) < 1e-5)
-    {
-        return vec2(0.0, -1.0);
-    }
-
-    float tTop = (layerTop - camY) / rd.y;
-    float tBase = (layerBase - camY) / rd.y;
-    float tNear = min(tTop, tBase);
-    float tFar = max(tTop, tBase);
-    float tEnter = max(tNear, 0.0);
-    float tExit = tFar;
-    if (tExit <= tEnter)
-    {
-        return vec2(0.0, -1.0);
-    }
-
-    if (underSlab > 0.5)
-    {
-        float maxMarch = max(volumeSize * 8.0, 280.0);
-        tExit = min(tExit, tEnter + maxMarch);
-    }
-
-    return vec2(tEnter, tExit);
-}
-
-// Height-stratified march when the camera is in the slab: one sample per altitude band,
-// independent of view elevation (avoids column streaks from collapsed rd.y intersections).
-bool cloudUseHeightMarch(float camY, float layerBase, float layerTop)
-{
-    return camY >= layerBase && camY <= layerTop;
-}
-
-float cloudHeightMarchT(float bandT, float camY, float layerBase, float layerTop, vec3 rd, float tEnter, float tExit)
-{
-    float sampleY = mix(layerBase, layerTop, bandT);
-    if (abs(rd.y) < 1e-4)
-    {
-        return mix(tEnter, tExit, bandT);
-    }
-
-    float t = (sampleY - camY) / rd.y;
-    if (t < tEnter - 1e-3 || t > tExit + 1e-3)
-    {
-        return -1.0;
-    }
-
-    return clamp(t, tEnter, tExit);
-}
-
-// Cirrus fades only near the view-horizon when under the deck; stays visible looking up.
-float cloudCirrusLifetime(vec3 rd, float underSlab)
-{
-    if (underSlab < 0.01)
-    {
-        return 1.0;
-    }
-
-    return smoothstep(-0.02, 0.14, rd.y);
-}
-
-// Fade clouds toward the view-horizon only when physically under the layer base.
-float cloudHorizonLifetime(vec3 rd, float slabEnter, float camY, float layerBase, float layerTop)
-{
-    float aboveDeck = cloudDeckAboveFactor(camY, layerTop);
-    if (aboveDeck > 0.01)
-    {
-        return smoothstep(0.02, -0.1, rd.y);
-    }
-
-    float underSlab = cloudUnderSlabFactor(camY, layerBase);
-    if (underSlab < 0.01)
-    {
-        return 1.0;
-    }
-
-    float elevFade = smoothstep(0.04, 0.2, rd.y);
-    float grazingFade = 1.0 - smoothstep(0.48, 0.9, 1.0 - rd.y);
-    float distFade = 1.0 - smoothstep(50.0, 220.0, max(slabEnter, 0.0));
-    return mix(1.0, elevFade * grazingFade * distFade, underSlab);
+    // The trace target is half resolution. Choose the farthest depth in its full-resolution
+    // footprint so one foreground terrain sample cannot erase the neighboring sky sample.
+    // The upsample pass performs the authoritative per-display-pixel distance rejection.
+    vec2 sceneTexel = 1.0 / vec2(textureSize(uSceneDepth, 0));
+    vec2 footprintOffset = max(sceneTexel * 0.5, fwidth(vUv) * 0.25);
+    float conservativeDepth = max(
+        max(texture(uSceneDepth, vUv + vec2(-footprintOffset.x, -footprintOffset.y)).r,
+            texture(uSceneDepth, vUv + vec2( footprintOffset.x, -footprintOffset.y)).r),
+        max(texture(uSceneDepth, vUv + vec2(-footprintOffset.x,  footprintOffset.y)).r,
+            texture(uSceneDepth, vUv + vec2( footprintOffset.x,  footprintOffset.y)).r));
+    return csdSceneRayDistanceFromDepth(
+        conservativeDepth, vUv, uInvViewProj, uCameraPos, rd, uHasSceneDepth);
 }
 
 void main()
 {
-    if (uGateSkyDepth > 0)
-    {
-        float sceneDepth = texture(uSceneDepth, vUv).r;
-        if (sceneDepth < SKY_DEPTH_EPS)
-        {
-            discard;
-        }
-    }
-
     vec3 rd = grWorldRayDir(vUv, uInvViewProj, uCameraPos);
-    float layerTop = uLayerHeight + uVolumeHeight;
-    float underSlab = cloudUnderSlabFactor(uCameraPos.y, uLayerHeight);
-    float insideSlab = cloudInsideSlabFactor(uCameraPos.y, uLayerHeight, layerTop);
-    float aboveDeck = cloudDeckAboveFactor(uCameraPos.y, layerTop);
-    vec2 slabSeg = cloudIntersectCumulusSlab(rd, uCameraPos.y, uLayerHeight, layerTop, underSlab, aboveDeck,
-        uVolumeSize);
+    float planetRadius = max(uPlanetRadius, 1.0);
+    vec3 planetCenter = vec3(0.0, uGroundWorldY - planetRadius, 0.0);
+    float layerBaseAltitude = max(uLayerHeight - uGroundWorldY, 0.01);
+    float layerTopAltitude = layerBaseAltitude + max(uVolumeHeight, 0.01);
+    float innerRadius = planetRadius + layerBaseAltitude;
+    float outerRadius = planetRadius + layerTopAltitude;
+
+    vec2 slabSeg = vcsIntersectShell(uCameraPos, rd, planetCenter, innerRadius, outerRadius);
+    // Opaque scene depth remains hard. The planet receives a very narrow angular feather:
+    // far-side clouds may contribute only inside that transition band, avoiding a cutout edge.
+    float planetT = vcsPlanetOcclusionDistance(uCameraPos, rd, planetCenter, planetRadius);
+    float horizonVisibility = vcsPlanetHorizonVisibility(
+        uCameraPos, rd, planetCenter, planetRadius, CLOUD_HORIZON_FEATHER);
+    float sceneT = cloudSceneDistance(rd);
     float tEnter = slabSeg.x;
-    float tExit = slabSeg.y;
-    bool slabHit = tExit > tEnter;
-    if (!slabHit)
+    float tExit = min(slabSeg.y, sceneT);
+    float slabHorizonVisibility = planetT < 1e8 && tEnter >= planetT
+        ? horizonVisibility
+        : 1.0;
+    bool slabHit = tExit > tEnter && slabHorizonVisibility > 1e-3;
+
+    float cirrusAltitude = layerTopAltitude + max(uVolumeHeight * 1.5, 18.0);
+    float cirrusThickness = max(uVolumeHeight * 0.035, 0.75);
+    vec2 cirrusSeg = vcsIntersectShell(uCameraPos, rd, planetCenter,
+        planetRadius + cirrusAltitude, planetRadius + cirrusAltitude + cirrusThickness);
+    cirrusSeg.y = min(cirrusSeg.y, sceneT);
+    float cirrusHorizonVisibility = planetT < 1e8 && cirrusSeg.x >= planetT
+        ? horizonVisibility
+        : 1.0;
+    bool cirrusHit = cirrusSeg.y > cirrusSeg.x && cirrusHorizonVisibility > 1e-3;
+
+    if (!slabHit && (!cirrusHit || uCirrusStrength <= 0.0))
     {
         discard;
     }
 
-    if (rd.y < cloudMinRayElevation(underSlab, aboveDeck))
-    {
-        discard;
-    }
-
-    if (rd.y > cloudMaxRayElevation(aboveDeck))
-    {
-        discard;
-    }
-
-    bool hasCumulus = true;
     vec3 cloudCol = vec3(0.0);
     float alpha = 0.0;
     bool debugViewActive = false;
 
-    bool heightMarch = cloudUseHeightMarch(uCameraPos.y, uLayerHeight, layerTop);
-    if (uDebugView == 1)
+    if (uDebugView == 1 && slabHit)
     {
-        float tSample = heightMarch
-            ? cloudHeightMarchT(0.5, uCameraPos.y, uLayerHeight, layerTop, rd, tEnter, tExit)
-            : ((tEnter + tExit) * 0.5);
-        if (tSample < 0.0)
-        {
-            discard;
-        }
-
+        float tSample = (tEnter + tExit) * 0.5;
         vec3 pos = uCameraPos + rd * tSample;
         vec2 weather = vcSampleWeather(uCoverageMap, uHasCoverageMap, pos, uVolumeSize, uWindOffset.xz);
         float cov = saturate1(weather.x * uCoverageScale);
         cloudCol = vec3(cov, weather.y, 0.35);
-        alpha = cov > 0.02 ? 0.95 : 0.0;
+        alpha = (cov > 0.02 ? 0.95 : 0.0) * slabHorizonVisibility;
         debugViewActive = true;
     }
-    else if (uDebugView == 2)
+    else if (uDebugView == 2 && slabHit)
     {
-        float tSlice = heightMarch
-            ? cloudHeightMarchT(0.5, uCameraPos.y, uLayerHeight, layerTop, rd, tEnter, tExit)
-            : ((tEnter + tExit) * 0.5);
-        if (tSlice < 0.0)
-        {
-            discard;
-        }
-
+        float tSlice = (tEnter + tExit) * 0.5;
         vec3 pos = uCameraPos + rd * tSlice;
-        float density = vcCloudDensityEx(pos, uLayerHeight, layerTop, uDensity, uCoverageScale, uVolumeSize,
-            uCloudNoise, uHasCloudNoise, uDetailNoise, uHasDetailNoise, uCoverageMap, uHasCoverageMap, uWindOffset);
+        float density = vcCloudDensityEx(pos, planetCenter, planetRadius,
+            layerBaseAltitude, layerTopAltitude, uDensity, uCoverageScale, uVolumeSize,
+            uCloudNoise, uHasCloudNoise, uDetailNoise, uHasDetailNoise,
+            uCoverageMap, uHasCoverageMap, uWindOffset) * slabHorizonVisibility;
         cloudCol = vec3(density * 2.8, density * 1.4, density * 0.35);
         alpha = saturate1(density * 3.5);
         debugViewActive = true;
     }
 
+    float representativeT = slabHit ? tExit : max(cirrusSeg.x, 0.0);
+    float representativeKind = slabHit ? 0.0 : 1.0;
+    bool representativeFound = false;
     if (!debugViewActive)
     {
-    if (hasCumulus)
-    {
-        // Coverage pre-test: a few cheap weather-map taps along the segment let fully clear
-        // rays skip the march (and all of its 3D texture work) entirely.
-        float covMax = 0.0;
-        for (int i = 0; i < 6; ++i)
+        vec3 sunToward = normalize(-uSunDir);
+        float cosTheta = dot(rd, sunToward);
+        float dayAmt = skyDayFactor(uSunDir, uSunIntensity);
+        vec3 sunColor = vcCloudSunColor(sunToward, uSunIntensity);
+        vec3 skyAmbient = sampleSkyAmbient(rd, uSkyViewLut, uHasSkyLut, dayAmt);
+        vec3 accum = vec3(0.0);
+        float transmittance = 1.0;
+
+        if (slabHit)
         {
-            float tCov = mix(tEnter, tExit, (float(i) + 0.5) / 6.0);
-            vec3 covPos = uCameraPos + rd * tCov;
-            covMax = max(covMax, vcSampleWeather(uCoverageMap, uHasCoverageMap, covPos, uVolumeSize, uWindOffset.xz).x);
-        }
-
-        hasCumulus = covMax * uCoverageScale > 1e-3;
-    }
-
-    vec3 sunToward = normalize(-uSunDir);
-    float cosTheta = dot(rd, sunToward);
-    float dayAmt = skyDayFactor(uSunDir, uSunIntensity);
-    vec3 sunColor = vcCloudSunColor(sunToward, uSunIntensity);
-    vec3 skyAmbient = sampleSkyAmbient(rd, uSkyViewLut, uHasSkyLut, dayAmt);
-    vec3 accum = vec3(0.0);
-    float transmittance = 1.0;
-    float lifetime = cloudHorizonLifetime(rd, tEnter, uCameraPos.y, uLayerHeight, layerTop);
-
-    if (hasCumulus)
-    {
-        int steps = uMarchSteps > 0 ? uMarchSteps : (uQuality <= 0 ? 16 : (uQuality >= 2 ? 32 : CLOUD_STEPS));
-        if (aboveDeck > 0.01)
-        {
-            steps = max(steps, uQuality >= 2 ? 36 : 28);
-        }
-        else if (insideSlab > 0.01)
-        {
-            steps = max(steps, uQuality >= 2 ? 40 : 32);
-        }
-
-        float stepLen = (tExit - tEnter) / float(steps);
-        int lightSteps = uQuality >= 2 ? 5 : 3;
-        vec2 ignCoord = gl_FragCoord.xy + uFramePhase * vec2(47.0, 17.0);
-        float jitter01 = fract(52.9829189 * fract(dot(ignCoord, vec2(0.06711056, 0.00583715))));
-        float prevT = -1.0;
-
-        for (int i = 0; i < 32; ++i)
-        {
-            if (i >= steps)
+            // A few weather-map taps reject wholly clear rays before any 3D texture access.
+            float covMax = 0.0;
+            for (int i = 0; i < 4; ++i)
             {
-                break;
+                float tCov = mix(tEnter, tExit, (float(i) + 0.5) / 4.0);
+                vec3 covPos = uCameraPos + rd * tCov;
+                covMax = max(covMax,
+                    vcSampleWeather(uCoverageMap, uHasCoverageMap, covPos, uVolumeSize, uWindOffset.xz).x);
             }
 
-            float bandT = (float(i) + 0.5 + jitter01) / float(steps);
-            float t = heightMarch
-                ? cloudHeightMarchT(bandT, uCameraPos.y, uLayerHeight, layerTop, rd, tEnter, tExit)
-                : (tEnter + (bandT * (tExit - tEnter)));
-            if (t < 0.0)
+            bool hasCumulus = covMax * uCoverageScale > 1e-3;
+            if (hasCumulus)
             {
-                continue;
-            }
+                int steps = uMarchSteps > 0
+                    ? clamp(uMarchSteps, 1, CLOUD_MAX_STEPS)
+                    : (uQuality <= 0 ? 16 : (uQuality >= 2 ? 32 : 24));
+                float fineStep = max((tExit - tEnter) / float(steps), 0.01);
+                float coarseStep = fineStep * (uQuality <= 0 ? 4.0 : 3.0);
+                int lightSteps = uQuality >= 2 ? 4 : (uQuality <= 0 ? 2 : 3);
+                float weatherLod = uQuality <= 0 ? 3.0 : 2.0;
+                vec2 ignCoord = gl_FragCoord.xy + uFramePhase * vec2(47.0, 17.0);
+                float jitter01 = fract(52.9829189 * fract(dot(ignCoord, vec2(0.06711056, 0.00583715))));
+                float t = tEnter + jitter01 * fineStep;
 
-            float segLen = prevT < 0.0 ? stepLen : max(abs(t - prevT), 1e-3);
-            prevT = t;
-            vec3 worldPos = uCameraPos + rd * t;
-            float baseShape = vcCloudBaseDensity(worldPos, uLayerHeight, layerTop, uCoverageScale, uVolumeSize,
-                uCloudNoise, uHasCloudNoise, uCoverageMap, uHasCoverageMap, uWindOffset);
-            if (baseShape <= 1e-5)
-            {
-                continue;
-            }
+                for (int i = 0; i < CLOUD_MAX_STEPS; ++i)
+                {
+                    if (i >= steps || t >= tExit)
+                    {
+                        break;
+                    }
 
-            float density = vcCloudDensityFromBase(baseShape, worldPos, uLayerHeight, layerTop, uDensity, uVolumeSize,
-                uDetailNoise, uHasDetailNoise, uWindOffset);
-            density *= lifetime;
-            if (density <= 1e-5)
-            {
-                continue;
-            }
+                    float sampleT = min(t + fineStep * 0.5, tExit);
+                    vec3 worldPos = uCameraPos + rd * sampleT;
+                    float conservative = vcCloudConservativeDensity(worldPos, planetCenter, planetRadius,
+                        layerBaseAltitude, layerTopAltitude, uCoverageScale, uVolumeSize,
+                        uCoverageMap, uHasCoverageMap, uWindOffset, weatherLod);
+                    if (conservative <= 1e-4)
+                    {
+                        t += coarseStep;
+                        continue;
+                    }
 
-            float lightOd = vcLightOpticalDepthFromBase(baseShape, worldPos, sunToward, uLayerHeight, layerTop, uDensity, uCoverageScale,
-                uVolumeSize, lightSteps, uCloudNoise, uHasCloudNoise, uCoverageMap, uHasCoverageMap, uWindOffset);
-            float hSample = saturate1((worldPos.y - uLayerHeight) / max(uVolumeHeight, 0.001));
-            vec3 radiance = vcSunScatter(sunColor, cosTheta, lightOd);
-            radiance += skyAmbient * mix(0.35, 1.0, hSample) * 0.72;
-            float inscatterW = vmSegmentInscatterWeight(density, segLen, 1.1);
-            accum += transmittance * radiance * inscatterW;
-            transmittance *= vmSegmentTransmittance(density, segLen, 1.1);
-            if (transmittance < 0.03)
-            {
-                break;
+                    float baseShape = vcCloudBaseDensity(worldPos, planetCenter, planetRadius,
+                        layerBaseAltitude, layerTopAltitude, uCoverageScale, uVolumeSize,
+                        uCloudNoise, uHasCloudNoise, uCoverageMap, uHasCoverageMap, uWindOffset, 0.0);
+                    if (baseShape <= 1e-5)
+                    {
+                        t += fineStep;
+                        continue;
+                    }
+
+                    float density = vcCloudDensityFromBase(baseShape, worldPos, planetCenter, planetRadius,
+                        layerBaseAltitude, layerTopAltitude, uDensity, uVolumeSize,
+                        uDetailNoise, uHasDetailNoise, uWindOffset) * slabHorizonVisibility;
+                    if (density > 1e-5)
+                    {
+                        float segmentLength = min(fineStep, tExit - t);
+                        float lightOd = vcLightOpticalDepthFromBase(baseShape, worldPos, sunToward,
+                            planetCenter, planetRadius, layerBaseAltitude, layerTopAltitude,
+                            uDensity, uCoverageScale, uVolumeSize, lightSteps,
+                            uCloudNoise, uHasCloudNoise, uCoverageMap, uHasCoverageMap, uWindOffset);
+                        float altitude = vcsAltitude(worldPos, planetCenter, planetRadius);
+                        float hSample = saturate1((altitude - layerBaseAltitude) / max(uVolumeHeight, 0.001));
+                        vec3 radiance = vcSunScatter(sunColor, cosTheta, lightOd);
+                        float ambientVisibility = mix(0.38, 1.0, exp(-lightOd * 0.32));
+                        // The shared condensation level stays comparatively shaded while
+                        // the cauliflower tops receive progressively more skylight.
+                        radiance += skyAmbient * mix(0.22, 0.82, hSample) * 0.62 * ambientVisibility;
+                        float inscatterW = vmSegmentInscatterWeight(density, segmentLength, 1.1);
+                        accum += transmittance * radiance * inscatterW;
+                        transmittance *= vmSegmentTransmittance(density, segmentLength, 1.1);
+                        if (!representativeFound || sampleT < representativeT)
+                        {
+                            representativeT = sampleT;
+                            representativeKind = 0.5;
+                            representativeFound = true;
+                        }
+                        if (transmittance < 0.03)
+                        {
+                            break;
+                        }
+                    }
+
+                    t += fineStep;
+                }
             }
         }
-    }
 
-    // High thin cirrus sheet above the cumulus slab: plane hit uses true rd.y (not slab bias).
-    float cirrusY = layerTop + max(uVolumeHeight * 1.5, 18.0);
-    float tCirrus = cloudPlaneHitDist(rd, uCameraPos.y, cirrusY);
-    if (uCirrusStrength > 0.0 && tCirrus > 0.0 && rd.y > mix(0.025, 0.12, aboveDeck))
-    {
-        vec3 cirrusPos = uCameraPos + rd * tCirrus;
-        float cirrusLife = cloudCirrusLifetime(rd, underSlab);
-        float cirrusDensity = vcCirrusDensity(cirrusPos.xz, uCirrusWindOffset, uVolumeSize);
-        cirrusDensity *= cirrusLife;
-        if (cirrusDensity > 1e-3)
+        if (uCirrusStrength > 0.0 && cirrusHit)
         {
-            float slant = mix(1.0, clamp(1.0 / max(rd.y, 0.12), 1.0, 2.2), 1.0 - cirrusLife);
-            float cirrusAlpha = saturate1(cirrusDensity * uCirrusStrength * 0.62 * slant);
-            vec3 cirrusRad = vcSunScatter(sunColor, cosTheta, cirrusDensity * 1.6) + skyAmbient * 0.82;
-            accum += transmittance * cirrusRad * cirrusAlpha;
-            transmittance *= 1.0 - cirrusAlpha;
+            int cirrusSamples = uQuality >= 2 ? 2 : 1;
+            float cirrusDensity = 0.0;
+            float tCirrus = (cirrusSeg.x + cirrusSeg.y) * 0.5;
+            for (int i = 0; i < 2; ++i)
+            {
+                if (i >= cirrusSamples)
+                {
+                    break;
+                }
+
+                float sampleFrac = cirrusSamples > 1 ? (float(i) + 0.5) / float(cirrusSamples) : 0.5;
+                float sampleT = mix(cirrusSeg.x, cirrusSeg.y, sampleFrac);
+                vec3 cirrusPos = uCameraPos + rd * sampleT;
+                float sampleDensity = vcCirrusDensity(
+                    cirrusPos.xz, uCirrusWindOffset, uCirrusWindDir, uVolumeSize);
+                cirrusDensity += sampleDensity / float(cirrusSamples);
+                if (sampleDensity > 1e-3)
+                {
+                    tCirrus = min(tCirrus, sampleT);
+                }
+            }
+            if (cirrusDensity > 1e-3)
+            {
+                float slant = clamp((cirrusSeg.y - cirrusSeg.x) / cirrusThickness, 1.0, 3.0);
+                float cirrusOd = cirrusDensity * uCirrusStrength * 0.27 * slant *
+                    cirrusHorizonVisibility;
+                float cirrusAlpha = 1.0 - exp(-cirrusOd);
+                vec3 cirrusRad = vcSunScatter(sunColor, cosTheta, cirrusDensity * 0.62) * 0.42 +
+                    skyAmbient * 0.54;
+                accum += transmittance * cirrusRad * cirrusAlpha;
+                transmittance *= 1.0 - cirrusAlpha;
+                if (!representativeFound || tCirrus < representativeT)
+                {
+                    representativeT = tCirrus;
+                    representativeKind = 1.0;
+                    representativeFound = true;
+                }
+            }
         }
-    }
 
-    // Skylight fill along clear segments of the ray so gaps between puffs read as bright air,
-    // not void; keeps daylight gaps from showing night zenith / stars through low-alpha haze.
-    float clearAmt = (1.0 - transmittance) * mix(0.35, 0.55, dayAmt);
-    accum += skyAmbient * clearAmt;
+        float clearAmt = (1.0 - transmittance) * mix(0.35, 0.55, dayAmt);
+        accum += skyAmbient * clearAmt;
+        alpha = saturate1(1.0 - transmittance);
+        // RGB is premultiplied volume radiance. Composite with ONE, ONE_MINUS_SRC_ALPHA.
+        vec3 linearCloud = skySoftKnee(accum * uSkyExposure, 0.08);
+        cloudCol = uHdrPresent > 0 ? linearCloud : linearToSrgb(linearCloud);
 
-    // Opacity comes from optical depth, not scattered luminance: a thick cloud occludes the
-    // sky even when its in-scatter toward the eye is dim. Lifetime fade dissolves the deck
-    // before the horizon line instead of stacking clouds on the grid plane.
-    alpha = saturate1(1.0 - transmittance) * lifetime;
-
-    // Match the sky pass pipeline (exposure -> soft knee -> sRGB) so clouds composite
-    // seamlessly over the dome instead of reading darker than the sky behind them.
-    cloudCol = linearToSrgb(skySoftKnee(accum * uSkyExposure, 0.08));
-
-    if (uHasPrevClouds > 0 && uTemporalWeight > 0.0)
-    {
-        // Reproject by the cloud layer's own distance, not scene depth: sky depth sits at the
-        // far plane, which under camera translation yields the parallax of an infinitely far
-        // point and smears history sideways relative to a slab only tens of units away.
-        float tRep = slabHit ? (tEnter + tExit) * 0.5 : max(tCirrus, 0.0);
-        vec3 repPoint = uCameraPos + rd * max(tRep, 0.0);
-        vec2 prevUv = trReprojectUvFromWorld(repPoint, uPrevViewProj);
-        if (trPrevUvOnScreen(prevUv))
-        {
-            vec2 velocity = vUv - prevUv;
-            float motionW = trMotionRejectionWeight(velocity, 0.001, 0.04);
-            float borderW = trHistoryBorderWeight(prevUv, 0.03);
-            vec4 hist = texture(uPrevClouds, prevUv);
-            float blend = uTemporalWeight * hist.a * motionW * borderW;
-            cloudCol = mix(cloudCol, hist.rgb, blend);
-            alpha = mix(alpha, hist.a, uTemporalWeight * 0.65 * motionW * borderW);
-        }
-    }
-    }
-
-    if (alpha <= 0.035)
-    {
-        discard;
     }
 
     FragColor = vec4(cloudCol, alpha);
+    FragCloudData = vec4(ctEncodeDistance(representativeT), representativeKind, 1.0);
 }

@@ -13,7 +13,7 @@ internal sealed class GlTexture3D : IDisposable
         _gl = gl;
         _id = _gl.GenTexture();
         Bind(0);
-        _gl.TexParameter(TextureTarget.Texture3D, TextureParameterName.TextureMinFilter, (int)GLEnum.Linear);
+        _gl.TexParameter(TextureTarget.Texture3D, TextureParameterName.TextureMinFilter, (int)GLEnum.LinearMipmapLinear);
         _gl.TexParameter(TextureTarget.Texture3D, TextureParameterName.TextureMagFilter, (int)GLEnum.Linear);
         _gl.TexParameter(TextureTarget.Texture3D, TextureParameterName.TextureWrapS, (int)GLEnum.Repeat);
         _gl.TexParameter(TextureTarget.Texture3D, TextureParameterName.TextureWrapT, (int)GLEnum.Repeat);
@@ -33,6 +33,7 @@ internal sealed class GlTexture3D : IDisposable
         Bind(0);
         _gl.TexImage3D(TextureTarget.Texture3D, 0, InternalFormat.Rgba8, (uint)size, (uint)size, (uint)size, 0,
             PixelFormat.Rgba, PixelType.UnsignedByte, rgba);
+        _gl.GenerateMipmap(TextureTarget.Texture3D);
     }
 
     public void Dispose()

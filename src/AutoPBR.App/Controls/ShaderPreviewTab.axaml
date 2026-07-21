@@ -256,6 +256,22 @@
                                                                   ToolTip.Tip="{Binding Strings.Preview3DShowGroundMeshTooltip}">
                                                             <TextBlock Text="{Binding Strings.Preview3DShowGroundMesh}" TextWrapping="Wrap" />
                                                         </CheckBox>
+                                                        <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0"
+                                                              IsEnabled="{Binding Preview3DShowGroundMesh}">
+                                                            <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                                                       Text="{Binding Strings.Preview3DChunkViewDistance}"
+                                                                       TextWrapping="Wrap"
+                                                                       ToolTip.Tip="{Binding Strings.Preview3DChunkViewDistanceTooltip}" />
+                                                            <ctrls:OverlaySlider Grid.Column="1"
+                                                                                Minimum="2" Maximum="24"
+                                                                                SmallChange="1" LargeChange="2"
+                                                                                TickFrequency="1"
+                                                                                IsSnapToTickEnabled="True"
+                                                                                Value="{Binding Preview3DChunkViewDistance, Mode=TwoWay}"
+                                                                                Increment="1" FormatString="F0"
+                                                                                ToolTip.Tip="{Binding Strings.Preview3DChunkViewDistanceTooltip}"
+                                                                                HorizontalAlignment="Left" />
+                                                        </Grid>
                                                     </StackPanel>
                                                 </ctrls:FlyoutSection>
                                                 <ctrls:FlyoutSection Header="{Binding Strings.Preview3DCameraExpanderSection}" FlyoutMaxWidth="720">

@@ -1,4 +1,5 @@
 using AutoPBR.App.Models;
+using AutoPBR.App.Rendering;
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.Scene;
 using AutoPBR.App.Rendering.OpenGL;
@@ -49,6 +50,8 @@ internal static class UserSettingsSynchronizer
         vm.Preview3DPauseEntityIdleAnimation = settings.Preview3DPauseEntityIdleAnimation;
         vm.Preview3DShowGrid = settings.Preview3DShowGrid;
         vm.Preview3DShowGroundMesh = settings.Preview3DShowGroundMesh;
+        vm.Preview3DChunkViewDistance = Math.Clamp(
+            settings.Preview3DChunkViewDistance, 2, 24);
         vm.Preview3DGrassColormapTemperature = Math.Clamp(
             settings.Preview3DGrassColormapTemperature ?? PreviewStageConstants.DefaultGrassColormapTemperature,
             0.0,
@@ -251,6 +254,12 @@ internal static class UserSettingsSynchronizer
         }
         vm.DebugMode = settings.DebugMode;
         vm.PreviewUseOpenGl4 = settings.PreviewUseOpenGl4;
+        vm.PreviewHdrMode = PreviewHdrPresentPolicy.FormatMode(
+            PreviewHdrPresentPolicy.ParseMode(settings.PreviewHdrMode));
+        vm.PreviewHdrPaperWhiteNits = PreviewHdrPresentPolicy.ClampPaperWhiteNits(
+            (float)(settings.PreviewHdrPaperWhiteNits <= 0
+                ? PreviewHdrPresentPolicy.DefaultPaperWhiteNits
+                : settings.PreviewHdrPaperWhiteNits));
         vm.ColorScheme = string.IsNullOrWhiteSpace(settings.ColorScheme) ? "Dark" : settings.ColorScheme;
         vm.UiScale = settings.UiScale <= 0
             ? 1.0
@@ -379,6 +388,7 @@ internal static class UserSettingsSynchronizer
         settings.Preview3DPauseEntityIdleAnimation = vm.Preview3DPauseEntityIdleAnimation;
         settings.Preview3DShowGrid = vm.Preview3DShowGrid;
         settings.Preview3DShowGroundMesh = vm.Preview3DShowGroundMesh;
+        settings.Preview3DChunkViewDistance = (int)Math.Round(Math.Clamp(vm.Preview3DChunkViewDistance, 2, 24));
         settings.Preview3DGrassColormapTemperature = Math.Clamp(vm.Preview3DGrassColormapTemperature, 0.0, 1.0);
         settings.Preview3DGrassColormapDownfall = Math.Clamp(vm.Preview3DGrassColormapDownfall, 0.0, 1.0);
         settings.Preview3DShowAxes = vm.Preview3DShowAxes;
@@ -490,6 +500,10 @@ internal static class UserSettingsSynchronizer
         settings.MinecraftAssetsDirectory = vm.MinecraftAssetsDirectory;
         settings.DebugMode = vm.DebugMode;
         settings.PreviewUseOpenGl4 = vm.PreviewUseOpenGl4;
+        settings.PreviewHdrMode = PreviewHdrPresentPolicy.FormatMode(
+            PreviewHdrPresentPolicy.ParseMode(vm.PreviewHdrMode));
+        settings.PreviewHdrPaperWhiteNits = PreviewHdrPresentPolicy.ClampPaperWhiteNits(
+            (float)vm.PreviewHdrPaperWhiteNits);
         settings.ColorScheme = vm.ColorScheme;
         settings.UiScale = Math.Clamp(vm.UiScale, MainWindowViewModel.MinUiScale, MainWindowViewModel.MaxUiScale);
         settings.Language = vm.SelectedLanguage?.CultureCode ?? "en";

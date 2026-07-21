@@ -1,4 +1,9 @@
 #version 400 core
+#ifdef GENESIS_MATERIAL_DRAW_RECORD_SSBO
+#extension GL_ARB_shader_storage_buffer_object : require
+#endif
+#define GENESIS_TESS_CONTROL_STAGE 1
+//!include "common/genesis_draw_record.glsl"
 // Genesis high-end preview tessellation control stage.
 // Mirrors Iris shaderpack constraints: triangle patches for geometry-style rendering.
 
@@ -26,6 +31,7 @@ uniform float uTessellationLevel;
 
 void main()
 {
+    genesisWriteDrawRecordIndexVarying();
     tcWorldPos[gl_InvocationID] = vWorldPos[gl_InvocationID];
     tcWorldNormal[gl_InvocationID] = vWorldNormal[gl_InvocationID];
     tcUv[gl_InvocationID] = vUv[gl_InvocationID];
@@ -37,7 +43,8 @@ void main()
 
     if (gl_InvocationID == 0)
     {
-        float level = (uEnableTessellationDisplacement > 0 && uHasHeight > 0)
+        float level = (genesisEnableTessellationDisplacement(uEnableTessellationDisplacement) > 0 &&
+                       genesisHasHeight(uHasHeight) > 0)
             ? clamp(uTessellationLevel, 1.0, 16.0)
             : 1.0;
         gl_TessLevelOuter[0] = level;

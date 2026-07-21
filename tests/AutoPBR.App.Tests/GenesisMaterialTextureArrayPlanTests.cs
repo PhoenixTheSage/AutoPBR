@@ -26,7 +26,7 @@ public sealed class GenesisMaterialTextureArrayPlanTests
     }
 
     [Fact]
-    public void TryCreate_RejectsMixedSlotDimensions()
+    public void TryCreate_ResamplesMixedSlotDimensionsToLargestLayer()
     {
         var slots = new[]
         {
@@ -36,9 +36,10 @@ public sealed class GenesisMaterialTextureArrayPlanTests
 
         var ok = GenesisMaterialTextureArrayPlan.TryCreate(slots, maxTextureArrayLayers: 8, out var plan, out var reason);
 
-        Assert.False(ok);
-        Assert.Null(plan);
-        Assert.Contains("differ", reason, StringComparison.Ordinal);
+        Assert.True(ok, reason);
+        Assert.NotNull(plan);
+        Assert.Equal(4, plan.Width);
+        Assert.Equal(2, plan.Height);
     }
 
     [Fact]
@@ -93,7 +94,6 @@ public sealed class GenesisMaterialTextureArrayPlanTests
     [Theory]
     [InlineData(false, true, false, true, true, "capability gate is off")]
     [InlineData(true, false, false, true, true, "material draw records are unavailable")]
-    [InlineData(true, true, true, true, true, "tessellation displacement is active")]
     [InlineData(true, true, false, false, true, "no block/entity model")]
     [InlineData(true, true, false, true, false, "no material slots")]
     public void Eligibility_RejectsFallbackCases(
@@ -132,6 +132,20 @@ public sealed class GenesisMaterialTextureArrayPlanTests
     }
 
     [Fact]
+    public void Eligibility_AcceptsTessellatedBlockModel()
+    {
+        var ok = GenesisMaterialTextureArrayEligibility.TryResolve(
+            capabilityEnabled: true,
+            materialDrawRecordsUploaded: true,
+            tessellationDisplacementActive: true,
+            hasBlockModel: true,
+            hasSlots: true,
+            out var reason);
+
+        Assert.True(ok, reason);
+    }
+
+    [Fact]
     public void ContentEquals_TracksTexturePayloadChanges()
     {
         var first = new[] { CreateMaterial(1, 1, seed: 1) };
@@ -144,6 +158,33 @@ public sealed class GenesisMaterialTextureArrayPlanTests
 
         Assert.True(firstPlan!.ContentEquals(samePlan!));
         Assert.False(firstPlan.ContentEquals(changedPlan!));
+    }
+
+    [Fact]
+    public void ResampleMaterialArrayLayer_NearestExpandsAndFlipsRows()
+    {
+        byte[] source =
+        [
+            1, 2, 3, 255,
+            4, 5, 6, 255,
+        ];
+        var expanded = new byte[2 * 2 * 4];
+
+        OpenGlPreviewBackend.ResampleMaterialArrayLayer(
+            source,
+            sourceWidth: 1,
+            sourceHeight: 2,
+            expanded,
+            destinationWidth: 2,
+            destinationHeight: 2,
+            flipRows: true);
+
+        Assert.Equal(
+            [
+                4, 5, 6, 255, 4, 5, 6, 255,
+                1, 2, 3, 255, 1, 2, 3, 255,
+            ],
+            expanded);
     }
 
     [Fact]
@@ -172,7 +213,7 @@ public sealed class GenesisMaterialTextureArrayPlanTests
     }
 
     [Fact]
-    public void Fixture_MixedDimensionSubjectKeepsSamplerFallback()
+    public void Fixture_MixedDimensionSubjectUsesResampledArrayLayers()
     {
         var subject = CreateSubject(
             CreateMaps(2, 2, seed: 1),
@@ -190,9 +231,10 @@ public sealed class GenesisMaterialTextureArrayPlanTests
 
         var ok = GenesisMaterialTextureArrayPlan.TryCreate(slots, maxTextureArrayLayers: 8, out var plan, out reason);
 
-        Assert.False(ok);
-        Assert.Null(plan);
-        Assert.Contains("differ", reason, StringComparison.Ordinal);
+        Assert.True(ok, reason);
+        Assert.NotNull(plan);
+        Assert.Equal(4, plan.Width);
+        Assert.Equal(2, plan.Height);
     }
 
     [Fact]

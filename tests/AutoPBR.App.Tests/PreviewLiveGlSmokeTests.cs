@@ -57,6 +57,7 @@ public sealed class PreviewLiveGlSmokeTests
                 RunGpuCommandCompactorIfSupported(gl, caps, diagnostics);
                 RunImageHistogramIfSupported(gl, caps, diagnostics);
                 RunMaterialTextureArrayIfSupported(gl, caps, diagnostics);
+                RunPersistentOverlayUploadIfSupported(gl, caps, diagnostics);
                 RunGpuTimerQueryIfSupported(gl, caps, diagnostics);
                 EvaluateShaderToolchainPlan(caps, diagnostics);
                 RunSeparableProgramPipelineIfSupported(gl, caps, diagnostics);
@@ -142,6 +143,22 @@ public sealed class PreviewLiveGlSmokeTests
 
         Assert.True(shadowProgram.IsValid, "Desktop Genesis shadow variant failed to compile: " + shadowError);
         diagnostics.Add("[3D preview] P4.1 desktop Genesis base-instance shadow variant compiled.");
+
+        if (caps.CanUseMaterialTextureArrays && caps.CanUseMultiDrawIndirectGroups)
+        {
+            using var tessProgram = ctx.CreateProgram(
+                "genesis.vert",
+                "genesis.tcs",
+                "genesis.tes",
+                "genesis.frag",
+                out var tessError,
+                "post-roadmap-tess-draw-record-array",
+                defines);
+            Assert.True(tessProgram.IsValid,
+                "Tessellated draw-record/texture-array Genesis variant failed to compile: " + tessError);
+            diagnostics.Add(
+                "[3D preview] Tessellated Genesis draw-record/base-instance/texture-array variant compiled.");
+        }
     }
 
     private static void RunMaterialTextureArrayIfSupported(
@@ -195,6 +212,33 @@ public sealed class PreviewLiveGlSmokeTests
         diagnostics.Add("[3D preview] P7 material texture-array upload/readback matched layer 1.");
     }
 
+    private static void RunPersistentOverlayUploadIfSupported(
+        GL gl,
+        PreviewGlCapabilities caps,
+        List<string> diagnostics)
+    {
+        if (!caps.CanUsePersistentUploadRing)
+        {
+            return;
+        }
+
+        using var overlay = new GlNativeOverlayRenderer(
+            gl,
+            useOpenGlEs: false,
+            preferPersistentUpload: true,
+            out var error);
+        Assert.True(overlay.IsValid, "Persistent overlay renderer failed: " + error);
+        Assert.True(overlay.UsesPersistentVertexUpload);
+        while (gl.GetError() != GLEnum.NoError)
+        {
+        }
+        var pixels = Enumerable.Repeat((byte)255, 4 * 4 * 4).ToArray();
+        overlay.Draw(64, 64, 2, new PreviewNativeWglOverlayBitmap(4, 4, pixels), null);
+        gl.Finish();
+        Assert.Equal(GLEnum.NoError, gl.GetError());
+        diagnostics.Add("[3D preview] Persistent mapped overlay VBO ring rendered without GL errors.");
+    }
+
     private static void RunGpuTimerQueryIfSupported(
         GL gl,
         PreviewGlCapabilities caps,
@@ -228,11 +272,11 @@ public sealed class PreviewLiveGlSmokeTests
         PreviewGlCapabilities caps,
         List<string> diagnostics)
     {
-        var plan = GlShaderToolchainPlan.FromCapabilities(caps, GlSpirVShaderManifest.Empty.Count);
+        var plan = GlShaderToolchainPlan.FromCapabilities(caps, GlSpirVShaderManifest.Bundled.Count);
         Assert.Equal(GlShaderToolchainPlan.PrimaryPath, "GLSL source + program binary cache");
         Assert.Equal(caps.CanUseSeparableShaderPrograms, plan.CanEvaluateSeparablePrograms);
-        Assert.False(plan.CanUseSpirVAssets);
-        Assert.Equal(caps.CanUseSpirVShaderBinaries ? "no-assets" : "unsupported", plan.SpirVStatus);
+        Assert.Equal(caps.CanUseSpirVShaderBinaries, plan.CanUseSpirVAssets);
+        Assert.Equal(caps.CanUseSpirVShaderBinaries ? "ready" : "unsupported", plan.SpirVStatus);
         diagnostics.Add(plan.FormatDiagnostic());
         diagnostics.Add("[3D preview] P9 shader toolchain evaluation complete: " +
                         $"spirv={plan.SpirVStatus}, separable={plan.SeparableProgramStatus}, primary=GLSL.");
@@ -516,6 +560,27 @@ public sealed class PreviewLiveGlSmokeTests
             [3u, 1u, 0u, 0u, 0u, 12u, 1u, 9u, 0u, 3u],
             dwords);
         diagnostics.Add("[3D preview] P5 GPU indirect command compaction passed (4 source commands -> 2 visible commands).");
+
+        Assert.True(
+            compactor.Dispatch(
+                program,
+                source,
+                [1u, 1u, 1u, 1u],
+                readBackCounter: true,
+                collectDiagnostics: true,
+                preserveOrder: true),
+            "Stable GPU alpha command compaction dispatch failed.");
+        Assert.Equal(3, compactor.LastVisibleCount);
+        var stableDwords = compactor.ReadOutputCommandDwords(compactor.LastVisibleCount);
+        Assert.Equal(
+            [
+                3u, 1u, 0u, 0u, 0u,
+                6u, 1u, 3u, 0u, 1u,
+                12u, 1u, 9u, 0u, 3u,
+            ],
+            stableDwords);
+        diagnostics.Add(
+            "[3D preview] Ordered GPU alpha compaction retained source/base-instance order.");
 
         PreviewDrawBatch[] cullBatches =
         [

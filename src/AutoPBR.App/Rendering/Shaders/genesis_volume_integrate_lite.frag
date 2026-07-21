@@ -1,6 +1,6 @@
 #version 330 core
 // GENESIS_GLES_PACK rev29
-// Lite froxel integrate: view-ray Mie in-scatter march -> god-ray RGBA. No temporal / cloud path.
+// Lite froxel integrate: view-ray Mie march with shared detailed-cloud transmittance; no temporal reuse.
 // ANGLE-safe: texture()-based froxel sampling (no texelFetch), ASCII-only sources.
 
 //!include "common/common.glsl"
@@ -10,11 +10,14 @@
 //!include "common/volume_froxel_math.glsl"
 //!include "common/volume_integrate_sample.glsl"
 //!include "common/volume_integrate_sparse.glsl"
+//!include "common/cloud_shared_transmittance.glsl"
 
 in vec2 vUv;
 uniform sampler2DArray uFroxelVolume;
 uniform sampler2DArray uFroxelOccupancy;
 uniform sampler2D uSceneDepth;
+uniform sampler2D uCloudTransmittance;
+uniform sampler2D uCloudData;
 uniform mat4 uInvViewProj;
 uniform vec3 uCameraPos;
 uniform vec3 uCamRight;
@@ -29,6 +32,7 @@ uniform float uJitter;
 uniform float uDepthDistribution;
 uniform float uScatterGain;
 uniform float uExtinction;
+uniform int uHasCloudTransmittance;
 
 out vec4 FragColor;
 
@@ -62,6 +66,10 @@ void main()
     float transmittance = 1.0;
 #endif
     float jitter = uJitter * stepLen;
+    vec2 sharedCloudSignal = cstResolveViewSignal(
+        uCloudTransmittance, uCloudData, vUv, uHasCloudTransmittance);
+    float sharedCloudOpacity = sharedCloudSignal.x;
+    float sharedCloudDistance = sharedCloudSignal.y;
 
     for (int i = 0; i < VM_STEPS; ++i)
     {
@@ -95,7 +103,8 @@ void main()
 
         vec3 sunScatter = vec3(voxel.g, voxel.b, voxel.b * 0.92) * miePhase;
         float inscatterW = vmSegmentInscatterWeight(density, stepLen, uExtinction);
-        accum += transmittance * sunScatter * inscatterW * uScatterGain * edgeW;
+        float cloudViewT = cstViewTransmittance(t, sharedCloudDistance, sharedCloudOpacity, stepLenFine);
+        accum += transmittance * cloudViewT * sunScatter * inscatterW * uScatterGain * edgeW;
         transmittance *= mix(1.0, vmSegmentTransmittance(density, stepLen, uExtinction), edgeW);
         if (transmittance < 0.02)
         {

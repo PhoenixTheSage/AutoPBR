@@ -54,6 +54,7 @@ public partial class MainWindowViewModel
     [ObservableProperty] private bool _preview3DEnableEntityParallax;
     [ObservableProperty] private bool _preview3DShowGrid = true;
     [ObservableProperty] private bool _preview3DShowGroundMesh = true;
+    [ObservableProperty] private double _preview3DChunkViewDistance = PreviewStageConstants.TerrainDefaultChunkViewDistance;
     [ObservableProperty] private bool _preview3DShowAxes = true;
     [ObservableProperty] private bool _preview3DShowFpsCounter;
     [ObservableProperty] private bool _preview3DVSyncEnabled;
@@ -216,12 +217,27 @@ public partial class MainWindowViewModel
         _glPreview = glPreview;
         glPreview.SetRendererLog(line => RunOnUiThread(() => AddLogLine(line)));
         glPreview.Backend.GpuInitProgressChanged += OnPreviewGpuInitProgressChanged;
+        glPreview.HdrProbeUpdated += OnPreviewHdrProbeUpdated;
         ApplyPreviewGpuInitOverlay(glPreview.Backend.GpuInitProgress);
         UpdatePreviewOpenGlActiveContextFromBackend();
         PushPreview3DCamera();
         RefreshPreviewGrassColormapState();
         Apply3DPreviewIfNeeded();
+        SchedulePreviewGroundTextureRefresh();
         EnsurePreview3DCameraPoseTimer();
+        SyncHdr2DPresentPreference();
+    }
+
+    private void OnPreviewHdrProbeUpdated(PreviewHdrDisplayInfo display, bool nativeWglActive, bool presentPathFailed)
+    {
+        UpdatePreviewHdrProbe(display, nativeWglActive, presentPathFailed);
+        Push3DRenderSettingsOnly();
+        SyncHdr2DPresentPreference();
+    }
+
+    private void SyncHdr2DPresentPreference()
+    {
+        _glPreview?.SetPreferHdr2DPresent(IsPreview2D && PreviewHdrPresentActive);
     }
 
     private void OnPreviewGpuInitProgressChanged(PreviewGpuInitProgress progress) =>
@@ -229,11 +245,19 @@ public partial class MainWindowViewModel
         {
             ApplyPreviewGpuInitOverlay(progress);
             UpdatePreviewOpenGlActiveContextFromBackend();
+            // Bootstrap finishes after the first Apply3DPreviewIfNeeded; re-push idle/subject
+            // so terrain/sky actually draw once the ground mesh and Genesis program exist.
+            if ((progress.CoreReady || progress.IsFullyReady) && IsPreview3D)
+            {
+                Apply3DPreviewIfNeeded();
+            }
         });
 
     private void ApplyPreviewGpuInitOverlay(PreviewGpuInitProgress progress)
     {
-        Preview3DGpuInitOverlayVisible = IsPreview3D && !progress.IsFullyReady;
+        // CoreReady is enough to show the idle stage (terrain/sky). Waiting for IsFullyReady
+        // kept a full-screen dim overlay up through cloud/TAA compile and looked like "no terrain".
+        Preview3DGpuInitOverlayVisible = IsPreview3D && !progress.CoreReady;
         Preview3DGpuInitOverlayText = progress.Phase;
         Preview3DGpuInitProgressFraction = progress.ProgressFraction;
         Preview3DGpuInitProgressIndeterminate = progress.ProgressFraction <= 0.001;
@@ -259,6 +283,9 @@ public partial class MainWindowViewModel
         _ = value;
         OnPropertyChanged(nameof(IsPreview2D));
         OnPropertyChanged(nameof(IsPreview3D));
+        OnPropertyChanged(nameof(IsPreviewGlSurfaceVisible));
+        OnPropertyChanged(nameof(IsPreview2DAvaloniaImageVisible));
+        SyncHdr2DPresentPreference();
         OnPropertyChanged(nameof(IsPreview3DItemMode));
         OnPropertyChanged(nameof(IsPreview3DFoliageSpriteMode));
         OnPropertyChanged(nameof(IsPreview3DSpriteMode));
@@ -310,6 +337,7 @@ public partial class MainWindowViewModel
     partial void OnPreview3DEnableEntityParallaxChanged(bool value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DShowGridChanged(bool value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DShowGroundMeshChanged(bool value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DChunkViewDistanceChanged(double value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DShowAxesChanged(bool value) => OnPreview3DGpuSettingChanged(value);
 
     partial void OnPreview3DShowFpsCounterChanged(bool value)
@@ -639,6 +667,10 @@ public partial class MainWindowViewModel
             ItemFlatSpritePreview = isItemFlatSprite,
             ShowBackgroundGrid = Preview3DShowGrid,
             ShowGroundMesh = Preview3DShowGroundMesh,
+            ChunkViewDistance = (int)Math.Round(Math.Clamp(
+                Preview3DChunkViewDistance,
+                PreviewStageConstants.TerrainMinChunkViewDistance,
+                PreviewStageConstants.TerrainMaxChunkViewDistance)),
             ShowCornerAxes = Preview3DShowAxes,
             DrawPreviewSubject = _lastPreviewTextureMaps is not null,
             EnableSss = Preview3DEnableSss,
@@ -717,7 +749,10 @@ public partial class MainWindowViewModel
             LogPreviewTaaDiagnostics = DebugMode,
             LogGpuPassTimings = Preview3DLogGpuPassTimings,
             ShowExpandedGpuTimingHud = Preview3DShowExpandedGpuTimingHud,
-            ShowSunProjectionDebug = Preview3DShowCelestialDebug
+            ShowSunProjectionDebug = Preview3DShowCelestialDebug,
+            HdrPresentActive = PreviewHdrPresentActive,
+            HdrPaperWhiteNits = PreviewHdrPresentPolicy.ClampPaperWhiteNits((float)PreviewHdrPaperWhiteNits),
+            HdrPeakNits = _lastHdrDisplayInfo.MaxLuminanceNits
         };
     }
 
@@ -748,7 +783,7 @@ public partial class MainWindowViewModel
 
     private void Push3DRenderSettingsOnly()
     {
-        if (_glPreview is null || !IsPreview3D)
+        if (_glPreview is null || !IsPreviewGlSurfaceVisible)
         {
             return;
         }

@@ -46,7 +46,7 @@ public static class MaterialTagSemanticQuery
             return FilterQueryTokens(name);
         }
 
-        var segments = ruleRelativeKey.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+        var segments = ruleRelativeKey.Split((char[])['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
         if (segments.Length == 0)
         {
             return FilterQueryTokens(name);

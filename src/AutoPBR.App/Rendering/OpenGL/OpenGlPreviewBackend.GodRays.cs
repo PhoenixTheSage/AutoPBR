@@ -32,6 +32,7 @@ public sealed partial class OpenGlPreviewBackend
     private int _godRayHistoryVh;
     private int _volumePathFailLogged;
     private bool _godRaySparseMarchCompiled;
+    private uint _pendingGodRayCompositeTexture;
 
     private static IReadOnlyDictionary<string, int>? BuildGodRaySparseMarchDefines(bool sparseMarch) =>
         sparseMarch
@@ -57,7 +58,7 @@ public sealed partial class OpenGlPreviewBackend
 
         if (invalidation.CloudHistory)
         {
-            _cloudHistoryValid = false;
+            InvalidateCloudTemporalHistory();
         }
 
         if (invalidation.TaaHistory)
@@ -253,6 +254,12 @@ public sealed partial class OpenGlPreviewBackend
         _scenePresentProgram is { IsValid: true } &&
         _godRayQuadVao != 0;
 
+    private bool CanUseCloudSceneCapture(in PreviewRenderSettingsSnapshot settings) =>
+        settings.EnableVolumetricClouds &&
+        _sceneCapture is not null &&
+        _scenePresentProgram is { IsValid: true } &&
+        _godRayQuadVao != 0;
+
     private float ResolvePreviewSceneCaptureScale(in PreviewRenderSettingsSnapshot settings) =>
         GodRaysPassCoordinator.ResolveSceneCaptureScale(
             settings,
@@ -279,15 +286,16 @@ public sealed partial class OpenGlPreviewBackend
 
     private bool TryBeginGodRaySceneRender(ref GlRenderFrame frame)
     {
-        if ((!CanUseGodRayCapture(frame.Settings) && !CanUseTaaSceneCapture(frame.Settings)) || _sceneCapture is null)
+        if ((!CanUseGodRayCapture(frame.Settings) && !CanUseTaaSceneCapture(frame.Settings) &&
+             !CanUseCloudSceneCapture(frame.Settings)) || _sceneCapture is null)
         {
             return false;
         }
 
         ResolveSceneCaptureSize(ref frame, out var captureW, out var captureH, out var captureScale);
-        if (!_sceneCapture.EnsureSize(captureW, captureH))
+        if (!_sceneCapture.EnsureSize(captureW, captureH, frame.Settings.HdrPresentActive))
         {
-            EmitDiagnostic("[3D preview] God-ray scene target incomplete; rendering directly to the default FBO.");
+            EmitDiagnostic("[3D preview] Shared scene-capture target incomplete; rendering directly to the default FBO.");
             return false;
         }
 
@@ -306,8 +314,16 @@ public sealed partial class OpenGlPreviewBackend
             return;
         }
 
-        if (!TryPresentSceneCaptureToDefault(ref frame) &&
-            !_sceneCapture.BlitColorToDefault(frame.DefaultFbo, frame.VpX, frame.VpY, frame.Vw, frame.Vh))
+        // Never blit raw capture to an HDR DXGI target — that skips scRGB encode + Y-flip and
+        // produces upside-down / flashing over-bright frames.
+        var presented = TryPresentSceneCaptureToDefault(ref frame);
+        if (!presented && !frame.Settings.HdrPresentActive)
+        {
+            presented = _sceneCapture.BlitColorToDefault(
+                frame.DefaultFbo, frame.VpX, frame.VpY, frame.Vw, frame.Vh);
+        }
+
+        if (!presented)
         {
             var key = frame.Vw + frame.Vh * 10000;
             if (_godRayBlitFailLogged != key)
@@ -392,7 +408,7 @@ public sealed partial class OpenGlPreviewBackend
         _scenePresentProgram.Use();
         gl.ActiveTexture(TextureUnit.Texture0);
         gl.BindTexture(TextureTarget.Texture2D, _sceneCapture.ColorTextureHandle);
-        SetIntOnProgramLoc(_scenePresentProgram, _scenePresentUniformLocs.SceneColor, 0);
+        BindScenePresentUniforms(frame.Settings, sceneIsLinear: frame.Settings.HdrPresentActive);
         gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
         var err = gl.GetError();
         gl.BindVertexArray(0);
@@ -470,6 +486,16 @@ public sealed partial class OpenGlPreviewBackend
         if (!priorBlend)
         {
             gl.Disable(EnableCap.Blend);
+        }
+    }
+
+    private void CompositePendingGodRays(ref GlRenderFrame frame)
+    {
+        var texture = _pendingGodRayCompositeTexture;
+        _pendingGodRayCompositeTexture = 0;
+        if (texture != 0)
+        {
+            TryCompositeAdditiveRays(ref frame, texture);
         }
     }
 
@@ -632,6 +658,9 @@ public sealed partial class OpenGlPreviewBackend
         SetIntOnProgramLoc(_shadowAwareGodRayProgram, shu.EnableShadowCascades, cascadesActive ? 1 : 0);
         SetFloatOnProgramLoc(_shadowAwareGodRayProgram, shu.CascadeSplitDistance, frame.CascadeSplitWorldDistance);
         SetFloatOnProgramLoc(_shadowAwareGodRayProgram, shu.CascadeBlendWidth, frame.CascadeBlendWorldWidth);
+        SetIntOnProgramLoc(_shadowAwareGodRayProgram, shu.EnableCloudAttenuation,
+            frame.Settings.EnableVolumetricClouds &&
+            ResolveSharedCloudTransmittanceTarget(frame.Settings) is null ? 1 : 0);
         gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
         gl.BindVertexArray(0);
         if (priorDepthTest)
@@ -798,7 +827,10 @@ public sealed partial class OpenGlPreviewBackend
             _godRayHistoryValid = true;
         }
 
-        TryCompositeAdditiveRays(ref frame, _godRayResolveTarget.ColorTextureHandle);
+        // Detailed cloud opacity/depth has already attenuated samples behind the cloud in
+        // the integrate shader. Defer additive composition until after the cloud color pass
+        // so foreground shaft radiance is not attenuated a second time.
+        _pendingGodRayCompositeTexture = _godRayResolveTarget.ColorTextureHandle;
         gl.BindVertexArray(0);
 
         gl.DepthMask(priorDepthMask);

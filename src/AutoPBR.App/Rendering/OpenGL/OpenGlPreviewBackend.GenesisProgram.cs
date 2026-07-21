@@ -71,18 +71,27 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         var mask = GenesisShaderFeatureMaskBuilder.Build(frame.Settings, frame.EntityEmulatedPreview);
+        // Idle / environment-only frames have no subject to displace; keep the non-tessellation
+        // program so the ground plane draws as ordinary triangles (same path as emulated entities).
         var wantsTessellation = !_useOpenGlEs &&
                                 !_genesisTessellationCompileDisabled &&
-                                frame.EnableTessellationDisplacementEff;
-        var useMaterialDrawRecords = ShouldUseMaterialDrawRecordSsbo();
-        var useMaterialTextureArrays = !wantsTessellation && ShouldUseMaterialTextureArrays();
+                                frame.EnableTessellationDisplacementEff &&
+                                frame.Settings.DrawPreviewSubject;
+        // Idle has no material slots — keep a simple 2D-sampler Genesis program so the ground
+        // pass (which only binds grass 2D textures) is not stuck with unbound tex-arrays/SSBOs.
+        var useMaterialDrawRecords =
+            frame.Settings.DrawPreviewSubject && ShouldUseMaterialDrawRecordSsbo();
+        var useMaterialTextureArrays =
+            frame.Settings.DrawPreviewSubject &&
+            !wantsTessellation &&
+            ShouldUseMaterialTextureArrays();
         var cacheKey = new GenesisProgramCacheKey(
             mask,
             wantsTessellation,
             ShouldUseEntitySkinningSsbo(),
             useMaterialDrawRecords,
             useMaterialTextureArrays,
-            useMaterialDrawRecords && !wantsTessellation && ShouldUseDrawRecordBaseInstance());
+            useMaterialDrawRecords && ShouldUseDrawRecordBaseInstance());
         if (_program is { IsValid: true } && cacheKey == _activeGenesisProgramKey)
         {
             return;

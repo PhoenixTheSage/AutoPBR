@@ -1,7 +1,8 @@
 #version 330 core
 // GENESIS_GLES_PACK rev29
 // Froxel inject: density + sun-lit scatter into a 2D array (P3.2). uDebugDensity adds a uniform
-// participating-medium floor so god rays are visible/tunable without fog or clouds enabled.
+// participating-medium floor so god rays are visible/tunable without fog. Analytic cloud density is
+// a fallback only when the detailed cloud opacity/depth signal is unavailable.
 
 
 

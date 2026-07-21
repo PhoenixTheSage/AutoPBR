@@ -23,12 +23,6 @@ internal static class GenesisMaterialTextureArrayEligibility
             return false;
         }
 
-        if (tessellationDisplacementActive)
-        {
-            reason = "tessellation displacement is active";
-            return false;
-        }
-
         if (!hasBlockModel)
         {
             reason = "no block/entity model";

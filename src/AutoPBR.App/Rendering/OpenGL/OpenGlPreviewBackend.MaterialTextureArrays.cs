@@ -50,11 +50,6 @@ public sealed partial class OpenGlPreviewBackend
                 slots is { Length: > 0 },
                 out var eligibilityReason))
         {
-            if (eligibilityReason is "tessellation displacement is active")
-            {
-                LogMaterialTextureArrayFallbackOnce(eligibilityReason);
-            }
-
             return false;
         }
 
@@ -142,6 +137,77 @@ public sealed partial class OpenGlPreviewBackend
         SetIntOnProgramLoc(_shadowProgram!, u.AlbedoArray, ShadowPassAlbedoArrayUnit);
     }
 
+    /// <summary>
+    /// When the active program declares sampler2DArray uniforms, every unit must be complete
+    /// even if the ground pass only samples 2D grass textures (uGenesisUseMaterialTextureArray=0).
+    /// </summary>
+    private void BindFallbackMaterialTextureArraysIfPresent(MainProgramUniformLocs u)
+    {
+        if (u.AlbedoArray < 0 && u.NormalArray < 0 && u.SpecularArray < 0 && u.HeightArray < 0)
+        {
+            return;
+        }
+
+        EnsureFallbackMaterialTextureArrays(_gl!);
+        if (u.AlbedoArray >= 0)
+        {
+            _fallbackMaterialAlbedoArray!.Bind(MainPassAlbedoArrayUnit);
+            SetIntLoc(u.AlbedoArray, MainPassAlbedoArrayUnit);
+        }
+
+        if (u.NormalArray >= 0)
+        {
+            _fallbackMaterialNormalArray!.Bind(MainPassNormalArrayUnit);
+            SetIntLoc(u.NormalArray, MainPassNormalArrayUnit);
+        }
+
+        if (u.SpecularArray >= 0)
+        {
+            _fallbackMaterialSpecArray!.Bind(MainPassSpecularArrayUnit);
+            SetIntLoc(u.SpecularArray, MainPassSpecularArrayUnit);
+        }
+
+        if (u.HeightArray >= 0)
+        {
+            _fallbackMaterialHeightArray!.Bind(MainPassHeightArrayUnit);
+            SetIntLoc(u.HeightArray, MainPassHeightArrayUnit);
+        }
+    }
+
+    private void BindFallbackShadowMaterialTextureArrayIfPresent(ShadowProgramUniformLocs u)
+    {
+        if (u.AlbedoArray < 0)
+        {
+            return;
+        }
+
+        EnsureFallbackMaterialTextureArrays(_gl!);
+        _fallbackMaterialAlbedoArray!.Bind(ShadowPassAlbedoArrayUnit);
+        SetIntOnProgramLoc(_shadowProgram!, u.AlbedoArray, ShadowPassAlbedoArrayUnit);
+    }
+
+    private void EnsureFallbackMaterialTextureArrays(GL gl)
+    {
+        if (_fallbackMaterialAlbedoArray is not null)
+        {
+            return;
+        }
+
+        _fallbackMaterialAlbedoArray = new GlTexture2DArray(gl);
+        _fallbackMaterialNormalArray = new GlTexture2DArray(gl);
+        _fallbackMaterialSpecArray = new GlTexture2DArray(gl);
+        _fallbackMaterialHeightArray = new GlTexture2DArray(gl);
+        // 1x1x1 complete arrays so idle/ground draws never hit unbound sampler2DArray units.
+        ReadOnlySpan<byte> albedo = [128, 128, 128, 255];
+        ReadOnlySpan<byte> normal = [128, 128, 255, 255];
+        ReadOnlySpan<byte> spec = [120, 60, 40, 255];
+        ReadOnlySpan<byte> height = [128, 128, 128, 255];
+        _fallbackMaterialAlbedoArray.UploadRgbaIfChanged(1, 1, 1, albedo, nearest: true);
+        _fallbackMaterialNormalArray.UploadRgbaIfChanged(1, 1, 1, normal, nearest: true);
+        _fallbackMaterialSpecArray.UploadRgbaIfChanged(1, 1, 1, spec, nearest: true);
+        _fallbackMaterialHeightArray.UploadRgbaIfChanged(1, 1, 1, height, nearest: true);
+    }
+
     private void EnsureMaterialTextureArrayObjects(GL gl)
     {
         _materialAlbedoArray ??= new GlTexture2DArray(gl);
@@ -169,14 +235,60 @@ public sealed partial class OpenGlPreviewBackend
         {
             var dest = scratch.AsSpan(layer * layerBytes, layerBytes);
             var source = ResolveMaterialArraySource(slots[layer], mapKind);
-            if (source is { Length: > 0 } src && src.Length >= layerBytes)
+            var sourceWidth = Math.Max(1, slots[layer].Width);
+            var sourceHeight = Math.Max(1, slots[layer].Height);
+            if (source is { Length: > 0 } src && src.Length >= sourceWidth * sourceHeight * 4)
             {
-                var upload = PrepareRgbaUploadSpan(src.Span[..layerBytes], plan.Width, plan.Height, slots[layer].GlUploadFlipRows);
-                upload.CopyTo(dest);
+                ResampleMaterialArrayLayer(
+                    src.Span,
+                    sourceWidth,
+                    sourceHeight,
+                    dest,
+                    plan.Width,
+                    plan.Height,
+                    slots[layer].GlUploadFlipRows);
             }
             else
             {
                 FillNeutralLayer(dest, mapKind);
+            }
+        }
+    }
+
+    internal static void ResampleMaterialArrayLayer(
+        ReadOnlySpan<byte> source,
+        int sourceWidth,
+        int sourceHeight,
+        Span<byte> destination,
+        int destinationWidth,
+        int destinationHeight,
+        bool flipRows)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sourceWidth);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sourceHeight);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(destinationWidth);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(destinationHeight);
+        var sourceBytes = checked(sourceWidth * sourceHeight * 4);
+        var destinationBytes = checked(destinationWidth * destinationHeight * 4);
+        if (source.Length < sourceBytes || destination.Length < destinationBytes)
+        {
+            throw new ArgumentException("RGBA resample spans do not match their declared dimensions.");
+        }
+
+        for (var y = 0; y < destinationHeight; y++)
+        {
+            var sampledY = Math.Min(sourceHeight - 1, y * sourceHeight / destinationHeight);
+            if (flipRows)
+            {
+                sampledY = sourceHeight - 1 - sampledY;
+            }
+
+            for (var x = 0; x < destinationWidth; x++)
+            {
+                var sampledX = Math.Min(sourceWidth - 1, x * sourceWidth / destinationWidth);
+                var sourceOffset = (sampledY * sourceWidth + sampledX) * 4;
+                var destinationOffset = (y * destinationWidth + x) * 4;
+                source.Slice(sourceOffset, 4).CopyTo(destination.Slice(destinationOffset, 4));
             }
         }
     }
@@ -251,6 +363,14 @@ public sealed partial class OpenGlPreviewBackend
         _materialSpecArray = null;
         _materialHeightArray?.Dispose();
         _materialHeightArray = null;
+        _fallbackMaterialAlbedoArray?.Dispose();
+        _fallbackMaterialAlbedoArray = null;
+        _fallbackMaterialNormalArray?.Dispose();
+        _fallbackMaterialNormalArray = null;
+        _fallbackMaterialSpecArray?.Dispose();
+        _fallbackMaterialSpecArray = null;
+        _fallbackMaterialHeightArray?.Dispose();
+        _fallbackMaterialHeightArray = null;
         _materialTextureArrayPlan = null;
         _materialTextureArrayScratch = null;
         _loggedMaterialTextureArraysReady = false;
@@ -263,6 +383,10 @@ public sealed partial class OpenGlPreviewBackend
         _materialNormalArray = null;
         _materialSpecArray = null;
         _materialHeightArray = null;
+        _fallbackMaterialAlbedoArray = null;
+        _fallbackMaterialNormalArray = null;
+        _fallbackMaterialSpecArray = null;
+        _fallbackMaterialHeightArray = null;
         _materialTextureArrayPlan = null;
         _materialTextureArrayScratch = null;
         _loggedMaterialTextureArraysReady = false;

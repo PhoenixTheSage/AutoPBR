@@ -125,6 +125,22 @@ public class PreviewGlslEsAdaptTests
     [Theory]
     [InlineData("genesis.vert")]
     [InlineData("genesis_shadow.vert")]
+    public void EsAdaptedGenesisVertex_KeepsDrawRecordWriteHelperWithoutSsbo(string shaderFile)
+    {
+        var prepared = GlslPreparedSourceCache.GetOrPrepare(
+            shaderFile,
+            ShaderType.VertexShader,
+            useOpenGlEs: true,
+            defines: null);
+
+        Assert.DoesNotContain("#define GENESIS_MATERIAL_DRAW_RECORD_SSBO", prepared, StringComparison.Ordinal);
+        Assert.Contains("void genesisWriteDrawRecordIndexVarying()", prepared, StringComparison.Ordinal);
+        Assert.Contains("genesisWriteDrawRecordIndexVarying();", prepared, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("genesis.vert")]
+    [InlineData("genesis_shadow.vert")]
     public void DesktopPreparedGenesisEntitySkinningSsbo_DefinesStorageBufferVariant(string shaderFile)
     {
         var prepared = GlslPreparedSourceCache.GetOrPrepare(
@@ -515,15 +531,50 @@ public class PreviewGlslEsAdaptTests
         Assert.Contains("#version 400 core", control, StringComparison.Ordinal);
         Assert.Contains("layout(vertices = 3) out;", control, StringComparison.Ordinal);
         Assert.Contains("gl_TessLevelOuter", control, StringComparison.Ordinal);
-        Assert.Contains("uEnableTessellationDisplacement > 0 && uHasHeight > 0", control, StringComparison.Ordinal);
+        Assert.Contains("genesisEnableTessellationDisplacement(uEnableTessellationDisplacement)", control, StringComparison.Ordinal);
+        Assert.Contains("genesisHasHeight(uHasHeight)", control, StringComparison.Ordinal);
+        Assert.Contains("genesisWriteDrawRecordIndexVarying()", control, StringComparison.Ordinal);
         Assert.Contains("clamp(uTessellationLevel, 1.0, 16.0)", control, StringComparison.Ordinal);
 
         Assert.Contains("#version 400 core", evaluation, StringComparison.Ordinal);
         Assert.Contains("layout(triangles, equal_spacing, ccw) in;", evaluation, StringComparison.Ordinal);
         Assert.Contains("textureLod(uHeight, uv, 0.0).r", evaluation, StringComparison.Ordinal);
+        Assert.Contains("textureLod(\n                uHeightArray", evaluation, StringComparison.Ordinal);
+        Assert.Contains("genesisMaterialTextureLayer(0)", evaluation, StringComparison.Ordinal);
         Assert.Contains("max(rawHeight - 0.5, 0.0) * 2.0", evaluation, StringComparison.Ordinal);
         Assert.Contains("uTessellationDisplacementStrength", evaluation, StringComparison.Ordinal);
         Assert.Contains("uLightViewProj * vec4(worldPos, 1.0)", evaluation, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ScenePresent_AndGenesis_AdaptHdrPresentUniforms()
+    {
+        var present = GlslSourceAdapter.Adapt(
+            GlslIncludeResolver.Resolve("genesis_scene_present.frag", LoadShader),
+            ShaderType.FragmentShader,
+            useOpenGlEs: true);
+        Assert.Contains("uHdrPresent", present, StringComparison.Ordinal);
+        Assert.Contains("uSceneIsLinear", present, StringComparison.Ordinal);
+        Assert.Contains("uHdrPaperWhiteNits", present, StringComparison.Ordinal);
+        Assert.Contains("presentEncodeScRgb", present, StringComparison.Ordinal);
+
+        var genesis = GlslSourceAdapter.Adapt(
+            GlslIncludeResolver.Resolve("genesis.frag", LoadShader),
+            ShaderType.FragmentShader,
+            useOpenGlEs: true);
+        Assert.Contains("uHdrPresent", genesis, StringComparison.Ordinal);
+
+        var sky = GlslSourceAdapter.Adapt(
+            GlslIncludeResolver.Resolve("atmo_sky.frag", LoadShader),
+            ShaderType.FragmentShader,
+            useOpenGlEs: true);
+        Assert.Contains("uHdrPresent", sky, StringComparison.Ordinal);
+
+        var taa = GlslSourceAdapter.Adapt(
+            GlslIncludeResolver.Resolve("genesis_taa_resolve.frag", LoadShader),
+            ShaderType.FragmentShader,
+            useOpenGlEs: true);
+        Assert.Contains("uHdrPresent", taa, StringComparison.Ordinal);
     }
 
     [Fact]

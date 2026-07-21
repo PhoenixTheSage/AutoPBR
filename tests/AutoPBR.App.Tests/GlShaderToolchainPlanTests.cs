@@ -7,6 +7,49 @@ namespace AutoPBR.App.Tests;
 public sealed class GlShaderToolchainPlanTests
 {
     [Fact]
+    public void BundledManifest_ContainsProductionComputeSpirVAsset()
+    {
+        Assert.True(GlSpirVShaderManifest.Bundled.Contains("spv/genesis_indirect_compact.comp.spv"));
+        Assert.Equal(1, GlSpirVShaderManifest.Bundled.Count);
+    }
+
+    [Fact]
+    public void BundledComputeSpirVAsset_IsPackagedAndValid()
+    {
+        var path = Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "Shaders",
+            "spv",
+            "genesis_indirect_compact.comp.spv");
+        var bytes = File.ReadAllBytes(path);
+
+        Assert.True(GlSpirVShaderBinary.TryCreate(
+            "spv/genesis_indirect_compact.comp.spv",
+            ShaderType.ComputeShader,
+            bytes,
+            out var binary));
+        Assert.True(binary.IsValid);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory);
+             directory is not null;
+             directory = directory.Parent)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "AutoPBR.sln")))
+            {
+                return directory.FullName;
+            }
+        }
+
+        throw new DirectoryNotFoundException("Could not locate the AutoPBR repository root.");
+    }
+
+    [Fact]
     public void Gles_KeepsGlslPrimaryAndDisablesDesktopToolchain()
     {
         var caps = PreviewGlCapabilities.FromStrings(

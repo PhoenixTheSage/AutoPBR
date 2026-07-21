@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text;
 
 using Silk.NET.OpenGL;
@@ -32,14 +33,14 @@ void main()
 
     private readonly GL _gl;
     private readonly uint _vao;
-    private readonly uint _vbo;
+    private readonly GlPersistentMappedUploadBuffer? _vertexUpload;
     private readonly int _texLoc;
     private readonly OverlayTexture _debugTexture;
     private readonly OverlayTexture _fpsTexture;
     private uint _program;
     private bool _disposed;
 
-    public GlNativeOverlayRenderer(GL gl, bool useOpenGlEs, out string? error)
+    public GlNativeOverlayRenderer(GL gl, bool useOpenGlEs, bool preferPersistentUpload, out string? error)
     {
         _gl = gl;
         error = null;
@@ -82,11 +83,14 @@ void main()
 
         _texLoc = _gl.GetUniformLocation(_program, "uTex");
         _vao = _gl.GenVertexArray();
-        _vbo = _gl.GenBuffer();
+        _vertexUpload = new GlPersistentMappedUploadBuffer(
+            _gl,
+            BufferTargetARB.ArrayBuffer,
+            24 * sizeof(float),
+            16,
+            preferPersistentUpload);
         _gl.BindVertexArray(_vao);
-        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
-        var emptyVertices = new float[24];
-        _gl.BufferData<float>(BufferTargetARB.ArrayBuffer, emptyVertices.AsSpan(), BufferUsageARB.StreamDraw);
+        _vertexUpload.BindBuffer();
         unsafe
         {
             const int stride = 4 * sizeof(float);
@@ -101,7 +105,9 @@ void main()
         _fpsTexture = new OverlayTexture(gl);
     }
 
-    public bool IsValid => _program != 0 && _vao != 0 && _vbo != 0;
+    public bool IsValid => _program != 0 && _vao != 0 && _vertexUpload?.Handle != 0;
+
+    internal bool UsesPersistentVertexUpload => _vertexUpload?.UsesPersistentMapping == true;
 
     public void Draw(
         int viewportWidth,
@@ -195,9 +201,18 @@ void main()
             x1, y1, 1f, 1f,
             x0, y1, 0f, 1f
         ];
-        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
-        _gl.BufferSubData<float>(BufferTargetARB.ArrayBuffer, 0, vertices);
+        _vertexUpload!.Upload(MemoryMarshal.AsBytes(vertices));
+        _vertexUpload.BindBuffer();
+        ConfigureVertexPointers(_vertexUpload.ActiveOffset);
         _gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
+        _vertexUpload.MarkSubmitted();
+    }
+
+    private unsafe void ConfigureVertexPointers(nint byteOffset)
+    {
+        const int stride = 4 * sizeof(float);
+        _gl.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, stride, (void*)byteOffset);
+        _gl.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, stride, (void*)(byteOffset + 2 * sizeof(float)));
     }
 
     private static float PixelToNdcX(int x, int width) => (x / (float)Math.Max(1, width)) * 2f - 1f;
@@ -233,10 +248,7 @@ void main()
         _disposed = true;
         _debugTexture.Dispose();
         _fpsTexture.Dispose();
-        if (_vbo != 0)
-        {
-            _gl.DeleteBuffer(_vbo);
-        }
+        _vertexUpload?.Dispose();
 
         if (_vao != 0)
         {

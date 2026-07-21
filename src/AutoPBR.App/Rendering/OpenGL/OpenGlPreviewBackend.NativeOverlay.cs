@@ -41,7 +41,11 @@ public sealed partial class OpenGlPreviewBackend
 
         if (_nativeOverlayRenderer is null)
         {
-            _nativeOverlayRenderer = new GlNativeOverlayRenderer(gl, _useOpenGlEs, out var err);
+            _nativeOverlayRenderer = new GlNativeOverlayRenderer(
+                gl,
+                _useOpenGlEs,
+                _glCapabilities?.CanUsePersistentUploadRing == true,
+                out var err);
             if (!_nativeOverlayRenderer.IsValid)
             {
                 _nativeOverlayRenderer.Dispose();

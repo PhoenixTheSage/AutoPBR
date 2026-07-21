@@ -62,7 +62,8 @@ void main()
             vec3 history = texture(uHistory, prevUv).rgb;
             float histDepth = texture(uSceneDepth, prevUv).r;
             float depthValid = trDepthDisocclusionWeight(depth, histDepth, 0.002, 0.02);
-            float blend = uTemporalWeight * depthValid;
+            float reactive = trLuminanceReactiveWeight(current, history);
+            float blend = uTemporalWeight * depthValid * reactive;
             finalRays = mix(current, history, blend);
         }
     }

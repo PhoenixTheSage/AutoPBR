@@ -60,6 +60,7 @@ uniform uint uFirstCommand;
 uniform uint uOutputCapacity;
 uniform int uUseGpuCulling;
 uniform int uCollectDiagnostics;
+uniform int uPreserveOrder;
 uniform vec3 uCameraPos;
 uniform vec4 uFrustumPlanes[6];
 
@@ -99,6 +100,77 @@ uint batchCullReason(uint index)
 void main()
 {
     uint localIndex = gl_GlobalInvocationID.x;
+    // Alpha submission is order-sensitive. One invocation performs a stable filter in source
+    // command order; opaque/cutout keeps the parallel atomic fast path below.
+    if (uPreserveOrder != 0)
+    {
+        if (localIndex != 0u)
+        {
+            return;
+        }
+
+        for (uint orderedLocalIndex = 0u; orderedLocalIndex < uCommandCount; orderedLocalIndex++)
+        {
+            uint orderedIndex = uFirstCommand + orderedLocalIndex;
+            DrawElementsIndirectCommand orderedCommand = uSourceCommands[orderedIndex];
+            if (uCollectDiagnostics != 0)
+            {
+                uExaminedCommands++;
+            }
+
+            if (orderedCommand.count == 0u || orderedCommand.instanceCount == 0u)
+            {
+                if (uCollectDiagnostics != 0)
+                {
+                    uEmptyCommands++;
+                }
+                continue;
+            }
+
+            uint orderedCullReason = uUseGpuCulling != 0 ? batchCullReason(orderedIndex) : 0u;
+            if (orderedCullReason != 0u)
+            {
+                if (uCollectDiagnostics != 0)
+                {
+                    if (orderedCullReason == 1u) uFrustumCulledCommands++;
+                    else uDistanceCulledCommands++;
+                }
+                continue;
+            }
+
+            if (uUseGpuCulling == 0 && uVisibilityFlags[orderedIndex] == 0u)
+            {
+                if (uCollectDiagnostics != 0)
+                {
+                    uVisibilityFlagCulledCommands++;
+                }
+                continue;
+            }
+
+            if (uCollectDiagnostics != 0)
+            {
+                uMaximumIndexCount = max(uMaximumIndexCount, orderedCommand.count);
+            }
+
+            uint orderedDst = uVisibleCommandCount++;
+            if (orderedDst >= uOutputCapacity)
+            {
+                if (uCollectDiagnostics != 0)
+                {
+                    uOverflowCommands++;
+                }
+                continue;
+            }
+
+            uOutputCommands[orderedDst] = orderedCommand;
+            if (uCollectDiagnostics != 0)
+            {
+                uWrittenCommands++;
+            }
+        }
+        return;
+    }
+
     if (localIndex >= uCommandCount)
     {
         return;

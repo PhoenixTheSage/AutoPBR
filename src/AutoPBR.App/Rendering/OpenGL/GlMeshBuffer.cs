@@ -162,7 +162,10 @@ internal sealed class GlMeshBuffer : IDisposable
         _vaoBound = false;
     }
 
-    public void Draw(bool patches = false)
+    /// <summary>Clears local bind tracking without touching GL (after another VAO took over).</summary>
+    public void ClearBoundTracking() => _vaoBound = false;
+
+    public void Draw(bool patches = false, bool keepBound = false)
     {
         BindVertexArray();
         if (patches)
@@ -175,7 +178,10 @@ internal sealed class GlMeshBuffer : IDisposable
             _gl.DrawElements(patches ? PrimitiveType.Patches : PrimitiveType.Triangles, (uint)_indexCount, _indexElementType, (void*)0);
         }
 
-        UnbindVertexArray();
+        if (!keepBound)
+        {
+            UnbindVertexArray();
+        }
     }
 
     /// <summary>Draw a subrange of the index buffer (indices are measured in elements, not bytes).</summary>

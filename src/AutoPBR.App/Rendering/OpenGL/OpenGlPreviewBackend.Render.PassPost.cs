@@ -9,63 +9,83 @@ public sealed partial class OpenGlPreviewBackend
     {
         EnsurePostPassPerSettingsUniforms(ref frame);
 
+        if (frame.Settings.EnableVolumetricClouds)
+        {
+            ObserveCloudCameraRegion(ref frame);
+        }
+
         var cloudsActive = frame.Settings.EnableVolumetricClouds && CanDrawVolumetricClouds(frame.Settings);
         var godRaysActive = frame.Settings.EnableGodRays && frame.GodRayCaptureActive && _sceneCapture is { IsValid: true };
-        var bothVolumetrics = cloudsActive && godRaysActive;
-        var cloudWarmupDirect = bothVolumetrics && _cloudTierReadyWarmupDraws > 0;
-        var useDeferredCloudComposite = bothVolumetrics && !cloudWarmupDirect;
-        var cloudShaderTemporal = ShouldUseCloudShaderTemporal(frame.Settings, godRaysActive);
+        var cloudShaderTemporal = ShouldUseCloudShaderTemporal(frame.Settings);
         var cloudRenderedOffscreen = false;
+        _cloudCompositeTarget = null;
+        _pendingGodRayCompositeTexture = 0;
 
-        if (cloudWarmupDirect)
+        if (cloudsActive)
         {
-            DrawGodRayComposite(ref frame);
-            var drewDirect = DrawVolumetricClouds(
-                ref frame,
-                gateSkyDepth: false,
-                deferComposite: false,
-                forceTemporal: false);
-            NoteCloudTierWarmupDirectDrawCompleted(drewDirect);
-        }
-        else
-        {
-            if (cloudsActive)
+            try
             {
-                cloudRenderedOffscreen = DrawVolumetricClouds(
-                    ref frame,
-                    gateSkyDepth: useDeferredCloudComposite,
-                    deferComposite: useDeferredCloudComposite,
-                    forceTemporal: cloudShaderTemporal ? null : false);
+                using (BeginGpuTimerScope(GlGpuTimerScope.CloudTrace))
+                {
+                    cloudRenderedOffscreen = DrawVolumetricClouds(
+                        ref frame,
+                        deferComposite: true,
+                        forceTemporal: cloudShaderTemporal ? null : false);
+                }
             }
+            catch (Exception ex)
+            {
+                HandleCloudRuntimeFailure(ref frame, "trace/temporal", ex);
+                cloudsActive = false;
+                cloudRenderedOffscreen = false;
+            }
+        }
 
-            if (godRaysActive)
+        if (godRaysActive)
+        {
+            using (BeginGpuTimerScope(GlGpuTimerScope.GodRays))
             {
                 DrawGodRayComposite(ref frame);
             }
-
-            if (useDeferredCloudComposite && cloudRenderedOffscreen)
-            {
-                CompositeCloudRenderTargetToDefault(ref frame);
-            }
-            else if (useDeferredCloudComposite && _loggedCloudDeferredCompositeMiss != frame.Vw + frame.Vh * 10000)
-            {
-                _loggedCloudDeferredCompositeMiss = frame.Vw + frame.Vh * 10000;
-                EmitDiagnostic(
-                    "[3D preview] Deferred cloud composite skipped (offscreen target not ready; " +
-                    $"retriesLeft={_cloudDeferredCompositeRetries}).");
-            }
         }
 
-        DrawSunProjectionDebug(ref frame);
-
-        if (frame.Settings.ShowCornerAxes && _lineProgram?.IsValid == true)
+        if (cloudsActive && cloudRenderedOffscreen)
         {
-            DrawCornerAxes(frame.Gl, frame.VpX, frame.VpY, frame.Vw, frame.Vh, frame.Proj, frame.View);
+            try
+            {
+                using (BeginGpuTimerScope(GlGpuTimerScope.CloudComposite))
+                {
+                    CompositeCloudRenderTargetToDefault(ref frame);
+                }
+            }
+            catch (Exception ex)
+            {
+                HandleCloudRuntimeFailure(ref frame, "composite", ex);
+                cloudsActive = false;
+            }
+        }
+        else if (cloudsActive && _loggedCloudDeferredCompositeMiss != frame.Vw + frame.Vh * 10000)
+        {
+            _loggedCloudDeferredCompositeMiss = frame.Vw + frame.Vh * 10000;
+            EmitDiagnostic(
+                "[3D preview] Deferred cloud composite skipped (offscreen target not ready; " +
+                $"retriesLeft={_cloudDeferredCompositeRetries}).");
         }
 
-        DrawPreviewTaa(ref frame);
+        CompositePendingGodRays(ref frame);
 
-        MaybeLogPreviewFingerprint(ref frame);
+        using (BeginGpuTimerScope(GlGpuTimerScope.Post))
+        {
+            DrawSunProjectionDebug(ref frame);
+
+            if (frame.Settings.ShowCornerAxes && _lineProgram?.IsValid == true)
+            {
+                DrawCornerAxes(frame.Gl, frame.VpX, frame.VpY, frame.Vw, frame.Vh, frame.Proj, frame.View);
+            }
+
+            DrawPreviewTaa(ref frame);
+            MaybeLogPreviewFingerprint(ref frame);
+        }
     }
 
     private void MaybeLogPreviewFingerprint(ref GlRenderFrame frame)

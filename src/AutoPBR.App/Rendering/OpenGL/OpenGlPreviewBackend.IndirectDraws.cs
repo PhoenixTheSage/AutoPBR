@@ -33,9 +33,8 @@ public sealed partial class OpenGlPreviewBackend
         return true;
     }
 
-    private bool CanUseGenesisMultiDrawGroups(bool useMaterialDrawRecords, bool patches) =>
+    private bool CanUseGenesisMultiDrawGroups(bool useMaterialDrawRecords) =>
         useMaterialDrawRecords &&
-        !patches &&
         _activeGenesisProgramKey.DrawRecordBaseInstance &&
         _glCapabilities?.CanUseMultiDrawIndirectGroups == true;
 
@@ -77,7 +76,10 @@ public sealed partial class OpenGlPreviewBackend
         Vector3 cameraPosition,
         Matrix4x4 modelMatrix,
         GlShaderProgram drawProgram,
-        string passLabel)
+        string passLabel,
+        bool patches = false,
+        bool preserveOrder = false,
+        float boundsPadding = 0f)
     {
         if (commandCount < MinGpuCullingGroupSize ||
             _gpuDrawCommandCompactionCompileDisabled ||
@@ -104,7 +106,9 @@ public sealed partial class OpenGlPreviewBackend
                 cameraPosition,
                 modelMatrix,
                 firstCommand,
-                commandCount))
+                commandCount,
+                preserveOrder: preserveOrder,
+                boundsPadding: boundsPadding))
         {
             return false;
         }
@@ -114,7 +118,7 @@ public sealed partial class OpenGlPreviewBackend
             _gpuDrawCommandCompactor.OutputCommands,
             _gpuDrawCommandCompactor.CounterBufferHandle,
             commandCount,
-            patches: false,
+            patches,
             keepBound: true);
         if (drawn && !_loggedGpuCompactedDrawSubmission)
         {
@@ -123,7 +127,8 @@ public sealed partial class OpenGlPreviewBackend
             _loggedGpuCompactedDrawSubmission = true;
             EmitDiagnostic(
                 $"[3D preview] GPU-compacted draw submission enabled: pass={passLabel}, " +
-                $"sourceCommands={commandCount}, apiCalls=1; frustum/LOD culling feeds indirect-count draws without CPU readback.");
+                $"sourceCommands={commandCount}, apiCalls=1, order={(preserveOrder ? "stable" : "parallel")}; " +
+                "frustum/LOD culling feeds indirect-count draws without CPU readback.");
         }
         else if (drawn)
         {
@@ -190,7 +195,8 @@ public sealed partial class OpenGlPreviewBackend
         int startIndex,
         int materialCount,
         bool entityBlendDraw,
-        bool enabled)
+        bool enabled,
+        bool allowMaterialChanges = false)
     {
         if (!enabled ||
             startIndex < 0 ||
@@ -207,7 +213,7 @@ public sealed partial class OpenGlPreviewBackend
         {
             var next = batches[i];
             if ((uint)next.MaterialIndex >= (uint)materialCount ||
-                next.MaterialIndex != first.MaterialIndex ||
+                (!allowMaterialChanges && next.MaterialIndex != first.MaterialIndex) ||
                 next.LayerPolicy != first.LayerPolicy ||
                 (entityBlendDraw || next.LayerPolicy.Kind == PreviewDepthLayerKind.TranslucentOverlay) != firstBlend)
             {
@@ -224,7 +230,8 @@ public sealed partial class OpenGlPreviewBackend
         IReadOnlyList<PreviewDrawBatch> batches,
         int startIndex,
         int materialCount,
-        bool enabled)
+        bool enabled,
+        bool allowMaterialChanges = false)
     {
         if (!enabled ||
             startIndex < 0 ||
@@ -241,7 +248,7 @@ public sealed partial class OpenGlPreviewBackend
         {
             var next = batches[i];
             if ((uint)next.MaterialIndex >= (uint)materialCount ||
-                next.MaterialIndex != first.MaterialIndex ||
+                (!allowMaterialChanges && next.MaterialIndex != first.MaterialIndex) ||
                 next.LayerPolicy.ShadowMode == PreviewDrawLayerShadowMode.Skip)
             {
                 break;

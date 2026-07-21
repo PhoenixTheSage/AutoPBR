@@ -64,6 +64,12 @@ public sealed class UserSettings
     /// <summary>When true, request native desktop OpenGL 4.x (WGL) for the 3D preview on next launch. Default false = OpenGL ES 3.0 via ANGLE.</summary>
     public bool PreviewUseOpenGl4 { get; set; }
 
+    /// <summary>Preview HDR present preference: "Auto" or "Sdr".</summary>
+    public string PreviewHdrMode { get; set; } = "Auto";
+
+    /// <summary>scRGB paper-white reference luminance in nits (typically 80–2000).</summary>
+    public double PreviewHdrPaperWhiteNits { get; set; } = 200.0;
+
     public string ColorScheme { get; set; } = "Dark";
 
     /// <summary>Interface scale (typically 0.75–1.75). 1.0 = 100%.</summary>
@@ -208,6 +214,9 @@ public sealed class UserSettings
 
     /// <summary>Draw the textured grass ground plane in 3D preview.</summary>
     public bool Preview3DShowGroundMesh { get; set; } = true;
+
+    /// <summary>Hard Full-detail terrain chunk radius (Chebyshev).</summary>
+    public int Preview3DChunkViewDistance { get; set; } = 8;
 
     /// <summary>Grass colormap temperature slider (0–1) for 3D preview biome tint.</summary>
     public double? Preview3DGrassColormapTemperature { get; set; }

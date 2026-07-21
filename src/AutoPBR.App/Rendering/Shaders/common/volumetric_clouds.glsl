@@ -37,9 +37,10 @@ vec3 vcSunScatter(vec3 sunColor, float cosTheta, float lightOd)
         intensity *= 0.55;
     }
 
-    // Gentle powder shaping: thin sun-facing edges dim slightly instead of going black.
+    // Restrained powder shaping: retain the bright-edge cue without whitening thick
+    // interiors into the flat, cartoon-like appearance of an aggressive powder term.
     float powder = 1.0 - exp(-lightOd * 2.0);
-    return sum * mix(0.6, 1.0, powder);
+    return sum * mix(0.72, 0.90, powder);
 }
 
 // Sun radiance at cloud altitude: warms and extinguishes as the sun drops to the horizon,
@@ -56,7 +57,8 @@ vec3 vcCloudSunColor(vec3 sunToward, float sunIntensity)
 // Light march toward the sun for self-shadowing. Exponential step distribution keeps
 // resolution near the sample point, and one distant coarse tap catches far occluders.
 // Samples the base shape (no detail erosion) so shadows track the rendered clouds cheaply.
-float vcLightOpticalDepthFromBase(float baseAtOrigin, vec3 worldPos, vec3 sunToward, float layerBase, float layerTop,
+float vcLightOpticalDepthFromBase(float baseAtOrigin, vec3 worldPos, vec3 sunToward,
+    vec3 planetCenter, float planetRadius, float layerBase, float layerTop,
     float densityMul, float coverageScale, float volumeSize, int lightSteps,
     sampler3D cloudNoise, int hasCloudNoise, sampler2D coverageMap, int hasCoverageMap, vec3 windOffset)
 {
@@ -80,13 +82,14 @@ float vcLightOpticalDepthFromBase(float baseAtOrigin, vec3 worldPos, vec3 sunTow
         float dt = t - tPrev;
         vec3 samplePos = worldPos + sunToward * (tPrev + dt * 0.5);
         tPrev = t;
-        if (samplePos.y < layerBase || samplePos.y > layerTop)
+        float sampleAltitude = length(samplePos - planetCenter) - planetRadius;
+        if (sampleAltitude < layerBase || sampleAltitude > layerTop)
         {
             break;
         }
 
-        float stepBase = vcCloudBaseDensity(samplePos, layerBase, layerTop, coverageScale, volumeSize,
-            cloudNoise, hasCloudNoise, coverageMap, hasCoverageMap, windOffset);
+        float stepBase = vcCloudBaseDensity(samplePos, planetCenter, planetRadius, layerBase, layerTop,
+            coverageScale, volumeSize, cloudNoise, hasCloudNoise, coverageMap, hasCoverageMap, windOffset, 2.0);
         if (stepBase <= 1e-5)
         {
             continue;
@@ -96,10 +99,11 @@ float vcLightOpticalDepthFromBase(float baseAtOrigin, vec3 worldPos, vec3 sunTow
     }
 
     vec3 farPos = worldPos + sunToward * (range * 2.2);
-    if (farPos.y >= layerBase && farPos.y <= layerTop)
+    float farAltitude = length(farPos - planetCenter) - planetRadius;
+    if (farAltitude >= layerBase && farAltitude <= layerTop)
     {
-        float farBase = vcCloudBaseDensity(farPos, layerBase, layerTop, coverageScale, volumeSize,
-            cloudNoise, hasCloudNoise, coverageMap, hasCoverageMap, windOffset);
+        float farBase = vcCloudBaseDensity(farPos, planetCenter, planetRadius, layerBase, layerTop,
+            coverageScale, volumeSize, cloudNoise, hasCloudNoise, coverageMap, hasCoverageMap, windOffset, 3.0);
         if (farBase > 1e-5)
         {
             od += farBase * densityMul * range * 0.5 * 0.18;
@@ -109,14 +113,14 @@ float vcLightOpticalDepthFromBase(float baseAtOrigin, vec3 worldPos, vec3 sunTow
     return od;
 }
 
-float vcLightOpticalDepth(vec3 worldPos, vec3 sunToward, float layerBase, float layerTop,
-    float densityMul, float coverageScale, float volumeSize, int lightSteps,
+float vcLightOpticalDepth(vec3 worldPos, vec3 sunToward, vec3 planetCenter, float planetRadius,
+    float layerBase, float layerTop, float densityMul, float coverageScale, float volumeSize, int lightSteps,
     sampler3D cloudNoise, int hasCloudNoise, sampler2D coverageMap, int hasCoverageMap, vec3 windOffset)
 {
-    float baseAtOrigin = vcCloudBaseDensity(worldPos, layerBase, layerTop, coverageScale, volumeSize,
-        cloudNoise, hasCloudNoise, coverageMap, hasCoverageMap, windOffset);
-    return vcLightOpticalDepthFromBase(baseAtOrigin, worldPos, sunToward, layerBase, layerTop,
-        densityMul, coverageScale, volumeSize, lightSteps,
+    float baseAtOrigin = vcCloudBaseDensity(worldPos, planetCenter, planetRadius, layerBase, layerTop,
+        coverageScale, volumeSize, cloudNoise, hasCloudNoise, coverageMap, hasCoverageMap, windOffset, 2.0);
+    return vcLightOpticalDepthFromBase(baseAtOrigin, worldPos, sunToward, planetCenter, planetRadius,
+        layerBase, layerTop, densityMul, coverageScale, volumeSize, lightSteps,
         cloudNoise, hasCloudNoise, coverageMap, hasCoverageMap, windOffset);
 }
 

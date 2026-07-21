@@ -1,4 +1,9 @@
 #version 400 core
+#ifdef GENESIS_MATERIAL_DRAW_RECORD_SSBO
+#extension GL_ARB_shader_storage_buffer_object : require
+#endif
+#define GENESIS_TESS_EVALUATION_STAGE 1
+//!include "common/genesis_draw_record.glsl"
 // Genesis high-end preview tessellation evaluation stage.
 // Outward protrusion is geometry; inward/cavity detail remains POM in genesis.frag.
 
@@ -24,6 +29,10 @@ uniform mat4 uView;
 uniform mat4 uProj;
 uniform mat4 uLightViewProj;
 uniform sampler2D uHeight;
+#ifdef GENESIS_MATERIAL_TEXTURE_ARRAYS
+uniform sampler2DArray uHeightArray;
+uniform int uGenesisUseMaterialTextureArray;
+#endif
 uniform int   uEnableTessellationDisplacement;
 uniform int   uHasHeight;
 uniform float uHeightStrength;
@@ -46,6 +55,7 @@ vec4 bary4(vec4 a, vec4 b, vec4 c)
 
 void main()
 {
+    genesisWriteDrawRecordIndexVarying();
     vec3 worldPos = bary3(tcWorldPos[0], tcWorldPos[1], tcWorldPos[2]);
     vec3 worldNormal = normalize(bary3(tcWorldNormal[0], tcWorldNormal[1], tcWorldNormal[2]));
     vec2 uv = bary2(tcUv[0], tcUv[1], tcUv[2]);
@@ -53,9 +63,23 @@ void main()
     tangent.xyz = normalize(tangent.xyz - worldNormal * dot(worldNormal, tangent.xyz));
     tangent.w = tangent.w < 0.0 ? -1.0 : 1.0;
 
-    if (uEnableTessellationDisplacement > 0 && uHasHeight > 0)
+    if (genesisEnableTessellationDisplacement(uEnableTessellationDisplacement) > 0 &&
+        genesisHasHeight(uHasHeight) > 0)
     {
-        float rawHeight = textureLod(uHeight, uv, 0.0).r;
+        float rawHeight;
+#ifdef GENESIS_MATERIAL_TEXTURE_ARRAYS
+        if (uGenesisUseMaterialTextureArray > 0)
+        {
+            rawHeight = textureLod(
+                uHeightArray,
+                vec3(uv, float(genesisMaterialTextureLayer(0))),
+                0.0).r;
+        }
+        else
+#endif
+        {
+            rawHeight = textureLod(uHeight, uv, 0.0).r;
+        }
         float protrusion = max(rawHeight - 0.5, 0.0) * 2.0;
         float scale = clamp(uHeightStrength, 0.0, 1.0) * clamp(uTessellationDisplacementStrength, 0.0, 0.20);
         worldPos += worldNormal * protrusion * scale;

@@ -138,6 +138,11 @@ public sealed partial class OpenGlPreviewBackend
         _genesisMaterialDrawRecordUpload?.BindBase();
     }
 
+    private void MarkGenesisMaterialDrawRecordsSubmitted()
+    {
+        _genesisMaterialDrawRecordUpload?.MarkSubmitted();
+    }
+
     private void DisposeGenesisMaterialDrawRecordBuffer()
     {
         _genesisMaterialDrawRecordUpload?.Dispose();

@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 using AutoPBR.App.Rendering.Scene;
 
@@ -13,7 +14,7 @@ public sealed partial class OpenGlPreviewBackend
     private const int SunDebugFloatCount = SunDebugVertexCount * PreviewGridLinesFactory.FloatsPerVertex;
 
     private uint _sunDebugVao;
-    private uint _sunDebugVbo;
+    private GlPersistentMappedUploadBuffer? _sunDebugVertexUpload;
 
     private void EnsureSunDebugOverlay(GL gl)
     {
@@ -23,11 +24,14 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         _sunDebugVao = gl.GenVertexArray();
-        _sunDebugVbo = gl.GenBuffer();
+        _sunDebugVertexUpload = new GlPersistentMappedUploadBuffer(
+            gl,
+            BufferTargetARB.ArrayBuffer,
+            SunDebugFloatCount * sizeof(float),
+            16,
+            _glCapabilities?.CanUsePersistentUploadRing == true);
         gl.BindVertexArray(_sunDebugVao);
-        gl.BindBuffer(BufferTargetARB.ArrayBuffer, _sunDebugVbo);
-        Span<float> vboStub = stackalloc float[SunDebugFloatCount];
-        gl.BufferData<float>(GLEnum.ArrayBuffer, vboStub, GLEnum.DynamicDraw);
+        _sunDebugVertexUpload.BindBuffer();
         unsafe
         {
             var stride = PreviewGridLinesFactory.FloatsPerVertex * sizeof(float);
@@ -45,15 +49,13 @@ public sealed partial class OpenGlPreviewBackend
         var gl = _gl;
         if (gl is null)
         {
-            _sunDebugVao = _sunDebugVbo = 0;
+            _sunDebugVertexUpload = null;
+            _sunDebugVao = 0;
             return;
         }
 
-        if (_sunDebugVbo != 0)
-        {
-            gl.DeleteBuffer(_sunDebugVbo);
-            _sunDebugVbo = 0;
-        }
+        _sunDebugVertexUpload?.Dispose();
+        _sunDebugVertexUpload = null;
 
         if (_sunDebugVao != 0)
         {
@@ -135,11 +137,13 @@ public sealed partial class OpenGlPreviewBackend
         gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
 
         gl.BindVertexArray(_sunDebugVao);
-        gl.BindBuffer(BufferTargetARB.ArrayBuffer, _sunDebugVbo);
-        gl.BufferSubData<float>(GLEnum.ArrayBuffer, 0, verts[..i]);
+        _sunDebugVertexUpload!.Upload(MemoryMarshal.AsBytes(verts[..i]));
+        _sunDebugVertexUpload.BindBuffer();
+        ConfigureSunDebugVertexPointers(gl, _sunDebugVertexUpload.ActiveOffset);
         _lineProgram.Use();
         SetLineProgramMvp(gl, viewProj);
         gl.DrawArrays(PrimitiveType.Lines, 0, (uint)(i / PreviewGridLinesFactory.FloatsPerVertex));
+        _sunDebugVertexUpload.MarkSubmitted();
         gl.BindVertexArray(0);
 
         if (priorDepth)
@@ -161,6 +165,13 @@ public sealed partial class OpenGlPreviewBackend
     {
         var clip = Vector4.Transform(new Vector4(worldPos, 1f), viewProj);
         return clip.W > 1e-5f;
+    }
+
+    private static unsafe void ConfigureSunDebugVertexPointers(GL gl, nint byteOffset)
+    {
+        var stride = PreviewGridLinesFactory.FloatsPerVertex * sizeof(float);
+        gl.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, (uint)stride, (void*)byteOffset);
+        gl.VertexAttribPointer(1, 4, VertexAttribPointerType.Float, false, (uint)stride, (void*)(byteOffset + 3 * sizeof(float)));
     }
 
     private static Vector3 NormalizeOrDefault(Vector3 v, Vector3 fallback)
