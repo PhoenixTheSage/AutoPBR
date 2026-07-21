@@ -47,8 +47,18 @@ internal sealed class GlColorRenderTarget(GL gl, bool useOpenGlEs, bool useFloat
         {
             if (_useFloatColor)
             {
-                gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba16f, (uint)width, (uint)height, 0,
-                    PixelFormat.Rgba, PixelType.HalfFloat, (void*)0);
+                // R11G11B10F: half the bandwidth of RGBA16F for HDR capture/TAA intermediates.
+                // Final scRGB present targets stay RGBA16F (need alpha for HUD compositing).
+                gl.TexImage2D(
+                    TextureTarget.Texture2D,
+                    0,
+                    InternalFormat.R11fG11fB10f,
+                    (uint)width,
+                    (uint)height,
+                    0,
+                    PixelFormat.Rgb,
+                    PixelType.UnsignedInt10f11f11fRev,
+                    (void*)0);
             }
             else
             {
