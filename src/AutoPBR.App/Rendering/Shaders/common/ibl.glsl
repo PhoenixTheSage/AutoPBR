@@ -186,14 +186,23 @@ vec3 previewAerialFogRadiance(vec3 worldPos, vec3 cameraPos, vec3 lightPropagati
     vec3 fogDir = normalize(vec3(viewDir.x, clamp(viewDir.y * 0.35 + 0.10, 0.06, 0.45), viewDir.z));
 
     float h = clamp(fogDir.y * 0.5 + 0.5, 0.0, 1.0);
-    vec3 nightHaze = mix(vec3(0.01, 0.012, 0.02), vec3(0.02, 0.035, 0.07), h) * 2.0;
+    // Post-ACES fog colors: keep night near tonemapped sky zenith so the LOD rim is haze, not a slab.
+    vec3 nightHaze = mix(vec3(0.006, 0.007, 0.011), vec3(0.010, 0.013, 0.020), h);
     // Tint-space day haze (no LUT). Height blend keeps a little horizon lift without a texture fetch.
     vec3 dayHaze = mix(ctx.groundTintLin, ctx.skyTintLin, mix(0.45, 0.68, h));
 
-    vec3 fog = mix(nightHaze, dayHaze, ctx.dayAmt);
-    // Celestial light reception (sun by day, reflected moonlight by night).
-    float scatter = mix(0.48, 0.10, ctx.dayAmt);
+    // Scene light color blends sun/moon across the horizon; gate haze on luminance with a wide
+    // twilight ramp so 06:00 / 18:00 do not hard-switch dark fog to day fog.
+    float lightLum = dot(lightColor, vec3(0.2126, 0.7152, 0.0722));
+    float daylightGate = smoothstep(0.08, 0.72, lightLum);
+    vec3 fog = mix(nightHaze, dayHaze, daylightGate);
+
+    // Moon fill is tiny; dusk still uses a modest sun scatter while lightColor remains bright.
+    float moonGate = 1.0 - smoothstep(0.08, 0.55, lightLum);
+    float scatter = mix(0.08 * max(daylightGate, 0.02), 0.04, moonGate);
     fog += lightColor * scatter;
+    // Small warm twilight lift while the sun is still the bright source.
+    fog += ctx.sunWarmColor * (0.04 * daylightGate * (1.0 - smoothstep(0.35, 0.85, lightLum)));
     return max(fog, vec3(0.0));
 }
 

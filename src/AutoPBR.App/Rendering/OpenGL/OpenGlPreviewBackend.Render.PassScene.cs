@@ -702,6 +702,7 @@ public sealed partial class OpenGlPreviewBackend
         SetFloatLoc(u.RoughnessScale, frame.Settings.RoughnessScale);
         SetFloatLoc(u.Exposure, frame.Settings.Exposure);
         SetIntLoc(u.HdrPresent, frame.Settings.HdrPresentActive ? 1 : 0);
+        SetFloatLoc(u.HdrPaperWhiteNits, frame.Settings.HdrPaperWhiteNits);
         SetFloatLoc(u.ParallaxAoStrength, frame.Settings.ParallaxAoStrength);
         SetIntLoc(u.ParallaxTraceLayers, Math.Clamp(frame.Settings.ParallaxTraceLayers, 8, 128));
         SetIntLoc(u.ParallaxRefineSteps, Math.Clamp(frame.Settings.ParallaxRefineSteps, 0, 8));

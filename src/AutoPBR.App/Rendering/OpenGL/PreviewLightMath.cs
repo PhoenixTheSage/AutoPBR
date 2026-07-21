@@ -77,7 +77,11 @@ internal static class PreviewLightMath
         return dir.Y > 0f ? -dir : dir;
     }
 
-    /// <summary>Cool, dim reflected moonlight when the moon is the visible source.</summary>
+    /// <summary>
+    /// Cool, dim reflected moonlight when the moon is the visible source.
+    /// Blends across a small horizon band so sunrise/sunset do not hard-switch full sun vs moon
+    /// (aerial fog and other luminance gates used to snap dark↔bright at 06:00 / 18:00).
+    /// </summary>
     public static Vector3 SceneLightColorFromCelestialCycle(
         Vector3 celestialLightDir,
         Vector3 sunColor,
@@ -90,16 +94,23 @@ internal static class PreviewLightMath
         }
 
         var dir = celestialLightDir / MathF.Sqrt(len2);
-        if (dir.Y <= 0f)
-        {
-            return sunColor;
-        }
+        // Celestial light Y negative => sun above horizon. Blend ~±20° (~80 min) around the limb
+        // so fog/light luminance gates fade instead of snapping at 06:00 / 18:00.
+        var dayAmt = 1f - Smoothstep(-0.36f, 0.36f, dir.Y);
 
-        var moonElevation = Math.Clamp(dir.Y, 0f, 1f);
+        // Moon endpoint stays defined on the day side (elevation clamped to 0) so the lerp is continuous.
+        var moonElevation = Math.Clamp(MathF.Max(dir.Y, 0f), 0f, 1f);
         var reflectedStrength = (0.05f + 0.13f * MathF.Pow(moonElevation, 0.65f)) *
                                 Math.Clamp(moonWorldLightIntensity, 0f, 8f);
         var moonTint = new Vector3(0.58f, 0.66f, 0.86f);
-        return sunColor * moonTint * reflectedStrength;
+        var moonColor = sunColor * moonTint * reflectedStrength;
+        return Vector3.Lerp(moonColor, sunColor, dayAmt);
+    }
+
+    private static float Smoothstep(float edge0, float edge1, float x)
+    {
+        var t = Math.Clamp((x - edge0) / (edge1 - edge0), 0f, 1f);
+        return t * t * (3f - 2f * t);
     }
 
     /// <summary>

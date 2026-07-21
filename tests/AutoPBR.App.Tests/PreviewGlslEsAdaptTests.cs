@@ -397,6 +397,12 @@ public class PreviewGlslEsAdaptTests
         fogBody = fogBody[..fogEnd];
         Assert.Contains("nightHaze", fogBody, StringComparison.Ordinal);
         Assert.Contains("dayHaze", fogBody, StringComparison.Ordinal);
+        Assert.Contains("daylightGate", fogBody, StringComparison.Ordinal);
+        Assert.Contains("moonGate", fogBody, StringComparison.Ordinal);
+        // Wide luminance twilight ramp (pairs with SceneLightColor horizon blend).
+        Assert.Contains("smoothstep(0.08, 0.72, lightLum)", fogBody, StringComparison.Ordinal);
+        // Night inscatter must stay modest (full moonlight previously washed the horizon).
+        Assert.Contains("0.04, moonGate", fogBody, StringComparison.Ordinal);
         Assert.Contains("lightColor * scatter", fogBody, StringComparison.Ordinal);
         Assert.DoesNotContain("sampleSkyViewLutSrgb", fogBody, StringComparison.Ordinal);
         Assert.DoesNotContain("previewEnvSkyGroundRadianceCtx", fogBody, StringComparison.Ordinal);
@@ -598,6 +604,15 @@ public class PreviewGlslEsAdaptTests
             ShaderType.FragmentShader,
             useOpenGlEs: true);
         Assert.Contains("uHdrPresent", genesis, StringComparison.Ordinal);
+        Assert.Contains("uHdrPaperWhiteNits", genesis, StringComparison.Ordinal);
+        // Fog is authored in post-ACES space; HDR recovers linear via inverse so present ACES matches SDR.
+        Assert.Contains("applyTerrainAerialFog(tonemapAcesNarkowicz(hdr))", genesis, StringComparison.Ordinal);
+        Assert.Contains("inverseTonemapAcesNarkowicz(foggedMapped)", genesis, StringComparison.Ordinal);
+        // Night HDR undoes paper-white scale on fog midtones so the LOD band matches SDR.
+        Assert.Contains("1.0 / max(paperScale, 1.0)", genesis, StringComparison.Ordinal);
+
+        var tonemap = GlslIncludeResolver.Resolve("common/tonemap.glsl", LoadShader);
+        Assert.Contains("vec3 inverseTonemapAcesNarkowicz", tonemap, StringComparison.Ordinal);
 
         var sky = GlslSourceAdapter.Adapt(
             GlslIncludeResolver.Resolve("atmo_sky.frag", LoadShader),

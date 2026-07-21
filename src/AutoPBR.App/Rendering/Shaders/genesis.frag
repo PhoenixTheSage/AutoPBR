@@ -52,6 +52,7 @@ uniform float uSpecularStrength;
 uniform float uRoughnessScale;
 uniform float uExposure;
 uniform int uHdrPresent;
+uniform float uHdrPaperWhiteNits;
 uniform float uParallaxAoStrength;
 uniform int   uEnableParallax;
 uniform int   uEnableParallaxAo;
@@ -219,6 +220,16 @@ vec3 applyTerrainAerialFog(vec3 color)
     vec3 fogCol = previewAerialFogRadiance(
         vWorldPos, uCameraPos, uLightDir, uLightColor, uAtmosphereSunIntensity,
         uSkyTint, uGroundTint, uEnableAtmosphericSky, uAtmoSkyViewLut);
+    if (uHdrPresent > 0)
+    {
+        // Fog is authored for SDR post-ACES mixing. presentEncodeScRgb then multiplies those
+        // midtones by paperWhite/80, which turns the night LOD band into a bright HDR slab.
+        // Undo that scale while the scene light is moon-dim so night matches SDR.
+        float lightLum = dot(uLightColor, vec3(0.2126, 0.7152, 0.0722));
+        float nightAmt = 1.0 - smoothstep(0.08, 0.72, lightLum);
+        float paperScale = max(uHdrPaperWhiteNits, 80.0) / 80.0;
+        fogCol *= mix(1.0, 1.0 / max(paperScale, 1.0), nightAmt);
+    }
     return mix(color, fogCol, fogAmt);
 }
 
@@ -414,15 +425,17 @@ void main()
     vec3 emission = albedoLinear * mat.emissionStrength * uEmissionStrength;
 
     vec3 hdr = (direct + indirect + emission) * uExposure;
+    // Aerial fog colors are authored for post-ACES mixing (SDR). Apply fog there for both
+    // paths; HDR inverts ACES so presentEncodeScRgb's tonemap restores the same midtones.
+    vec3 foggedMapped = applyTerrainAerialFog(tonemapAcesNarkowicz(hdr));
     vec3 outRgb;
     if (uHdrPresent > 0)
     {
-        outRgb = applyTerrainAerialFog(hdr);
+        outRgb = inverseTonemapAcesNarkowicz(foggedMapped);
     }
     else
     {
-        vec3 mapped = applyTerrainAerialFog(tonemapAcesNarkowicz(hdr));
-        outRgb = ditherSrgb8(linearToSrgb(mapped), gl_FragCoord.xy);
+        outRgb = ditherSrgb8(linearToSrgb(foggedMapped), gl_FragCoord.xy);
     }
 
     float a = 1.0;

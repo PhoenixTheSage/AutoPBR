@@ -103,6 +103,30 @@ public sealed class PreviewLightMathTimeOfDayTests
     }
 
     [Fact]
+    public void SceneLightColor_BlendsAcrossSunriseWithoutHardSnap()
+    {
+        var sun = new System.Numerics.Vector3(1f, 0.9f, 0.8f);
+        float LumaAt(double hours)
+        {
+            var (yaw, pitch) = PreviewLightMath.LightYawPitchFromTimeOfDay(hours);
+            var dir = PreviewLightMath.LightDirectionFromYawPitch(yaw, pitch);
+            var c = PreviewLightMath.SceneLightColorFromCelestialCycle(dir, sun);
+            return 0.2126f * c.X + 0.7152f * c.Y + 0.0722f * c.Z;
+        }
+
+        var before = LumaAt(5.85);
+        var at = LumaAt(6.00);
+        var after = LumaAt(6.15);
+        var sunLuma = 0.2126f * sun.X + 0.7152f * sun.Y + 0.0722f * sun.Z;
+        // Hard switch used to jump moonlight (~0.05) to full sun (~0.9) in one sample.
+        Assert.InRange(at / Math.Max(before, 1e-4f), 0.75f, 1.6f);
+        Assert.InRange(after / Math.Max(at, 1e-4f), 0.75f, 1.6f);
+        Assert.True(after > before);
+        Assert.True(at > before * 0.9f);
+        Assert.True(at < sunLuma * 0.95f);
+    }
+
+    [Fact]
     public void EffectiveTimeOfDayHours_AdvancesWithRenderTime()
     {
         var settings = new PreviewRenderSettings
