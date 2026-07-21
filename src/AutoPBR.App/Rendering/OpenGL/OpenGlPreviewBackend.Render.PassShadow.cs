@@ -55,18 +55,6 @@ public sealed partial class OpenGlPreviewBackend
 
         }
 
-
-
-        var shadowDistance = Math.Clamp(
-            frame.Settings.ShadowDistance > 0f ? frame.Settings.ShadowDistance : ShadowDistanceDefault,
-            ShadowDistanceMin,
-            ShadowDistanceMax);
-        frame.ShadowDistance = shadowDistance;
-        frame.ShadowFadeStart = shadowDistance * ShadowDistanceFadeFraction;
-        frame.CascadeSplitWorldDistance = shadowDistance * ShadowCascadeNearFraction;
-        frame.CascadeMidSplitWorldDistance = shadowDistance * ShadowCascadeMidFraction;
-        frame.CascadeBlendWorldWidth = Math.Max(ShadowCascadeBlendWidth, shadowDistance * 0.025f);
-
         frame.ModelMatrix = Matrix4x4.CreateRotationY((float)frame.Rotation);
 
         if (frame.Scene.SceneKind == PreviewSceneKind.ItemPlane)
@@ -97,7 +85,24 @@ public sealed partial class OpenGlPreviewBackend
 
         }
 
+        // Light/model setup is shared with the scene pass. Skip caster fit/cull when shadows are off.
+        if (!frame.Settings.EnableShadows)
+        {
+            frame.ShadowAvailable = false;
+            frame.ShadowCascadesActive = false;
+            frame.ShadowBiasScale = 1f;
+            return;
+        }
 
+        var shadowDistance = Math.Clamp(
+            frame.Settings.ShadowDistance > 0f ? frame.Settings.ShadowDistance : ShadowDistanceDefault,
+            ShadowDistanceMin,
+            ShadowDistanceMax);
+        frame.ShadowDistance = shadowDistance;
+        frame.ShadowFadeStart = shadowDistance * ShadowDistanceFadeFraction;
+        frame.CascadeSplitWorldDistance = shadowDistance * ShadowCascadeNearFraction;
+        frame.CascadeMidSplitWorldDistance = shadowDistance * ShadowCascadeMidFraction;
+        frame.CascadeBlendWorldWidth = Math.Max(ShadowCascadeBlendWidth, shadowDistance * 0.025f);
 
         var nearHalf = Math.Clamp(
             shadowDistance * ShadowCascadeNearFraction,
@@ -178,13 +183,14 @@ public sealed partial class OpenGlPreviewBackend
             frame.ShadowBiasScale = 1f;
         }
 
-        frame.ShadowCascadesActive = frame.Settings is { EnableShadowCascades: true, EnableShadows: true } &&
+        frame.ShadowCascadesActive = frame.Settings.EnableShadowCascades &&
                                      _shadowTargetCascadeNear is not null &&
                                      _shadowTargetCascadeMid is not null;
 
-        frame.ShadowAvailable = frame.Settings.EnableShadows && _shadowProgram?.IsValid == true && _shadowTarget is not null;
+        frame.ShadowAvailable = _shadowProgram?.IsValid == true && _shadowTarget is not null;
         if (!frame.ShadowAvailable)
         {
+            frame.ShadowCascadesActive = false;
             return;
         }
 

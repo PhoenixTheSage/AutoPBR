@@ -112,6 +112,12 @@ public sealed partial class PreviewRenderingTests
             "var useMaterialDrawRecords = TryUploadGenesisMaterialDrawRecords(ref frame);",
             shadow,
             StringComparison.Ordinal);
+
+        // Shadows-off must skip caster AABB/VP fit (keeps light/model setup only).
+        var earlyOut = shadow.IndexOf("if (!frame.Settings.EnableShadows)", StringComparison.Ordinal);
+        var casterFit = shadow.IndexOf("TryGetShadowCasterBoundsForFrame", StringComparison.Ordinal);
+        Assert.True(earlyOut >= 0 && casterFit > earlyOut,
+            "EnableShadows early-out must precede terrain caster fit");
     }
 
     [Fact]

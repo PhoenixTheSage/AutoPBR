@@ -378,9 +378,28 @@ public class PreviewGlslEsAdaptTests
         Assert.Contains("uTerrainPomFadeStart", adapted, StringComparison.Ordinal);
         Assert.Contains("uTerrainPomFadeEnd", adapted, StringComparison.Ordinal);
         Assert.Contains("groundPomFade", adapted, StringComparison.Ordinal);
+        Assert.Contains("previewAerialFogRadiance", adapted, StringComparison.Ordinal);
         Assert.Contains("uLightDir, uLightColor, uAtmosphereSunIntensity", adapted, StringComparison.Ordinal);
         Assert.DoesNotContain("Sun / punctual highlights come from direct lighting only", adapted, StringComparison.Ordinal);
         Assert.DoesNotContain("iblPrefilteredSkyRadianceFallback", adapted, StringComparison.Ordinal);
+
+        // Soft LOD haze keeps day/night inscatter but must not pay per-fragment sky-view LUT samples.
+        var ibl = GlslIncludeResolver.Resolve("common/ibl.glsl", LoadShader);
+        var fogFn = ibl.IndexOf("vec3 previewAerialFogRadiance", StringComparison.Ordinal);
+        Assert.True(fogFn >= 0);
+        var fogBody = ibl[fogFn..];
+        var fogEnd = fogBody.IndexOf("\nvec3 ", 1, StringComparison.Ordinal);
+        if (fogEnd < 0)
+        {
+            fogEnd = fogBody.Length;
+        }
+
+        fogBody = fogBody[..fogEnd];
+        Assert.Contains("nightHaze", fogBody, StringComparison.Ordinal);
+        Assert.Contains("dayHaze", fogBody, StringComparison.Ordinal);
+        Assert.Contains("lightColor * scatter", fogBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("sampleSkyViewLutSrgb", fogBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("previewEnvSkyGroundRadianceCtx", fogBody, StringComparison.Ordinal);
     }
 
     [Fact]

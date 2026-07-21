@@ -172,9 +172,12 @@ vec3 fakeIblSpecularWithProbe(PreviewEnvCtx ctx, vec3 probe, vec3 N, vec3 V, vec
 }
 
 // LOD-ring aerial fog: sky-lit haze with celestial inscatter so night is not full-bright.
+// Intentionally avoids per-fragment sky-view LUT sampling (IBL/specular still uses the LUT). Soft
+// haze only needs day/night tint + light inscatter; that cut is the main shadows-off GPU win.
 vec3 previewAerialFogRadiance(vec3 worldPos, vec3 cameraPos, vec3 lightPropagationDir, vec3 lightColor,
     float sunIntensity, vec3 skyTint, vec3 groundTint, int enableAtmoSky, sampler2D atmoSkyViewLut)
 {
+    // enableAtmoSky / atmoSkyViewLut kept for call-site parity with IBL; fog uses tint haze only.
     PreviewEnvCtx ctx = buildPreviewEnvCtx(lightPropagationDir, lightColor, sunIntensity, skyTint, groundTint);
     vec3 toFrag = worldPos - cameraPos;
     float len2 = dot(toFrag, toFrag);
@@ -184,9 +187,8 @@ vec3 previewAerialFogRadiance(vec3 worldPos, vec3 cameraPos, vec3 lightPropagati
 
     float h = clamp(fogDir.y * 0.5 + 0.5, 0.0, 1.0);
     vec3 nightHaze = mix(vec3(0.01, 0.012, 0.02), vec3(0.02, 0.035, 0.07), h) * 2.0;
-    vec3 dayHaze = enableAtmoSky > 0
-        ? previewEnvSkyGroundRadianceCtx(ctx, fogDir, enableAtmoSky, atmoSkyViewLut)
-        : mix(ctx.groundTintLin, ctx.skyTintLin, 0.55);
+    // Tint-space day haze (no LUT). Height blend keeps a little horizon lift without a texture fetch.
+    vec3 dayHaze = mix(ctx.groundTintLin, ctx.skyTintLin, mix(0.45, 0.68, h));
 
     vec3 fog = mix(nightHaze, dayHaze, ctx.dayAmt);
     // Celestial light reception (sun by day, reflected moonlight by night).
