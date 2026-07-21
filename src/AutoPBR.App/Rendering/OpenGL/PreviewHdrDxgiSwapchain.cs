@@ -27,6 +27,8 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
     private const int DXGI_SWAP_EFFECT_FLIP_DISCARD = 4;
     private const int DXGI_ALPHA_MODE_IGNORE = 3;
     private const int DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 = 16;
+    private const uint DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING = 0x800;
+    private const uint DXGI_PRESENT_ALLOW_TEARING = 0x200;
     private const uint D3D11_SDK_VERSION = 7;
     private const uint D3D11_CREATE_DEVICE_BGRA_SUPPORT = 0x20;
     private const int D3D_DRIVER_TYPE_HARDWARE = 1;
@@ -249,6 +251,7 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
     private bool _sceneFboComplete;
     /// <summary>0 = undecided, 1 = blit, 2 = shader fallback.</summary>
     private int _yFlipPath;
+    private bool _allowTearing;
     private IntPtr _parentHwnd;
     private IntPtr _presentHwnd;
     private int _presentHwndWidth;
@@ -306,6 +309,9 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
         2 => "shader",
         _ => "undecided"
     };
+
+    /// <summary>True when the swapchain was created with <c>ALLOW_TEARING</c> (used for unlocked presents).</summary>
+    public bool AllowTearing => _allowTearing;
 
     /// <summary>Returned when the present child HWND is still being created on the UI thread.</summary>
     public const string PresentWindowPendingMessage = "HDR present HWND is being created on the UI thread.";
@@ -633,12 +639,25 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             copy(_context, backBuffer, shared);
 
             var present = GetVTableFn<PresentDelegate>(_swapChain, 8);
-            hr = present(_swapChain, vsync ? 1u : 0u, 0);
+            // Step 5: when vsync is off and the swapchain supports it, allow tearing so Present
+            // is not capped by the compositor refresh cadence.
+            var presentFlags = !vsync && _allowTearing ? DXGI_PRESENT_ALLOW_TEARING : 0u;
+            hr = present(_swapChain, vsync ? 1u : 0u, presentFlags);
             if (hr != S_OK && hr != unchecked((int)0x087A0001))
             {
-                failure = $"IDXGISwapChain::Present failed (hr=0x{hr:X8}).";
-                _lastFailure = failure;
-                return false;
+                // Some drivers reject tearing on windowed child HWNDs; drop the flag and retry once.
+                if (presentFlags != 0)
+                {
+                    _allowTearing = false;
+                    hr = present(_swapChain, 0u, 0u);
+                }
+
+                if (hr != S_OK && hr != unchecked((int)0x087A0001))
+                {
+                    failure = $"IDXGISwapChain::Present failed (hr=0x{hr:X8}).";
+                    _lastFailure = failure;
+                    return false;
+                }
             }
 
             _writeIndex ^= 1;
@@ -925,6 +944,7 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
         }
 
         _factory = factory;
+        _allowTearing = false;
 
         var desc = new DxgiSwapChainDesc1
         {
@@ -938,16 +958,26 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             Scaling = DXGI_SCALING_STRETCH,
             SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,
             AlphaMode = DXGI_ALPHA_MODE_IGNORE,
-            Flags = 0
+            Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING
         };
 
         var createSc = GetVTableFn<CreateSwapChainForHwndDelegate>(factory, 15);
         hr = createSc(factory, device, _presentHwnd, ref desc, IntPtr.Zero, IntPtr.Zero, out var swapChain);
-        if (hr != S_OK || swapChain == IntPtr.Zero)
+        if (hr == S_OK && swapChain != IntPtr.Zero)
         {
-            failure = $"CreateSwapChainForHwnd failed (hr=0x{hr:X8}).";
-            TeardownDxgi();
-            return false;
+            _allowTearing = true;
+        }
+        else
+        {
+            // Step 5 fallback: create without tearing if the output/OS rejects the flag.
+            desc.Flags = 0;
+            hr = createSc(factory, device, _presentHwnd, ref desc, IntPtr.Zero, IntPtr.Zero, out swapChain);
+            if (hr != S_OK || swapChain == IntPtr.Zero)
+            {
+                failure = $"CreateSwapChainForHwnd failed (hr=0x{hr:X8}).";
+                TeardownDxgi();
+                return false;
+            }
         }
 
         _swapChain = swapChain;
@@ -1415,6 +1445,7 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
 
         _width = 0;
         _height = 0;
+        _allowTearing = false;
     }
 
     private static T GetVTableFn<T>(IntPtr comObject, int index) where T : Delegate
