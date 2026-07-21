@@ -401,7 +401,7 @@ public sealed partial class OpenGlPreviewBackend
 
             using (BeginGpuTimerScope(GlGpuTimerScope.Overlay))
             {
-                DrawNativeWglOverlayIfNeeded(gl, vw, vh);
+                DrawNativeWglOverlayIfNeeded(gl, defaultFbo, vw, vh);
             }
         }
         finally

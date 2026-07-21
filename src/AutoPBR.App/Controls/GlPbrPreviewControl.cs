@@ -1411,16 +1411,15 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
                         (_hdrSwapchain.LastFailure ?? "unknown") +
                         "); presenting without flip.");
                 }
-
-                // Shared-texture path: bounded drain is enough before NV_DX unlock + CopyResource.
-                _ = PreviewGlCommandDrain.Drain(gl);
             }
             finally
             {
                 _hdrSwapchain.EndFrame();
             }
 
-            if (!_hdrSwapchain.TryPresent(_presentationVsyncEnabled, out var presentFailure))
+            // Double-buffered resolve: Present waits on the previous buffer's fence (overlapped by
+            // scene render), not a hard ClientWaitSync of the frame we just drew.
+            if (!_hdrSwapchain.TryPresent(gl, _presentationVsyncEnabled, out var presentFailure))
             {
                 return FailHdrPresent(displayInfo, gl, "HDR Present failed: " + (presentFailure ?? "unknown"));
             }

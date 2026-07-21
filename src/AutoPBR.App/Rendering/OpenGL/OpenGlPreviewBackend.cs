@@ -75,6 +75,9 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private PreviewNativeWglOverlayBitmap? _nativeOverlayFps;
     private int _nativeOverlayMarginPixels = 8;
     private bool _nativeOverlayShaderErrorLogged;
+    /// <summary>Bump when overlay shader source changes so hot sessions rebuild the program.</summary>
+    private const int NativeOverlayShaderRev = 2;
+    private int _nativeOverlayShaderRevLoaded;
     private GlMoonBillboardProgram? _moonProgram;
     private GlTexture2D? _moonAlbedo;
     private uint _moonVao;

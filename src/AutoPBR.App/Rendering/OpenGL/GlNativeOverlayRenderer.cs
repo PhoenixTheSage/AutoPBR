@@ -23,11 +23,16 @@ void main()
     private const string Frag330 = """
 #version 330 core
 uniform sampler2D uTex;
+// 0 = SDR backbuffer. >0 = scRGB scale (paperWhiteNits / 80) so UI matches scene present encode.
+uniform float uHdrScRgbScale;
 in vec2 vUv;
 out vec4 FragColor;
 void main()
 {
-    FragColor = texture(uTex, vUv);
+    vec4 s = texture(uTex, vUv);
+    // Keep premultiplied alpha as uploaded. Only boost into paper-white scRGB for HDR;
+    // unpremultiply/sRGB conversion made glyphs disappear on some Avalonia pixel layouts.
+    FragColor = uHdrScRgbScale > 0.0 ? vec4(s.rgb * uHdrScRgbScale, s.a) : s;
 }
 """;
 
@@ -35,6 +40,7 @@ void main()
     private readonly uint _vao;
     private readonly GlPersistentMappedUploadBuffer? _vertexUpload;
     private readonly int _texLoc;
+    private readonly int _hdrScaleLoc;
     private readonly OverlayTexture _debugTexture;
     private readonly OverlayTexture _fpsTexture;
     private uint _program;
@@ -49,6 +55,10 @@ void main()
         var vs = Compile(ShaderType.VertexShader, vSrc, ref error);
         if (vs == 0)
         {
+            _texLoc = -1;
+            _hdrScaleLoc = -1;
+            _vao = 0;
+            _vertexUpload = null;
             _debugTexture = new OverlayTexture();
             _fpsTexture = new OverlayTexture();
             return;
@@ -58,6 +68,10 @@ void main()
         if (fs == 0)
         {
             _gl.DeleteShader(vs);
+            _texLoc = -1;
+            _hdrScaleLoc = -1;
+            _vao = 0;
+            _vertexUpload = null;
             _debugTexture = new OverlayTexture();
             _fpsTexture = new OverlayTexture();
             return;
@@ -76,12 +90,17 @@ void main()
             error = string.IsNullOrEmpty(error) ? linkLog : error + "\n" + linkLog;
             _gl.DeleteProgram(_program);
             _program = 0;
+            _texLoc = -1;
+            _hdrScaleLoc = -1;
+            _vao = 0;
+            _vertexUpload = null;
             _debugTexture = new OverlayTexture();
             _fpsTexture = new OverlayTexture();
             return;
         }
 
         _texLoc = _gl.GetUniformLocation(_program, "uTex");
+        _hdrScaleLoc = _gl.GetUniformLocation(_program, "uHdrScRgbScale");
         _vao = _gl.GenVertexArray();
         _vertexUpload = new GlPersistentMappedUploadBuffer(
             _gl,
@@ -109,12 +128,16 @@ void main()
 
     internal bool UsesPersistentVertexUpload => _vertexUpload?.UsesPersistentMapping == true;
 
+    /// <param name="hdrScRgbScale">
+    /// Paper-white scRGB scale (<c>nits/80</c>) when compositing into an HDR linear target; 0 for SDR.
+    /// </param>
     public void Draw(
         int viewportWidth,
         int viewportHeight,
         int marginPixels,
         PreviewNativeWglOverlayBitmap? debug,
-        PreviewNativeWglOverlayBitmap? fps)
+        PreviewNativeWglOverlayBitmap? fps,
+        float hdrScRgbScale = 0f)
     {
         if (!IsValid || viewportWidth <= 0 || viewportHeight <= 0)
         {
@@ -131,6 +154,11 @@ void main()
         _gl.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
         _gl.UseProgram(_program);
         _gl.Uniform1(_texLoc, 0);
+        if (_hdrScaleLoc >= 0)
+        {
+            _gl.Uniform1(_hdrScaleLoc, Math.Max(0f, hdrScRgbScale));
+        }
+
         _gl.BindVertexArray(_vao);
 
         if (debug is not null)
