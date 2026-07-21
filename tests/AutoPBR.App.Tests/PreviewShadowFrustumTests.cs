@@ -36,6 +36,81 @@ public sealed class PreviewShadowFrustumTests
     }
 
     [Fact]
+    public void ExpandBoundsForGroundReceiver_includes_terrain_ceiling_and_min_xz()
+    {
+        var min = new Vector3(-0.5f, 0f, -0.5f);
+        var max = new Vector3(0.5f, 1.8f, 0.5f);
+        const float groundY = -0.56f;
+        const float ceilingY = groundY + 6f;
+        PreviewShadowFrustum.ExpandBoundsForGroundReceiver(
+            ref min,
+            ref max,
+            groundY,
+            ceilingY,
+            PreviewShadowFrustum.TerrainShadowMinXzHalfExtent);
+
+        Assert.True(min.Y <= groundY);
+        Assert.True(max.Y >= ceilingY);
+        Assert.True(max.X - min.X >= PreviewShadowFrustum.TerrainShadowMinXzHalfExtent * 2f - 1e-3f);
+        Assert.True(max.Z - min.Z >= PreviewShadowFrustum.TerrainShadowMinXzHalfExtent * 2f - 1e-3f);
+    }
+
+    [Fact]
+    public void BuildDirectionalViewProj_terrain_relief_corners_stay_inside_fitted_frustum()
+    {
+        PreviewShadowFrustum.SeedTerrainShadowBounds(
+            focusXz: Vector3.Zero,
+            groundFloorY: -0.56f - 3f,
+            groundCeilingY: -0.56f + 6f,
+            xzHalfExtent: PreviewShadowFrustum.TerrainShadowMinXzHalfExtent,
+            out var min,
+            out var max);
+
+        var lightDir = PreviewLightMath.LightDirectionFromYawPitch(-35.0, -55.0);
+        var vp = PreviewShadowFrustum.BuildDirectionalViewProj(
+            lightDir,
+            min,
+            max,
+            Matrix4x4.Identity,
+            maxHalfExtent: PreviewShadowFrustum.TerrainShadowFarMaxHalfExtent);
+
+        Assert.True(AllCornersProjectInsideFrustum(vp, min, max, Matrix4x4.Identity));
+        // Hill top and valley floor samples that previously fell outside the subject-fitted ortho.
+        Assert.True(PointProjectsInsideFrustum(vp, new Vector3(18f, -0.56f + 6f, 18f)));
+        Assert.True(PointProjectsInsideFrustum(vp, new Vector3(0f, -0.56f, 0f)));
+        Assert.True(PointProjectsInsideFrustum(vp, new Vector3(40f, -0.56f, 40f)));
+    }
+
+    [Fact]
+    public void ShadowDistanceCap_isAppliedBeforeFarFrustumFit()
+    {
+        // PassShadow uses min(ShadowDistance, streamed LOD ring) as the far ortho half-extent.
+        const float shadowDistance = 64f;
+        var ring = PreviewShadowFrustum.TerrainShadowFarMaxHalfExtent;
+        var farHalf = Math.Min(shadowDistance, ring);
+        Assert.Equal(64f, farHalf);
+        Assert.True(farHalf < ring);
+
+        PreviewShadowFrustum.SeedTerrainShadowBounds(
+            focusXz: Vector3.Zero,
+            groundFloorY: -1f,
+            groundCeilingY: 8f,
+            xzHalfExtent: farHalf,
+            out var cappedMin,
+            out var cappedMax);
+        PreviewShadowFrustum.SeedTerrainShadowBounds(
+            focusXz: Vector3.Zero,
+            groundFloorY: -1f,
+            groundCeilingY: 8f,
+            xzHalfExtent: ring,
+            out var uncappedMin,
+            out var uncappedMax);
+
+        Assert.True(cappedMax.X - cappedMin.X < uncappedMax.X - uncappedMin.X);
+        Assert.True(cappedMax.X - cappedMin.X <= shadowDistance * 2f + 1e-3f);
+    }
+
+    [Fact]
     public void BuildDirectionalViewProj_legacy_fixed_extent_would_clip_large_subject()
     {
         var min = new Vector3(-8f, -1f, -10f);
@@ -67,29 +142,34 @@ public sealed class PreviewShadowFrustumTests
         Vector3 boundsMax,
         Matrix4x4 worldFromModel)
     {
-        var columnVp = Matrix4x4.Transpose(lightViewProjRowStorage);
         Span<Vector3> corners = stackalloc Vector3[8];
         WriteCorners(boundsMin, boundsMax, corners);
         foreach (var corner in corners)
         {
             var world = Vector3.Transform(corner, worldFromModel);
-            var clip = Vector4.Transform(new Vector4(world, 1f), columnVp);
-            if (MathF.Abs(clip.W) < 1e-5f)
-            {
-                return false;
-            }
-
-            var invW = 1f / clip.W;
-            var ndc = new Vector3(clip.X * invW, clip.Y * invW, clip.Z * invW);
-            if (ndc.X < -1.02f || ndc.X > 1.02f ||
-                ndc.Y < -1.02f || ndc.Y > 1.02f ||
-                ndc.Z < -1.02f || ndc.Z > 1.02f)
+            if (!PointProjectsInsideFrustum(lightViewProjRowStorage, world))
             {
                 return false;
             }
         }
 
         return true;
+    }
+
+    private static bool PointProjectsInsideFrustum(Matrix4x4 lightViewProjRowStorage, Vector3 world)
+    {
+        var columnVp = Matrix4x4.Transpose(lightViewProjRowStorage);
+        var clip = Vector4.Transform(new Vector4(world, 1f), columnVp);
+        if (MathF.Abs(clip.W) < 1e-5f)
+        {
+            return false;
+        }
+
+        var invW = 1f / clip.W;
+        var ndc = new Vector3(clip.X * invW, clip.Y * invW, clip.Z * invW);
+        return ndc.X is >= -1.02f and <= 1.02f &&
+               ndc.Y is >= -1.02f and <= 1.02f &&
+               ndc.Z is >= -1.02f and <= 1.02f;
     }
 
     private static float EstimateOrthoHalfExtent(Matrix4x4 lightViewProjRowStorage)

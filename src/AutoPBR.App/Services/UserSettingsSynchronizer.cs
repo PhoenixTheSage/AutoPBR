@@ -142,6 +142,10 @@ internal static class UserSettingsSynchronizer
             : Math.Clamp(settings.Preview3DMoonWorldLightIntensity, 0.0, 8.0);
         vm.Preview3DShowCelestialDebug = settings.Preview3DShowCelestialDebug;
         vm.Preview3DEnableShadows = settings.Preview3DEnableShadows;
+        vm.Preview3DEnableShadowCascades = settings.Preview3DEnableShadowCascades;
+        vm.Preview3DShadowDistance = settings.Preview3DShadowDistance <= 0
+            ? 128.0
+            : Math.Clamp(settings.Preview3DShadowDistance, 32.0, 256.0);
         vm.Preview3DLightYawDegrees = Math.Clamp(settings.Preview3DLightYawDegrees, -180.0, 180.0);
         vm.Preview3DLightPitchDegrees = Math.Clamp(settings.Preview3DLightPitchDegrees, -89.0, 89.0);
         vm.Preview3DTimeOfDayHours = settings.Preview3DTimeOfDayHours is > 0 and <= 24
@@ -196,7 +200,6 @@ internal static class UserSettingsSynchronizer
         vm.Preview3DTaaFxaaLumaEdgeScale = Math.Clamp(settings.Preview3DTaaFxaaLumaEdgeScale, 0.0, 2.0);
         vm.Preview3DTaaFxaaLumaThreshold = Math.Clamp(settings.Preview3DTaaFxaaLumaThreshold, 0.001, 0.12);
         vm.Preview3DTaaForceFxaa = settings.Preview3DTaaForceFxaa;
-        vm.Preview3DEnableShadowCascades = settings.Preview3DEnableShadowCascades;
         vm.Preview3DSpritePlaneCount = settings.Preview3DSpritePlaneCount <= 0
             ? 2
             : Math.Clamp(settings.Preview3DSpritePlaneCount, 1, 8);
@@ -468,6 +471,7 @@ internal static class UserSettingsSynchronizer
         settings.Preview3DLightYawDegrees = Math.Clamp(vm.Preview3DLightYawDegrees, -180.0, 180.0);
         settings.Preview3DLightPitchDegrees = Math.Clamp(vm.Preview3DLightPitchDegrees, -89.0, 89.0);
         settings.Preview3DEnableShadowCascades = vm.Preview3DEnableShadowCascades;
+        settings.Preview3DShadowDistance = Math.Clamp(vm.Preview3DShadowDistance, 32.0, 256.0);
         settings.Preview3DSpritePlaneCount = Math.Clamp(vm.Preview3DSpritePlaneCount, 1, 8);
         settings.Preview3DSpriteThickness = Math.Clamp(
             vm.Preview3DSpriteThickness,

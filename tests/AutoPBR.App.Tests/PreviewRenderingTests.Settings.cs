@@ -57,12 +57,61 @@ public sealed partial class PreviewRenderingTests
     {
         var s = new PreviewRenderSettings();
         Assert.True(s.EnableShadows);
-        Assert.Equal(1024, s.ShadowMapResolution);
+        Assert.Equal(4096, s.ShadowMapResolution);
+        Assert.Equal(128f, s.ShadowDistance);
         Assert.Equal(0.002f, s.ShadowMinBias);
         Assert.Equal(0.012f, s.ShadowMaxBias);
         Assert.Equal(1.0f, s.ShadowSoftnessTexels);
         // Phase 3 stub: persisted boolean only, defaults to false in Phase 2.
         Assert.False(s.EnableShadowCascades);
+    }
+
+    [Fact]
+    public void RenderSettingsShadowDistance_ClampsToSupportedRange()
+    {
+        Assert.Equal(32f, OpenGlPreviewBackend.ShadowDistanceMin);
+        Assert.Equal(256f, OpenGlPreviewBackend.ShadowDistanceMax);
+        Assert.Equal(128f, OpenGlPreviewBackend.ShadowDistanceDefault);
+        Assert.InRange(
+            Math.Clamp(16f, OpenGlPreviewBackend.ShadowDistanceMin, OpenGlPreviewBackend.ShadowDistanceMax),
+            32f,
+            256f);
+        Assert.InRange(
+            Math.Clamp(512f, OpenGlPreviewBackend.ShadowDistanceMin, OpenGlPreviewBackend.ShadowDistanceMax),
+            32f,
+            256f);
+    }
+
+    [Fact]
+    public void ShadowPass_PreparesTerrainCullAndSubjectUploadsOncePerFrame()
+    {
+        var shadow = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.Render.PassShadow.cs");
+        var ground = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.GroundTerrain.cs");
+
+        Assert.Contains("PrepareTerrainShadowCasterSelections(", shadow, StringComparison.Ordinal);
+        Assert.Contains("PrepareShadowSubjectGpuUploads(ref frame);", shadow, StringComparison.Ordinal);
+        Assert.Contains("FinishShadowSubjectGpuUploads();", shadow, StringComparison.Ordinal);
+        Assert.Contains("nearCasterDist = nearHalf + casterPad", shadow, StringComparison.Ordinal);
+        Assert.Contains("midCasterDist = midHalf + casterPad", shadow, StringComparison.Ordinal);
+        Assert.Contains("Parallel.Invoke(", ground, StringComparison.Ordinal);
+        Assert.Contains(
+            "_shadowSubjectUseMaterialDrawRecords = TryUploadGenesisMaterialDrawRecords(ref frame);",
+            shadow,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "var useMaterialDrawRecords = TryUploadGenesisMaterialDrawRecords(ref frame);",
+            shadow,
+            StringComparison.Ordinal);
     }
 
     [Fact]

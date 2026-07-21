@@ -435,6 +435,9 @@ public sealed class UserSettings
     /// <summary>Two-cascade directional shadows (near + far) for volume inject and geometry.</summary>
     public bool Preview3DEnableShadowCascades { get; set; }
 
+    /// <summary>Max world-space radius for directional shadow casting/receiving (32..256).</summary>
+    public double Preview3DShadowDistance { get; set; } = 128;
+
     /// <summary>Number of crossed sprite planes to build for 2D Sprite flagged textures in 3D preview.</summary>
     public int Preview3DSpritePlaneCount { get; set; } = 1;
 

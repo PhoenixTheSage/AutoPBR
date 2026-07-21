@@ -83,39 +83,66 @@ float grShadowGate(vec3 worldPos, mat4 lightViewProj, sampler2DShadow shadowMap,
     return sampleShadowPcf3x3(shadowMap, shadowUv, shadowTexelSize);
 }
 
-float grShadowGateCascaded(vec3 worldPos, vec3 cameraPos, mat4 lightViewProjNear, mat4 lightViewProjFar,
-    sampler2DShadow shadowNear, sampler2DShadow shadowFar, vec2 shadowTexelSize, float shadowMinBias,
-    int enableShadowMap, int enableCascades, float cascadeSplitDistance, float cascadeBlendWidth)
+float grShadowGateCascaded(vec3 worldPos, vec3 cameraPos,
+    mat4 lightViewProjNear, mat4 lightViewProjMid, mat4 lightViewProjFar,
+    sampler2DShadow shadowNear, sampler2DShadow shadowMid, sampler2DShadow shadowFar,
+    vec2 texelSizeNear, vec2 texelSizeMid, vec2 texelSizeFar, float shadowMinBias,
+    int enableShadowMap, int enableCascades, float cascadeSplitNear, float cascadeSplitMid,
+    float cascadeBlendWidth, float shadowDistance, float shadowFadeStart)
 {
     if (enableShadowMap < 1)
     {
         return 1.0;
     }
 
+    float dist = length(worldPos - cameraPos);
+    float rangeFade = shadowRangeFade(dist, shadowFadeStart, shadowDistance);
+    if (rangeFade <= 1e-4)
+    {
+        return 1.0;
+    }
+
     if (enableCascades < 1)
     {
-        return grShadowGate(worldPos, lightViewProjFar, shadowFar, shadowTexelSize, shadowMinBias, enableShadowMap);
+        float singleVis = grShadowGate(
+            worldPos, lightViewProjFar, shadowFar, texelSizeFar, shadowMinBias, enableShadowMap);
+        return mix(1.0, singleVis, rangeFade);
     }
 
-    float dist = length(worldPos - cameraPos);
-    float halfBand = max(cascadeBlendWidth, 0.0) * 0.5;
-    float blendStart = cascadeSplitDistance - halfBand;
-    float blendEnd = cascadeSplitDistance + halfBand;
+    float nearMidT = shadowCascadeBlendT(dist, cascadeSplitNear, cascadeBlendWidth);
+    float midFarT = shadowCascadeBlendT(dist, cascadeSplitMid, cascadeBlendWidth);
 
-    if (halfBand <= 1e-5 || dist <= blendStart)
+    float farVis = grShadowGate(worldPos, lightViewProjFar, shadowFar, texelSizeFar, shadowMinBias, enableShadowMap);
+
+    float vis;
+    if (nearMidT <= 0.0)
     {
-        return grShadowGate(worldPos, lightViewProjNear, shadowNear, shadowTexelSize, shadowMinBias, enableShadowMap);
+        float nearVis = grShadowGate(worldPos, lightViewProjNear, shadowNear, texelSizeNear, shadowMinBias, enableShadowMap);
+        float midVis = grShadowGate(worldPos, lightViewProjMid, shadowMid, texelSizeMid, shadowMinBias, enableShadowMap);
+        vis = min(min(nearVis, midVis), farVis);
     }
-
-    if (dist >= blendEnd)
+    else if (nearMidT < 1.0)
     {
-        return grShadowGate(worldPos, lightViewProjFar, shadowFar, shadowTexelSize, shadowMinBias, enableShadowMap);
+        float nearVis = grShadowGate(worldPos, lightViewProjNear, shadowNear, texelSizeNear, shadowMinBias, enableShadowMap);
+        float midVis = grShadowGate(worldPos, lightViewProjMid, shadowMid, texelSizeMid, shadowMinBias, enableShadowMap);
+        vis = min(min(mix(nearVis, midVis, nearMidT), midVis), farVis);
+    }
+    else if (midFarT <= 0.0)
+    {
+        float midVis = grShadowGate(worldPos, lightViewProjMid, shadowMid, texelSizeMid, shadowMinBias, enableShadowMap);
+        vis = min(midVis, farVis);
+    }
+    else if (midFarT < 1.0)
+    {
+        float midVis = grShadowGate(worldPos, lightViewProjMid, shadowMid, texelSizeMid, shadowMinBias, enableShadowMap);
+        vis = min(mix(midVis, farVis, midFarT), farVis);
+    }
+    else
+    {
+        vis = farVis;
     }
 
-    float nearVis = grShadowGate(worldPos, lightViewProjNear, shadowNear, shadowTexelSize, shadowMinBias, enableShadowMap);
-    float farVis = grShadowGate(worldPos, lightViewProjFar, shadowFar, shadowTexelSize, shadowMinBias, enableShadowMap);
-    float blendT = smoothstep(blendStart, blendEnd, dist);
-    return mix(nearVis, farVis, blendT);
+    return mix(1.0, vis, rangeFade);
 }
 
 #endif // GENESIS_GODRAY_INTEGRATION_GLSL

@@ -25,6 +25,13 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private GlShaderProgram? _shadowProgram;
     private GlShadowMapTarget? _shadowTarget;
     private GlShadowMapTarget? _shadowTargetCascadeNear;
+    private GlShadowMapTarget? _shadowTargetCascadeMid;
+    private int _shadowTargetsNearRes;
+    private int _shadowTargetsMidRes;
+    private int _shadowTargetsFarRes;
+    private bool _shadowTargetsWantCascades;
+    /// <summary>Set from UI-thread settings updates; rebuilt on the GL thread with a current context.</summary>
+    private bool _shadowTargetsDirty;
     private double _lastPreviewFingerprintLogMs;
     private int _previewPixelWidth = 1;
     private int _previewPixelHeight = 1;
@@ -865,6 +872,16 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
             if (!_settings.ForceEntityCpuSkinning && prev.ForceEntityCpuSkinning)
             {
                 _entityBindPoseCommittedKey = null;
+            }
+
+            var shadowTierChanged =
+                _settings.EnableShadows != prev.EnableShadows ||
+                _settings.EnableShadowCascades != prev.EnableShadowCascades ||
+                _settings.ShadowMapResolution != prev.ShadowMapResolution;
+            if (shadowTierChanged)
+            {
+                // SetRenderSettings runs on the UI thread; GenTexture requires a current GL context.
+                _shadowTargetsDirty = true;
             }
         }
     }

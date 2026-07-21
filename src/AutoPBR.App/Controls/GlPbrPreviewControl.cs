@@ -63,6 +63,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
     private bool _hdrYFlipFailureLogged;
     private bool _hdrYFlipPathLogged;
     private bool _hdrTearingLogged;
+    private bool _hdrPresentResolvePathLogged;
     private bool _anglePathStarted;
     private bool _backendInitialized;
     private bool _lastRaisedHdrNativeWglActive;
@@ -443,6 +444,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         _hdrYFlipFailureLogged = false;
         _hdrYFlipPathLogged = false;
         _hdrTearingLogged = false;
+        _hdrPresentResolvePathLogged = false;
         RaiseHdrProbeUpdated(PreviewHdrDisplayInfo.Unsupported, nativeWglActive: false, presentPathFailed: false);
     }
 
@@ -1432,6 +1434,12 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
                         (_hdrSwapchain.AllowTearing ? "enabled" : "unavailable") +
                         ".");
                 }
+
+                if (!_hdrPresentResolvePathLogged)
+                {
+                    _hdrPresentResolvePathLogged = true;
+                    _backend.EmitPreviewDiagnostic("[3D preview] HDR resolve path: shared-copy.");
+                }
             }
             finally
             {
@@ -1492,6 +1500,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         _hdrYFlipFailureLogged = false;
         _hdrYFlipPathLogged = false;
         _hdrTearingLogged = false;
+        _hdrPresentResolvePathLogged = false;
         _backend.ClearHdrPresentSuppression();
         // Force the next probe raise even if display flags are unchanged.
         _lastRaisedHdrPresentPathFailed = true;

@@ -29,16 +29,23 @@ public static class TerrainChunkDrawCull
         Vector3 cameraPosition,
         int fallbackCount,
         bool fullOnly,
-        List<int> selected)
+        List<int> selected,
+        float maxCasterDistanceXz = 0f)
     {
         selected.Clear();
         Span<Vector4> planes = stackalloc Vector4[PreviewFrustumPlanes.PlaneCount];
         PreviewFrustumPlanes.Extract(viewProjection, planes);
+        var maxDist = maxCasterDistanceXz > 0f ? maxCasterDistanceXz : float.PositiveInfinity;
 
         for (var i = 0; i < candidates.Count; i++)
         {
             var c = candidates[i];
             if (fullOnly && c.Lod != TerrainChunkLodKind.Full)
+            {
+                continue;
+            }
+
+            if (!WithinCasterDistance(c, cameraPosition, maxDist))
             {
                 continue;
             }
@@ -51,10 +58,23 @@ public static class TerrainChunkDrawCull
 
         if (selected.Count == 0)
         {
-            CollectNearest(candidates, cameraPosition, fallbackCount, fullOnly, selected);
+            CollectNearest(candidates, cameraPosition, fallbackCount, fullOnly, selected, maxDist);
         }
 
         selected.Sort((a, b) => DrawGroup(candidates[a]).CompareTo(DrawGroup(candidates[b])));
+    }
+
+    private static bool WithinCasterDistance(in Candidate c, Vector3 cameraPosition, float maxDist)
+    {
+        if (float.IsPositiveInfinity(maxDist))
+        {
+            return true;
+        }
+
+        var dx = c.BoundsCenter.X - cameraPosition.X;
+        var dz = c.BoundsCenter.Z - cameraPosition.Z;
+        var dist = MathF.Sqrt(dx * dx + dz * dz);
+        return dist - c.BoundsRadius <= maxDist;
     }
 
     private static void CollectNearest(
@@ -62,7 +82,8 @@ public static class TerrainChunkDrawCull
         Vector3 cameraPosition,
         int fallbackCount,
         bool fullOnly,
-        List<int> selected)
+        List<int> selected,
+        float maxDist = float.PositiveInfinity)
     {
         fallbackCount = Math.Max(0, fallbackCount);
         var scored = new List<(float DistSq, int Index)>(candidates.Count);
@@ -70,6 +91,11 @@ public static class TerrainChunkDrawCull
         {
             var c = candidates[i];
             if (fullOnly && c.Lod != TerrainChunkLodKind.Full)
+            {
+                continue;
+            }
+
+            if (!WithinCasterDistance(c, cameraPosition, maxDist))
             {
                 continue;
             }

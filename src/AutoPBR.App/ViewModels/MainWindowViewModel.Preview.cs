@@ -101,6 +101,7 @@ public partial class MainWindowViewModel
     [ObservableProperty] private double _preview3DLightYawDegrees = -35.0;
     [ObservableProperty] private double _preview3DLightPitchDegrees = -55.0;
     [ObservableProperty] private bool _preview3DEnableShadowCascades;
+    [ObservableProperty] private double _preview3DShadowDistance = 128.0;
     [ObservableProperty] private int _preview3DSpritePlaneCount = 1;
     [ObservableProperty] private double _preview3DSpriteThickness;
     [ObservableProperty] private double _preview3DCameraOrbitSensitivity = 0.006;
@@ -447,6 +448,7 @@ public partial class MainWindowViewModel
     partial void OnPreview3DLightYawDegreesChanged(double value) => OnPreview3DLightDirectionChanged(value);
     partial void OnPreview3DLightPitchDegreesChanged(double value) => OnPreview3DLightDirectionChanged(value);
     partial void OnPreview3DEnableShadowCascadesChanged(bool value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DShadowDistanceChanged(double value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DSpritePlaneCountChanged(int value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DSpriteThicknessChanged(double value)
     {
@@ -715,6 +717,8 @@ public partial class MainWindowViewModel
             CapturePreviewFingerprint = DebugMode,
             EnableShadows = Preview3DEnableShadows,
             EnableShadowCascades = Preview3DEnableShadowCascades,
+            ShadowDistance = (float)Math.Clamp(Preview3DShadowDistance, 32.0, 256.0),
+            ShadowMapResolution = 4096,
             EntityAnimationSpeed = (float)Preview3DEntityAnimationSpeed,
             EntityAnimationAmplitude = (float)Preview3DEntityAnimationAmplitude,
             EnableEntityAnimation = Preview3DEnableEntityAnimation,

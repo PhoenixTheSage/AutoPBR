@@ -113,6 +113,13 @@ public sealed partial class OpenGlPreviewBackend
         _shadowTarget = null;
         _shadowTargetCascadeNear?.Dispose();
         _shadowTargetCascadeNear = null;
+        _shadowTargetCascadeMid?.Dispose();
+        _shadowTargetCascadeMid = null;
+        _shadowTargetsNearRes = 0;
+        _shadowTargetsMidRes = 0;
+        _shadowTargetsFarRes = 0;
+        _shadowTargetsWantCascades = false;
+        _shadowTargetsDirty = false;
         _grassGroundReady = false;
         DestroyAtmosphereResources();
         DestroyImageHistogramResources();
@@ -478,21 +485,7 @@ public sealed partial class OpenGlPreviewBackend
                 return true;
 
             case 2:
-                var shadowResolution = Math.Clamp(_settings.ShadowMapResolution, 256, 4096);
-                try
-                {
-                    _shadowTarget = new GlShadowMapTarget(gl, shadowResolution, _useOpenGlEs);
-                    _shadowTargetCascadeNear = new GlShadowMapTarget(gl, shadowResolution, _useOpenGlEs);
-                    EmitDiagnostic(
-                        $"[3D preview] Shadow map: {shadowResolution}x{shadowResolution} (near cascade ready)");
-                }
-                catch (Exception ex)
-                {
-                    _shadowTarget = null;
-                    _shadowTargetCascadeNear = null;
-                    EmitDiagnostic("[3D preview] Shadow target init failed: " + ex.Message);
-                }
-
+                EnsureShadowMapTargets(gl, _settings);
                 return true;
 
             case 3:

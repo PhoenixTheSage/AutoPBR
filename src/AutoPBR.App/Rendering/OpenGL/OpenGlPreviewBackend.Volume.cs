@@ -295,8 +295,17 @@ public sealed partial class OpenGlPreviewBackend
         ComputeCameraBasis(frame.Eye, frame.LookTarget, out var camRight, out var camUp, out var camForward);
 
         var shadowAvailable = frame.ShadowAvailable && _shadowTarget is not null;
-        var shadowRes = _shadowTarget?.Resolution ?? Math.Clamp(frame.Settings.ShadowMapResolution, 256, 4096);
-        var shadowTexelSize = new Vector2(1f / shadowRes, 1f / shadowRes);
+        var shadowFarRes = _shadowTarget?.Resolution ?? Math.Clamp(frame.Settings.ShadowMapResolution, 256, 4096);
+        var cascadesActivePreview = shadowAvailable && frame.ShadowCascadesActive;
+        var shadowNearRes = cascadesActivePreview
+            ? (_shadowTargetCascadeNear?.Resolution ?? shadowFarRes)
+            : shadowFarRes;
+        var shadowMidRes = cascadesActivePreview
+            ? (_shadowTargetCascadeMid?.Resolution ?? shadowFarRes)
+            : shadowFarRes;
+        var shadowTexelSize = new Vector2(1f / shadowFarRes, 1f / shadowFarRes);
+        var shadowTexelSizeNear = new Vector2(1f / shadowNearRes, 1f / shadowNearRes);
+        var shadowTexelSizeMid = new Vector2(1f / shadowMidRes, 1f / shadowMidRes);
 
         if (TryInjectVolumeFroxelsCompute(
                 ref frame,
@@ -305,7 +314,9 @@ public sealed partial class OpenGlPreviewBackend
                 camUp,
                 camForward,
                 shadowAvailable,
-                shadowTexelSize))
+                shadowTexelSize,
+                shadowTexelSizeNear,
+                shadowTexelSizeMid))
         {
             injectSw?.Stop();
             if (injectSw is not null)
@@ -331,12 +342,18 @@ public sealed partial class OpenGlPreviewBackend
         {
             SetMatrixOnProgramLoc(_volumeInjectProgram, vi.LightViewProj, frame.ShadowVp);
             SetMatrixOnProgramLoc(_volumeInjectProgram, vi.LightViewProjNear, frame.ShadowVpNear);
+            SetMatrixOnProgramLoc(_volumeInjectProgram, vi.LightViewProjMid, frame.ShadowVpMid);
             SetVec2OnProgramLoc(_volumeInjectProgram, vi.ShadowTexelSize, shadowTexelSize);
+            SetVec2OnProgramLoc(_volumeInjectProgram, vi.ShadowTexelSizeNear, shadowTexelSizeNear);
+            SetVec2OnProgramLoc(_volumeInjectProgram, vi.ShadowTexelSizeMid, shadowTexelSizeMid);
             var cascadesActive = shadowAvailable && frame.ShadowCascadesActive;
             SetIntOnProgramLoc(_volumeInjectProgram, vi.EnableShadowMap, shadowAvailable ? 1 : 0);
             SetIntOnProgramLoc(_volumeInjectProgram, vi.EnableShadowCascades, cascadesActive ? 1 : 0);
             SetFloatOnProgramLoc(_volumeInjectProgram, vi.CascadeSplitDistance, frame.CascadeSplitWorldDistance);
+            SetFloatOnProgramLoc(_volumeInjectProgram, vi.CascadeMidSplitDistance, frame.CascadeMidSplitWorldDistance);
             SetFloatOnProgramLoc(_volumeInjectProgram, vi.CascadeBlendWidth, frame.CascadeBlendWorldWidth);
+            SetFloatOnProgramLoc(_volumeInjectProgram, vi.ShadowDistance, frame.ShadowDistance);
+            SetFloatOnProgramLoc(_volumeInjectProgram, vi.ShadowFadeStart, frame.ShadowFadeStart);
             gl.ActiveTexture(TextureUnit.Texture0);
             if (_shadowTarget is not null)
             {
@@ -363,6 +380,21 @@ public sealed partial class OpenGlPreviewBackend
             }
 
             SetIntOnProgramLoc(_volumeInjectProgram, vi.ShadowMapNear, 1);
+            gl.ActiveTexture(TextureUnit.Texture2);
+            if (cascadesActive && _shadowTargetCascadeMid is not null)
+            {
+                gl.BindTexture(TextureTarget.Texture2D, _shadowTargetCascadeMid.DepthTextureHandle);
+            }
+            else if (_shadowTarget is not null)
+            {
+                gl.BindTexture(TextureTarget.Texture2D, _shadowTarget.DepthTextureHandle);
+            }
+            else if (_sceneCapture is not null)
+            {
+                gl.BindTexture(TextureTarget.Texture2D, _sceneCapture.DepthTextureHandle);
+            }
+
+            SetIntOnProgramLoc(_volumeInjectProgram, vi.ShadowMapMid, 2);
         }
 
         gl.BindVertexArray(_godRayQuadVao);
@@ -396,7 +428,9 @@ public sealed partial class OpenGlPreviewBackend
         Vector3 camUp,
         Vector3 camForward,
         bool shadowAvailable,
-        Vector2 shadowTexelSize)
+        Vector2 shadowTexelSize,
+        Vector2 shadowTexelSizeNear,
+        Vector2 shadowTexelSizeMid)
     {
         if (_volumeUseLiteShaders ||
             _glCapabilities?.CanUseComputeFroxelInject != true ||
@@ -429,12 +463,18 @@ public sealed partial class OpenGlPreviewBackend
 
         SetMatrixOnProgramLoc(_volumeInjectComputeProgram, vci.LightViewProj, frame.ShadowVp);
         SetMatrixOnProgramLoc(_volumeInjectComputeProgram, vci.LightViewProjNear, frame.ShadowVpNear);
+        SetMatrixOnProgramLoc(_volumeInjectComputeProgram, vci.LightViewProjMid, frame.ShadowVpMid);
         SetVec2OnProgramLoc(_volumeInjectComputeProgram, vci.ShadowTexelSize, shadowTexelSize);
+        SetVec2OnProgramLoc(_volumeInjectComputeProgram, vci.ShadowTexelSizeNear, shadowTexelSizeNear);
+        SetVec2OnProgramLoc(_volumeInjectComputeProgram, vci.ShadowTexelSizeMid, shadowTexelSizeMid);
         var cascadesActive = shadowAvailable && frame.ShadowCascadesActive;
         SetIntOnProgramLoc(_volumeInjectComputeProgram, vci.EnableShadowMap, shadowAvailable ? 1 : 0);
         SetIntOnProgramLoc(_volumeInjectComputeProgram, vci.EnableShadowCascades, cascadesActive ? 1 : 0);
         SetFloatOnProgramLoc(_volumeInjectComputeProgram, vci.CascadeSplitDistance, frame.CascadeSplitWorldDistance);
+        SetFloatOnProgramLoc(_volumeInjectComputeProgram, vci.CascadeMidSplitDistance, frame.CascadeMidSplitWorldDistance);
         SetFloatOnProgramLoc(_volumeInjectComputeProgram, vci.CascadeBlendWidth, frame.CascadeBlendWorldWidth);
+        SetFloatOnProgramLoc(_volumeInjectComputeProgram, vci.ShadowDistance, frame.ShadowDistance);
+        SetFloatOnProgramLoc(_volumeInjectComputeProgram, vci.ShadowFadeStart, frame.ShadowFadeStart);
 
         gl.ActiveTexture(TextureUnit.Texture0);
         if (_shadowTarget is not null)
@@ -462,6 +502,21 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         SetIntOnProgramLoc(_volumeInjectComputeProgram, vci.ShadowMapNear, 1);
+        gl.ActiveTexture(TextureUnit.Texture2);
+        if (cascadesActive && _shadowTargetCascadeMid is not null)
+        {
+            gl.BindTexture(TextureTarget.Texture2D, _shadowTargetCascadeMid.DepthTextureHandle);
+        }
+        else if (_shadowTarget is not null)
+        {
+            gl.BindTexture(TextureTarget.Texture2D, _shadowTarget.DepthTextureHandle);
+        }
+        else if (_sceneCapture is not null)
+        {
+            gl.BindTexture(TextureTarget.Texture2D, _sceneCapture.DepthTextureHandle);
+        }
+
+        SetIntOnProgramLoc(_volumeInjectComputeProgram, vci.ShadowMapMid, 2);
 
         var groupsX = (uint)((_volumeFroxelTarget.Width + (int)VolumeComputeLocalSizeX - 1) / (int)VolumeComputeLocalSizeX);
         var groupsY = (uint)((_volumeFroxelTarget.Height + (int)VolumeComputeLocalSizeY - 1) / (int)VolumeComputeLocalSizeY);

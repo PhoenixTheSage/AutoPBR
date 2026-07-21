@@ -615,10 +615,18 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         var gl = frame.Gl;
-        var shadowRes = _shadowTarget.Resolution;
-        var shadowTexelSize = new Vector2(1f / shadowRes, 1f / shadowRes);
-        var layerWorldY = PreviewStageConstants.CloudLayerBaseWorldY(frame.Settings.CloudLayerHeight);
         var cascadesActive = frame.ShadowCascadesActive;
+        var shadowFarRes = _shadowTarget.Resolution;
+        var shadowNearRes = cascadesActive
+            ? (_shadowTargetCascadeNear?.Resolution ?? shadowFarRes)
+            : shadowFarRes;
+        var shadowMidRes = cascadesActive
+            ? (_shadowTargetCascadeMid?.Resolution ?? shadowFarRes)
+            : shadowFarRes;
+        var shadowTexelSize = new Vector2(1f / shadowFarRes, 1f / shadowFarRes);
+        var shadowTexelSizeNear = new Vector2(1f / shadowNearRes, 1f / shadowNearRes);
+        var shadowTexelSizeMid = new Vector2(1f / shadowMidRes, 1f / shadowMidRes);
+        var layerWorldY = PreviewStageConstants.CloudLayerBaseWorldY(frame.Settings.CloudLayerHeight);
 
         BindDefaultFramebuffer(ref frame);
         var priorDepthTest = gl.IsEnabled(EnableCap.DepthTest);
@@ -646,18 +654,35 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         SetIntOnProgramLoc(_shadowAwareGodRayProgram, shu.ShadowMapNear, 2);
+        gl.ActiveTexture(TextureUnit.Texture3);
+        if (cascadesActive && _shadowTargetCascadeMid is not null)
+        {
+            gl.BindTexture(TextureTarget.Texture2D, _shadowTargetCascadeMid.DepthTextureHandle);
+        }
+        else
+        {
+            gl.BindTexture(TextureTarget.Texture2D, _shadowTarget.DepthTextureHandle);
+        }
+
+        SetIntOnProgramLoc(_shadowAwareGodRayProgram, shu.ShadowMapMid, 3);
         SetMatrixOnProgramLoc(_shadowAwareGodRayProgram, shu.InvViewProj, invViewProj);
         SetMatrixOnProgramLoc(_shadowAwareGodRayProgram, shu.LightViewProj, frame.ShadowVp);
         SetMatrixOnProgramLoc(_shadowAwareGodRayProgram, shu.LightViewProjNear, frame.ShadowVpNear);
+        SetMatrixOnProgramLoc(_shadowAwareGodRayProgram, shu.LightViewProjMid, frame.ShadowVpMid);
         SetVec3OnProgramLoc(_shadowAwareGodRayProgram, shu.CameraPos, frame.Eye);
         SetVec2OnProgramLoc(_shadowAwareGodRayProgram, shu.SunUv, lightUv);
         SetFloatOnProgramLoc(_shadowAwareGodRayProgram, shu.SunDiscRadius, discRadiusUv);
         SetFloatOnProgramLoc(_shadowAwareGodRayProgram, shu.SunConeRadius, coneRadiusUv);
         SetVec2OnProgramLoc(_shadowAwareGodRayProgram, shu.ShadowTexelSize, shadowTexelSize);
+        SetVec2OnProgramLoc(_shadowAwareGodRayProgram, shu.ShadowTexelSizeNear, shadowTexelSizeNear);
+        SetVec2OnProgramLoc(_shadowAwareGodRayProgram, shu.ShadowTexelSizeMid, shadowTexelSizeMid);
         SetIntOnProgramLoc(_shadowAwareGodRayProgram, shu.EnableShadowMap, 1);
         SetIntOnProgramLoc(_shadowAwareGodRayProgram, shu.EnableShadowCascades, cascadesActive ? 1 : 0);
         SetFloatOnProgramLoc(_shadowAwareGodRayProgram, shu.CascadeSplitDistance, frame.CascadeSplitWorldDistance);
+        SetFloatOnProgramLoc(_shadowAwareGodRayProgram, shu.CascadeMidSplitDistance, frame.CascadeMidSplitWorldDistance);
         SetFloatOnProgramLoc(_shadowAwareGodRayProgram, shu.CascadeBlendWidth, frame.CascadeBlendWorldWidth);
+        SetFloatOnProgramLoc(_shadowAwareGodRayProgram, shu.ShadowDistance, frame.ShadowDistance);
+        SetFloatOnProgramLoc(_shadowAwareGodRayProgram, shu.ShadowFadeStart, frame.ShadowFadeStart);
         SetIntOnProgramLoc(_shadowAwareGodRayProgram, shu.EnableCloudAttenuation,
             frame.Settings.EnableVolumetricClouds &&
             ResolveSharedCloudTransmittanceTarget(frame.Settings) is null ? 1 : 0);

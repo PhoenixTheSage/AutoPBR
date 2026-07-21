@@ -107,7 +107,7 @@ internal sealed class GlShadowMapTarget : IDisposable
     public uint DepthTextureHandle => _depthTexture;
     public int Resolution => _resolution;
 
-    public void BeginShadowPass()
+    public void BeginShadowPass(float polygonOffsetFactor = 1.25f, float polygonOffsetUnits = 2.5f)
     {
         _savedDrawFbo = _gl.GetInteger(GetPName.DrawFramebufferBinding);
 
@@ -135,7 +135,8 @@ internal sealed class GlShadowMapTarget : IDisposable
         _gl.DepthMask(true);
         _gl.DepthFunc(GLEnum.Lequal);
         _gl.Enable(EnableCap.PolygonOffsetFill);
-        _gl.PolygonOffset(1.75f, 3.0f);
+        // Keep offset modest: large terrain-fitted frustums amplify units into world-space peter-panning.
+        _gl.PolygonOffset(MathF.Max(polygonOffsetFactor, 0f), MathF.Max(polygonOffsetUnits, 0f));
         _gl.Clear(ClearBufferMask.DepthBufferBit);
     }
 

@@ -73,6 +73,7 @@ public readonly struct PreviewRenderSettingsSnapshot
     public float ShadowMinBias { get; init; }
     public float ShadowMaxBias { get; init; }
     public float ShadowSoftnessTexels { get; init; }
+    public float ShadowDistance { get; init; }
     public bool EnableShadowCascades { get; init; }
     public bool EnableGodRays { get; init; }
     public bool EnableVolumeGodRays { get; init; }
@@ -190,6 +191,7 @@ public readonly struct PreviewRenderSettingsSnapshot
         ShadowMinBias = s.ShadowMinBias,
         ShadowMaxBias = s.ShadowMaxBias,
         ShadowSoftnessTexels = s.ShadowSoftnessTexels,
+        ShadowDistance = s.ShadowDistance,
         EnableShadowCascades = s.EnableShadowCascades,
         EnableGodRays = s.EnableGodRays,
         EnableVolumeGodRays = s.EnableVolumeGodRays,

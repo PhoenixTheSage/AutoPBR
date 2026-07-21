@@ -24,9 +24,13 @@ uniform sampler2DShadow uShadowMap;
 
 uniform sampler2DShadow uShadowMapNear;
 
+uniform sampler2DShadow uShadowMapMid;
+
 uniform mat4 uLightViewProj;
 
 uniform mat4 uLightViewProjNear;
+
+uniform mat4 uLightViewProjMid;
 
 uniform vec3 uCameraPos;
 
@@ -66,6 +70,10 @@ uniform float uDebugDensity;
 
 uniform vec2 uShadowTexelSize;
 
+uniform vec2 uShadowTexelSizeNear;
+
+uniform vec2 uShadowTexelSizeMid;
+
 uniform float uShadowMinBias;
 
 uniform int uEnableShadowMap;
@@ -73,7 +81,10 @@ uniform int uEnableShadowMap;
 uniform int uEnableShadowCascades;
 
 uniform float uCascadeSplitDistance;
+uniform float uCascadeMidSplitDistance;
 uniform float uCascadeBlendWidth;
+uniform float uShadowDistance;
+uniform float uShadowFadeStart;
 
 
 
@@ -98,11 +109,17 @@ void main()
 
         uCloudDensity, uHeightFogStrength) + max(uDebugDensity, 0.0);
 
-    float shadowGate = grShadowGateCascaded(worldPos, uCameraPos, uLightViewProjNear, uLightViewProj,
-
-        uShadowMapNear, uShadowMap, uShadowTexelSize, uShadowMinBias, uEnableShadowMap,
-
-        uEnableShadowCascades, uCascadeSplitDistance, uCascadeBlendWidth);
+    // Empty cells pack to zero lit scatter; skip expensive cascade PCF.
+    float shadowGate = 1.0;
+    if (mediumRho > 1e-4)
+    {
+        shadowGate = grShadowGateCascaded(worldPos, uCameraPos,
+            uLightViewProjNear, uLightViewProjMid, uLightViewProj,
+            uShadowMapNear, uShadowMapMid, uShadowMap,
+            uShadowTexelSizeNear, uShadowTexelSizeMid, uShadowTexelSize, uShadowMinBias, uEnableShadowMap,
+            uEnableShadowCascades, uCascadeSplitDistance, uCascadeMidSplitDistance, uCascadeBlendWidth,
+            uShadowDistance, uShadowFadeStart);
+    }
 
     FragColor = viPackFroxelInject(mediumRho, uLightColor, shadowGate);
     FragOccupancy = mediumRho;

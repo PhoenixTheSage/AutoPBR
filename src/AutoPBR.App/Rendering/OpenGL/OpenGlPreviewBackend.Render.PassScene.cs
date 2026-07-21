@@ -15,6 +15,7 @@ public sealed partial class OpenGlPreviewBackend
     private const int MainPassShadowFarUnit = 4;
     private const int MainPassShadowNearUnit = 5;
     private const int MainPassSkyLutUnit = 6;
+    private const int MainPassShadowMidUnit = 7;
 
     private void GlRenderPassScene(ref GlRenderFrame frame)
     {
@@ -195,6 +196,7 @@ public sealed partial class OpenGlPreviewBackend
         ApplyTerrainAerialFogUniforms(ref frame, u);
         SetMatrixLoc(u.LightViewProj, frame.ShadowVp);
         SetMatrixLoc(u.LightViewProjNear, frame.ShadowVpNear);
+        SetMatrixLoc(u.LightViewProjMid, frame.ShadowVpMid);
 
         SetVec3Loc(u.CameraPos, frame.Eye);
         SetVec3Loc(u.LightDir, frame.LightDir);
@@ -209,7 +211,10 @@ public sealed partial class OpenGlPreviewBackend
         SetIntLoc(u.EnableShadowMap, shadowEnabledForShader ? 1 : 0);
         SetIntLoc(u.EnableShadowCascades, frame.ShadowCascadesActive ? 1 : 0);
         SetFloatLoc(u.CascadeSplitDistance, frame.CascadeSplitWorldDistance);
+        SetFloatLoc(u.CascadeMidSplitDistance, frame.CascadeMidSplitWorldDistance);
         SetFloatLoc(u.CascadeBlendWidth, frame.CascadeBlendWorldWidth);
+        SetFloatLoc(u.ShadowDistance, frame.ShadowDistance);
+        SetFloatLoc(u.ShadowFadeStart, frame.ShadowFadeStart);
         BindAndPinMainPassGlobalTextures(ref frame, u);
 
         // LabPBR grass plane under the grid; one texture tile per world unit (nearest + repeat).
@@ -599,6 +604,17 @@ public sealed partial class OpenGlPreviewBackend
             frame.Gl.BindTexture(TextureTarget.Texture2D, _shadowTarget.DepthTextureHandle);
         }
 
+        if (frame.ShadowCascadesActive && _shadowTargetCascadeMid is not null)
+        {
+            frame.Gl.ActiveTexture(TextureUnit.Texture0 + MainPassShadowMidUnit);
+            frame.Gl.BindTexture(TextureTarget.Texture2D, _shadowTargetCascadeMid.DepthTextureHandle);
+        }
+        else if (_shadowTarget is not null)
+        {
+            frame.Gl.ActiveTexture(TextureUnit.Texture0 + MainPassShadowMidUnit);
+            frame.Gl.BindTexture(TextureTarget.Texture2D, _shadowTarget.DepthTextureHandle);
+        }
+
         if (_atmoSkyViewTex != 0)
         {
             frame.Gl.ActiveTexture(TextureUnit.Texture0 + MainPassSkyLutUnit);
@@ -613,6 +629,11 @@ public sealed partial class OpenGlPreviewBackend
         if (u.ShadowMapNear >= 0)
         {
             SetIntLoc(u.ShadowMapNear, MainPassShadowNearUnit);
+        }
+
+        if (u.ShadowMapMid >= 0)
+        {
+            SetIntLoc(u.ShadowMapMid, MainPassShadowMidUnit);
         }
 
         if (u.AtmoSkyViewLut >= 0 && _atmoSkyViewTex != 0)
@@ -666,6 +687,10 @@ public sealed partial class OpenGlPreviewBackend
                               PreviewStageConstants.TerrainChunkSize;
         SetFloatLoc(u.TerrainFogStart, hardR * 0.85f);
         SetFloatLoc(u.TerrainFogEnd, lodR * 0.98f);
+        SetFloatLoc(u.TerrainPomFadeStart, PreviewStageConstants.TerrainNearPomRadius);
+        SetFloatLoc(
+            u.TerrainPomFadeEnd,
+            PreviewStageConstants.TerrainNearPomRadius + PreviewStageConstants.TerrainNearPomFadeWidth);
     }
 
     private void ApplyMainPassPerSettingsUniforms(ref GlRenderFrame frame, MainProgramUniformLocs u)
@@ -698,10 +723,37 @@ public sealed partial class OpenGlPreviewBackend
         SetFloatLoc(u.AtmosphereSunIntensity, frame.Settings.AtmosphereSunIntensity);
         SetVec3Loc(u.SkyTint, new Vector3(0.55f, 0.62f, 0.74f));
         SetVec3Loc(u.GroundTint, new Vector3(0.22f, 0.20f, 0.18f));
-        SetFloatLoc(u.ShadowMinBias, frame.Settings.ShadowMinBias);
-        SetFloatLoc(u.ShadowMaxBias, frame.Settings.ShadowMaxBias);
+        SetFloatLoc(u.ShadowMinBias, frame.Settings.ShadowMinBias * ResolveShadowBiasScale(ref frame));
+        SetFloatLoc(u.ShadowMaxBias, frame.Settings.ShadowMaxBias * ResolveShadowBiasScale(ref frame));
         SetFloatLoc(u.ShadowSoftnessTexels, Math.Clamp(frame.Settings.ShadowSoftnessTexels, 0f, 8f));
-        var shadowRes = _shadowTarget?.Resolution ?? Math.Clamp(frame.Settings.ShadowMapResolution, 256, 4096);
-        SetVec2Loc(u.ShadowTexelSize, new Vector2(1f / shadowRes, 1f / shadowRes));
+        var shadowFarRes = _shadowTarget?.Resolution ?? Math.Clamp(frame.Settings.ShadowMapResolution, 256, 4096);
+        var shadowNearRes = frame.ShadowCascadesActive
+            ? (_shadowTargetCascadeNear?.Resolution ?? ShadowLodNearResolution)
+            : shadowFarRes;
+        var shadowMidRes = frame.ShadowCascadesActive
+            ? (_shadowTargetCascadeMid?.Resolution ?? ShadowLodMidResolution)
+            : shadowFarRes;
+        SetVec2Loc(u.ShadowTexelSize, new Vector2(1f / shadowFarRes, 1f / shadowFarRes));
+        SetVec2Loc(u.ShadowTexelSizeNear, new Vector2(1f / shadowNearRes, 1f / shadowNearRes));
+        SetVec2Loc(u.ShadowTexelSizeMid, new Vector2(1f / shadowMidRes, 1f / shadowMidRes));
+    }
+
+    private static float ResolveShadowBiasScale(ref GlRenderFrame frame)
+    {
+        var scale = frame.ShadowBiasScale > 1e-3f ? frame.ShadowBiasScale : 1f;
+        // Cascades keep a tight near map for contact; only shrink bias for the large single/far fit.
+        if (frame.ShadowCascadesActive)
+        {
+            // Mild reduction: far cascade still uses these uniforms during blend.
+            scale = MathF.Sqrt(scale);
+        }
+
+        if (frame.Settings.ShowGroundMesh)
+        {
+            // Flat turf + voxel ledges need low bias; residual peter-pan is worse than mild acne.
+            scale *= 0.38f;
+        }
+
+        return Math.Clamp(scale, 0.18f, 1f);
     }
 }

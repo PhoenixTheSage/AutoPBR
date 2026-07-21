@@ -99,6 +99,10 @@
                                                             <TextBlock Text="{Binding Strings.Preview3DEnableShadowCascades}" TextWrapping="Wrap" />
                                                         </CheckBox>
                                                         <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
+                                                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DShadowDistance}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DShadowDistanceTooltip}" />
+                                                            <ctrls:OverlaySlider Grid.Column="1" Minimum="32" Maximum="256" SmallChange="4" LargeChange="16" TickFrequency="32" Value="{Binding Preview3DShadowDistance, Mode=TwoWay}" Increment="4" FormatString="F0" ToolTip.Tip="{Binding Strings.Preview3DShadowDistanceTooltip}" IsEnabled="{Binding Preview3DEnableShadows}" HorizontalAlignment="Left" />
+                                                        </Grid>
+                                                        <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
                                                             <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DTimeOfDayHours}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DTimeOfDayHoursTooltip}" />
                                                             <ctrls:OverlaySlider Grid.Column="1" Minimum="0" Maximum="24" SmallChange="0.25" LargeChange="1" TickFrequency="3" Value="{Binding Preview3DTimeOfDayHours, Mode=TwoWay}" Increment="0.25" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DTimeOfDayHoursTooltip}" HorizontalAlignment="Left" />
                                                         </Grid>

@@ -126,7 +126,12 @@ internal static class PreviewDesktopWglDxInterop
             return false;
         }
 
-        registeredObject = _registerObject!(dxInteropDevice, d3d11Texture2D, glTextureName, GlTexture2D, WglAccessWriteDiscardNv);
+        registeredObject = _registerObject!(
+            dxInteropDevice,
+            d3d11Texture2D,
+            glTextureName,
+            GlTexture2D,
+            WglAccessWriteDiscardNv);
         return registeredObject != IntPtr.Zero;
     }
 

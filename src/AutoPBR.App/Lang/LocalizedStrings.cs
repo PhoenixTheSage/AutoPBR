@@ -485,6 +485,8 @@ public sealed class LocalizedStrings
     public static string Preview3DTimeOfDaySpeedTooltip => Resources.Preview3DTimeOfDaySpeedTooltip;
     public static string Preview3DEnableShadowCascades => Resources.Preview3DEnableShadowCascades;
     public static string Preview3DEnableShadowCascadesTooltip => Resources.Preview3DEnableShadowCascadesTooltip;
+    public static string Preview3DShadowDistance => Resources.Preview3DShadowDistance;
+    public static string Preview3DShadowDistanceTooltip => Resources.Preview3DShadowDistanceTooltip;
     public static string Preview3DVolumetricQualityLow => Resources.Preview3DVolumetricQualityLow;
     public static string Preview3DVolumetricQualityMedium => Resources.Preview3DVolumetricQualityMedium;
     public static string Preview3DVolumetricQualityHigh => Resources.Preview3DVolumetricQualityHigh;

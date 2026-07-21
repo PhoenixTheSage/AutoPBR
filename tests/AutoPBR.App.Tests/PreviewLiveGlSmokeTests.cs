@@ -811,9 +811,14 @@ public sealed class PreviewLiveGlSmokeTests
         SetUniform1(gl, program, "uEnableShadowMap", 0);
         SetUniform1(gl, program, "uEnableShadowCascades", 0);
         SetUniform1(gl, program, "uCascadeSplitDistance", 12f);
+        SetUniform1(gl, program, "uCascadeMidSplitDistance", 36f);
         SetUniform1(gl, program, "uCascadeBlendWidth", 2f);
+        SetUniform1(gl, program, "uShadowDistance", 128f);
+        SetUniform1(gl, program, "uShadowFadeStart", 108.8f);
         SetUniform1(gl, program, "uShadowMinBias", 0.001f);
         SetUniform2(gl, program, "uShadowTexelSize", 1f / 1024f, 1f / 1024f);
+        SetUniform2(gl, program, "uShadowTexelSizeNear", 1f / 4096f, 1f / 4096f);
+        SetUniform2(gl, program, "uShadowTexelSizeMid", 1f / 2048f, 1f / 2048f);
     }
 
     private static GlShaderProgram CreateMinimalDrawProgram(GL gl)

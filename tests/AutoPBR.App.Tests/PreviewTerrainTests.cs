@@ -1,5 +1,6 @@
 using System.Numerics;
 
+using AutoPBR.App.Rendering;
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.OpenGL;
 using AutoPBR.App.Rendering.Scene;
@@ -486,6 +487,28 @@ public sealed class PreviewTerrainTests
 
         Assert.Contains(0, selected);
         Assert.True(selected.Count >= 1);
+    }
+
+    [Fact]
+    public void TerrainNearPom_fade_band_extends_enable_radius()
+    {
+        var enableR = PreviewStageConstants.TerrainNearPomRadius +
+                      PreviewStageConstants.TerrainNearPomFadeWidth;
+        Assert.True(PreviewStageConstants.TerrainNearPomFadeWidth > 0f);
+        Assert.True(enableR > PreviewStageConstants.TerrainNearPomRadius);
+        Assert.Equal(30f, enableR);
+    }
+
+    [Fact]
+    public void TerrainShadowFar_coverage_matches_default_lod_ring()
+    {
+        var defaultRing =
+            (PreviewStageConstants.TerrainDefaultChunkViewDistance +
+             PreviewStageConstants.TerrainLodRingChunks) *
+            (float)PreviewStageConstants.TerrainChunkSize;
+        Assert.True(PreviewShadowFrustum.TerrainShadowFarMaxHalfExtent >= defaultRing);
+        Assert.True(PreviewShadowFrustum.TerrainShadowFarMaxHalfExtent >=
+                    PreviewShadowFrustum.TerrainShadowMinXzHalfExtent);
     }
 
     [Fact]

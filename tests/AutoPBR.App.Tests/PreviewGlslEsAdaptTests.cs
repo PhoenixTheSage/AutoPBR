@@ -375,6 +375,9 @@ public class PreviewGlslEsAdaptTests
         Assert.Contains("previewAmbientProbeIrradiance", adapted, StringComparison.Ordinal);
         Assert.Contains("groundSpecularReceiverFade", adapted, StringComparison.Ordinal);
         Assert.Contains("uIsGroundPass", adapted, StringComparison.Ordinal);
+        Assert.Contains("uTerrainPomFadeStart", adapted, StringComparison.Ordinal);
+        Assert.Contains("uTerrainPomFadeEnd", adapted, StringComparison.Ordinal);
+        Assert.Contains("groundPomFade", adapted, StringComparison.Ordinal);
         Assert.Contains("uLightDir, uLightColor, uAtmosphereSunIntensity", adapted, StringComparison.Ordinal);
         Assert.DoesNotContain("Sun / punctual highlights come from direct lighting only", adapted, StringComparison.Ordinal);
         Assert.DoesNotContain("iblPrefilteredSkyRadianceFallback", adapted, StringComparison.Ordinal);
@@ -389,6 +392,8 @@ public class PreviewGlslEsAdaptTests
         Assert.Contains("sampleSceneShadowCascaded", shadowAdapted, StringComparison.Ordinal);
         Assert.Contains("sampleShadowPcfSoft", shadowAdapted, StringComparison.Ordinal);
         Assert.Contains("sampleSceneShadowFromClip", shadowAdapted, StringComparison.Ordinal);
+        Assert.Contains("shadowUvEdgeWeight", shadowAdapted, StringComparison.Ordinal);
+        Assert.Contains("shadowRangeFade", shadowAdapted, StringComparison.Ordinal);
         Assert.Contains("lightClip.w <= 0.0", shadowAdapted, StringComparison.Ordinal);
 
         var genesisSrc = "#define GENESIS_ENABLE_SHADOW 1\n" +
@@ -396,11 +401,22 @@ public class PreviewGlslEsAdaptTests
         var adapted = GlslSourceAdapter.Adapt(genesisSrc, ShaderType.FragmentShader, useOpenGlEs: true);
 
         Assert.Contains("uShadowMapNear", adapted, StringComparison.Ordinal);
+        Assert.Contains("uShadowMapMid", adapted, StringComparison.Ordinal);
+        Assert.Contains("uLightViewProjMid", adapted, StringComparison.Ordinal);
         Assert.Contains("uEnableShadowCascades", adapted, StringComparison.Ordinal);
         Assert.Contains("uCascadeSplitDistance", adapted, StringComparison.Ordinal);
+        Assert.Contains("uCascadeMidSplitDistance", adapted, StringComparison.Ordinal);
         Assert.Contains("uCascadeBlendWidth", adapted, StringComparison.Ordinal);
+        Assert.Contains("uShadowDistance", adapted, StringComparison.Ordinal);
+        Assert.Contains("uShadowFadeStart", adapted, StringComparison.Ordinal);
         Assert.Contains("sampleSceneShadowCascaded", adapted, StringComparison.Ordinal);
-        Assert.Contains("mix(nearVis, farVis, blendT)", shadowAdapted, StringComparison.Ordinal);
+        Assert.Contains("mix(nearVis, midVis, nearMidT)", shadowAdapted, StringComparison.Ordinal);
+        Assert.Contains("mix(midVis, farVis, midFarT)", shadowAdapted, StringComparison.Ordinal);
+        // Far cascade must still occlude near-camera receivers when hills sit outside near/mid orthos.
+        Assert.Contains("min(min(nearVis, midVis), farVis)", shadowAdapted, StringComparison.Ordinal);
+        Assert.Contains("min(min(blended, midVis), farVis)", shadowAdapted, StringComparison.Ordinal);
+        Assert.Contains("min(blended, farVis)", shadowAdapted, StringComparison.Ordinal);
+        Assert.Contains("min(softnessTexels, 1.0)", shadowAdapted, StringComparison.Ordinal);
     }
 
     [Fact]

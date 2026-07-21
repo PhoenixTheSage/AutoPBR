@@ -40,6 +40,7 @@ uniform sampler2DArray uSpecularArray;
 uniform sampler2D uAtmoSkyViewLut;
 uniform sampler2DShadow uShadowMap;
 uniform sampler2DShadow uShadowMapNear;
+uniform sampler2DShadow uShadowMapMid;
 
 uniform vec3  uCameraPos;
 uniform vec3  uLightDir;
@@ -61,6 +62,8 @@ uniform int   uHasSpecular;
 uniform int   uHasHeight;
 uniform int   uSceneKind;
 uniform int   uIsGroundPass;
+uniform float uTerrainPomFadeStart;
+uniform float uTerrainPomFadeEnd;
 uniform float uAlphaCutoff;
 uniform int   uItemAlphaBlend;
 // 0 = off, 1 = cutout, 2 = blend - batched block/item models and entity emulated rigs.
@@ -86,13 +89,19 @@ uniform float uTerrainFogEnd;
 // Genesis directional shadow map (Phase 2).
 uniform mat4  uLightViewProj;
 uniform mat4  uLightViewProjNear;
+uniform mat4  uLightViewProjMid;
 uniform int   uEnableShadowMap;
 uniform int   uEnableShadowCascades;
 uniform float uCascadeSplitDistance;
+uniform float uCascadeMidSplitDistance;
 uniform float uCascadeBlendWidth;
+uniform float uShadowDistance;
+uniform float uShadowFadeStart;
 uniform float uShadowMinBias;
 uniform float uShadowMaxBias;
 uniform vec2  uShadowTexelSize;
+uniform vec2  uShadowTexelSizeNear;
+uniform vec2  uShadowTexelSizeMid;
 uniform float uShadowSoftnessTexels;
 
 layout(location = 0) out vec4 FragColor;
@@ -194,12 +203,40 @@ float groundSpecularReceiverFade(vec3 worldPos, vec3 N, vec3 V)
     return clamp(mix(0.08, 1.0, distFade * grazingFade), 0.08, 1.0);
 }
 
+vec3 applyTerrainAerialFog(vec3 color)
+{
+    if (uAerialFogStrength <= 0.0 || uEnableAtmosphericSky <= 0)
+    {
+        return color;
+    }
+
+    float dist = length(vWorldPos - uCameraPos);
+    float fogSpan = max(uTerrainFogEnd - uTerrainFogStart, 1.0);
+    float fogT = saturate1((dist - uTerrainFogStart) / fogSpan);
+    // Smoothstep so the LOD unload rim softens instead of a hard pop.
+    fogT = fogT * fogT * (3.0 - 2.0 * fogT);
+    float fogAmt = fogT * saturate1(uAerialFogStrength) * 0.92;
+    vec3 fogCol = previewAerialFogRadiance(
+        vWorldPos, uCameraPos, uLightDir, uLightColor, uAtmosphereSunIntensity,
+        uSkyTint, uGroundTint, uEnableAtmosphericSky, uAtmoSkyViewLut);
+    return mix(color, fogCol, fogAmt);
+}
+
 void main()
 {
     vec2 uvDx = dFdx(vUv);
     vec2 uvDy = dFdy(vUv);
+    float groundPomFade = 1.0;
+    if (uIsGroundPass > 0)
+    {
+        float fadeStart = max(uTerrainPomFadeStart, 0.0);
+        float fadeEnd = max(uTerrainPomFadeEnd, fadeStart + 1e-3);
+        float pomDist = length(vWorldPos.xz - uCameraPos.xz);
+        groundPomFade = 1.0 - smoothstep(fadeStart, fadeEnd, pomDist);
+    }
+    float pomStrengthTrace = uHeightStrength * groundPomFade;
 #if defined(GENESIS_ENABLE_POM)
-    bool  pomActiveEarly = (genesisEnableParallax(uEnableParallax) > 0 && genesisHasHeight(uHasHeight) > 0 && uHeightStrength > 0.0);
+    bool  pomActiveEarly = (genesisEnableParallax(uEnableParallax) > 0 && genesisHasHeight(uHasHeight) > 0 && pomStrengthTrace > 1e-5);
     vec4 albRaw = pomActiveEarly
         ? sampleGenesisAlbedoGrad(vUv, uvDx, uvDy)
         : sampleGenesisAlbedo(vUv);
@@ -233,7 +270,6 @@ void main()
     vec2 uvDisp = vUv;
     vec2 uv = vUv;
     float pomDepth = 0.0;
-    float pomStrengthTrace = uHeightStrength;
 #if defined(GENESIS_ENABLE_POM)
     bool  pomActive = pomActiveEarly;
     if (pomActive)
@@ -297,13 +333,15 @@ void main()
 #if defined(GENESIS_ENABLE_POM_SHADOW)
         if (genesisEnableParallaxShadow(uEnableParallaxShadow) > 0)
         {
-            pomShadow = traceParallaxShadow(uHeight, uv, Ltan, pomDepth, pomStrengthTrace, uvDx, uvDy);
+            float tracedShadow = traceParallaxShadow(uHeight, uv, Ltan, pomDepth, pomStrengthTrace, uvDx, uvDy);
+            pomShadow = mix(1.0, tracedShadow, groundPomFade);
         }
 #endif
 #if defined(GENESIS_ENABLE_POM_AO)
         if (genesisEnableParallaxAo(uEnableParallaxAo) > 0)
         {
-            pomAo = traceParallaxAo(uHeight, uv, pomDepth, pomStrengthTrace, uParallaxAoStrength, uvDx, uvDy);
+            float tracedAo = traceParallaxAo(uHeight, uv, pomDepth, pomStrengthTrace, uParallaxAoStrength, uvDx, uvDy);
+            pomAo = mix(1.0, tracedAo, groundPomFade);
         }
 #endif
     }
@@ -314,10 +352,13 @@ void main()
 #if defined(GENESIS_ENABLE_SHADOW)
     shadowVis = sampleSceneShadowCascaded(
         vWorldPos, uCameraPos, vLightClip,
-        uLightViewProjNear, uLightViewProj,
-        uShadowMapNear, uShadowMap,
-        uShadowTexelSize, uShadowMinBias, uShadowMaxBias, N, L, uShadowSoftnessTexels,
-        uEnableShadowMap, uEnableShadowCascades, uCascadeSplitDistance, uCascadeBlendWidth);
+        uLightViewProjNear, uLightViewProjMid, uLightViewProj,
+        uShadowMapNear, uShadowMapMid, uShadowMap,
+        uShadowTexelSizeNear, uShadowTexelSizeMid, uShadowTexelSize,
+        uShadowMinBias, uShadowMaxBias, N, L, uShadowSoftnessTexels,
+        uEnableShadowMap, uEnableShadowCascades,
+        uCascadeSplitDistance, uCascadeMidSplitDistance, uCascadeBlendWidth,
+        uShadowDistance, uShadowFadeStart);
 #endif
 
     // Combined lighting visibility: parallax-local AND directional shadow gate.
@@ -376,33 +417,11 @@ void main()
     vec3 outRgb;
     if (uHdrPresent > 0)
     {
-        outRgb = hdr;
-        if (uAerialFogStrength > 0.0 && uEnableAtmosphericSky > 0)
-        {
-            float dist = length(vWorldPos - uCameraPos);
-            float fogSpan = max(uTerrainFogEnd - uTerrainFogStart, 1.0);
-            float fogT = saturate1((dist - uTerrainFogStart) / fogSpan);
-            fogT = fogT * fogT * (3.0 - 2.0 * fogT);
-            float fogAmt = fogT * saturate1(uAerialFogStrength) * 0.92;
-            vec3 fogCol = mix(uGroundTint, uSkyTint, 0.55);
-            outRgb = mix(outRgb, fogCol, fogAmt);
-        }
+        outRgb = applyTerrainAerialFog(hdr);
     }
     else
     {
-        vec3 mapped = tonemapAcesNarkowicz(hdr);
-        if (uAerialFogStrength > 0.0 && uEnableAtmosphericSky > 0)
-        {
-            float dist = length(vWorldPos - uCameraPos);
-            float fogSpan = max(uTerrainFogEnd - uTerrainFogStart, 1.0);
-            float fogT = saturate1((dist - uTerrainFogStart) / fogSpan);
-            // Smoothstep so the LOD unload rim softens instead of a hard pop.
-            fogT = fogT * fogT * (3.0 - 2.0 * fogT);
-            float fogAmt = fogT * saturate1(uAerialFogStrength) * 0.92;
-            vec3 fogCol = mix(uGroundTint, uSkyTint, 0.55);
-            mapped = mix(mapped, fogCol, fogAmt);
-        }
-
+        vec3 mapped = applyTerrainAerialFog(tonemapAcesNarkowicz(hdr));
         outRgb = ditherSrgb8(linearToSrgb(mapped), gl_FragCoord.xy);
     }
 

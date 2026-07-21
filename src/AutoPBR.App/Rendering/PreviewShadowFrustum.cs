@@ -1,16 +1,29 @@
 using System.Numerics;
 
 using AutoPBR.App.Rendering.OpenGL;
+using AutoPBR.App.Rendering.Scene;
 
 namespace AutoPBR.App.Rendering;
 
-/// <summary>Fits directional shadow ortho extents to preview subject bounds (large entities such as Ender Dragon).</summary>
+/// <summary>
+/// Fits directional shadow ortho extents to preview subject bounds (large entities such as Ender Dragon)
+/// and optionally streamed ground terrain so hills can self-shadow onto the pad / valleys.
+/// </summary>
 internal static class PreviewShadowFrustum
 {
     private const float MinHalfExtent = 0.75f;
-    private const float MaxHalfExtent = 36f;
+    private const float MaxHalfExtent = 256f;
     private const float DepthPadding = 2.5f;
     private const float ExtentPaddingFraction = 0.12f;
+
+    /// <summary>
+    /// Minimum XZ half-extent kept around the stage/camera when seeding terrain shadow bounds.
+    /// Far coverage uses the streamed LOD ring (up to <see cref="TerrainShadowFarMaxHalfExtent"/>).
+    /// </summary>
+    public const float TerrainShadowMinXzHalfExtent = 48f;
+
+    /// <summary>Upper clamp for far-cascade half-extent covering the streamed terrain ring.</summary>
+    public const float TerrainShadowFarMaxHalfExtent = 256f;
 
     public static Matrix4x4 BuildDirectionalViewProj(
         Vector3 worldLightDir,
@@ -42,7 +55,7 @@ internal static class PreviewShadowFrustum
             radius = MathF.Max(radius, Vector3.Distance(corner, center));
         }
 
-        var eyeDistance = Math.Clamp(radius + 6f, 8f, maxHalfExtent * 2f);
+        var eyeDistance = Math.Clamp(radius + 6f, 8f, MathF.Max(maxHalfExtent * 2f, radius + 6f));
         var eye = center - worldLightDir * eyeDistance;
         var view = PreviewGlMatrices.CreateLookAtRhOpenGlRowStorage(eye, center, up);
 
@@ -71,8 +84,9 @@ internal static class PreviewShadowFrustum
 
         var centerX = (minX + maxX) * 0.5f;
         var centerY = (minY + maxY) * 0.5f;
-        var zNear = -maxZ - DepthPadding;
-        var zFar = -minZ + DepthPadding;
+        var depthPad = MathF.Max(DepthPadding, half * 0.08f);
+        var zNear = -maxZ - depthPad;
+        var zFar = -minZ + depthPad;
         if (zFar - zNear < 1f)
         {
             var mid = (zNear + zFar) * 0.5f;
@@ -90,18 +104,73 @@ internal static class PreviewShadowFrustum
         return proj * view;
     }
 
-    internal static void ExpandBoundsForGroundReceiver(ref Vector3 min, ref Vector3 max, float groundY)
+    internal static void ExpandBoundsForGroundReceiver(ref Vector3 min, ref Vector3 max, float groundY) =>
+        ExpandBoundsForGroundReceiver(ref min, ref max, groundY, groundCeilingY: groundY, minXzHalfExtent: 0f);
+
+    /// <summary>
+    /// Expands caster/receiver AABB so flat ground and nearby terrain relief stay inside the light ortho.
+    /// </summary>
+    /// <param name="groundY">Ground floor (pad top / grid Y).</param>
+    /// <param name="groundCeilingY">Highest terrain relief to keep in the shadow volume.</param>
+    /// <param name="minXzHalfExtent">
+    /// Minimum XZ half-extent from the AABB center (terrain self-shadow coverage). 0 keeps legacy subject pad only.
+    /// </param>
+    internal static void ExpandBoundsForGroundReceiver(
+        ref Vector3 min,
+        ref Vector3 max,
+        float groundY,
+        float groundCeilingY,
+        float minXzHalfExtent)
     {
         min.Y = MathF.Min(min.Y, groundY);
+        max.Y = MathF.Max(max.Y, groundCeilingY);
         var spanX = max.X - min.X;
         var spanZ = max.Z - min.Z;
         var pad = MathF.Max(spanX, spanZ) * 0.35f + 1.5f;
+        pad = MathF.Max(pad, MathF.Max(0f, minXzHalfExtent));
         var cx = (min.X + max.X) * 0.5f;
         var cz = (min.Z + max.Z) * 0.5f;
         min.X = MathF.Min(min.X, cx - pad);
         max.X = MathF.Max(max.X, cx + pad);
         min.Z = MathF.Min(min.Z, cz - pad);
         max.Z = MathF.Max(max.Z, cz + pad);
+    }
+
+    /// <summary>Seeds a world-space AABB covering terrain self-shadow around a focus point (subject origin or camera).</summary>
+    internal static void SeedTerrainShadowBounds(
+        Vector3 focusXz,
+        float groundFloorY,
+        float groundCeilingY,
+        float xzHalfExtent,
+        out Vector3 min,
+        out Vector3 max)
+    {
+        var half = MathF.Max(xzHalfExtent, MinHalfExtent);
+        min = new Vector3(focusXz.X - half, groundFloorY, focusXz.Z - half);
+        max = new Vector3(focusXz.X + half, groundCeilingY, focusXz.Z + half);
+    }
+
+    internal static void EncapsulateAabb(ref Vector3 min, ref Vector3 max, Vector3 otherMin, Vector3 otherMax)
+    {
+        min = Vector3.Min(min, otherMin);
+        max = Vector3.Max(max, otherMax);
+    }
+
+    internal static void EncapsulateTransformedAabb(
+        Vector3 localMin,
+        Vector3 localMax,
+        Matrix4x4 worldFromModel,
+        ref Vector3 worldMin,
+        ref Vector3 worldMax)
+    {
+        Span<Vector3> corners = stackalloc Vector3[8];
+        WriteAabbCorners(localMin, localMax, corners);
+        for (var i = 0; i < corners.Length; i++)
+        {
+            var world = Vector3.Transform(corners[i], worldFromModel);
+            worldMin = Vector3.Min(worldMin, world);
+            worldMax = Vector3.Max(worldMax, world);
+        }
     }
 
     private static void WriteAabbCorners(Vector3 min, Vector3 max, Span<Vector3> corners)

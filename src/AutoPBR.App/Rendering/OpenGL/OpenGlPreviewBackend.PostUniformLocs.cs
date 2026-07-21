@@ -47,9 +47,11 @@ public sealed partial class OpenGlPreviewBackend
         int SceneDepth,
         int ShadowMap,
         int ShadowMapNear,
+        int ShadowMapMid,
         int InvViewProj,
         int LightViewProj,
         int LightViewProjNear,
+        int LightViewProjMid,
         int CameraPos,
         int SunUv,
         int SunDiscRadius,
@@ -63,11 +65,16 @@ public sealed partial class OpenGlPreviewBackend
         int FogSlabHeight,
         int HeightFogStrength,
         int ShadowTexelSize,
+        int ShadowTexelSizeNear,
+        int ShadowTexelSizeMid,
         int ShadowMinBias,
         int EnableShadowMap,
         int EnableShadowCascades,
         int CascadeSplitDistance,
+        int CascadeMidSplitDistance,
         int CascadeBlendWidth,
+        int ShadowDistance,
+        int ShadowFadeStart,
         int EnableCloudAttenuation);
 
     private readonly record struct GodRayUpsampleUniformLocs(
@@ -105,14 +112,21 @@ public sealed partial class OpenGlPreviewBackend
         int DebugDensity,
         int LightViewProj,
         int LightViewProjNear,
+        int LightViewProjMid,
         int ShadowTexelSize,
+        int ShadowTexelSizeNear,
+        int ShadowTexelSizeMid,
         int ShadowMinBias,
         int EnableShadowMap,
         int EnableShadowCascades,
         int CascadeSplitDistance,
+        int CascadeMidSplitDistance,
         int CascadeBlendWidth,
+        int ShadowDistance,
+        int ShadowFadeStart,
         int ShadowMap,
         int ShadowMapNear,
+        int ShadowMapMid,
         int SliceIndex);
 
     private readonly record struct VolumeInjectComputeUniformLocs(
@@ -136,14 +150,21 @@ public sealed partial class OpenGlPreviewBackend
         int DebugDensity,
         int LightViewProj,
         int LightViewProjNear,
+        int LightViewProjMid,
         int ShadowTexelSize,
+        int ShadowTexelSizeNear,
+        int ShadowTexelSizeMid,
         int ShadowMinBias,
         int EnableShadowMap,
         int EnableShadowCascades,
         int CascadeSplitDistance,
+        int CascadeMidSplitDistance,
         int CascadeBlendWidth,
+        int ShadowDistance,
+        int ShadowFadeStart,
         int ShadowMap,
-        int ShadowMapNear);
+        int ShadowMapNear,
+        int ShadowMapMid);
 
     private readonly record struct VolumeIntegrateUniformLocs(
         int FroxelVolume,
@@ -361,9 +382,11 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uSceneDepth"),
             program.GetUniformLocation("uShadowMap"),
             program.GetUniformLocation("uShadowMapNear"),
+            program.GetUniformLocation("uShadowMapMid"),
             program.GetUniformLocation("uInvViewProj"),
             program.GetUniformLocation("uLightViewProj"),
             program.GetUniformLocation("uLightViewProjNear"),
+            program.GetUniformLocation("uLightViewProjMid"),
             program.GetUniformLocation("uCameraPos"),
             program.GetUniformLocation("uSunUv"),
             program.GetUniformLocation("uSunDiscRadius"),
@@ -377,11 +400,16 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uFogSlabHeight"),
             program.GetUniformLocation("uHeightFogStrength"),
             program.GetUniformLocation("uShadowTexelSize"),
+            program.GetUniformLocation("uShadowTexelSizeNear"),
+            program.GetUniformLocation("uShadowTexelSizeMid"),
             program.GetUniformLocation("uShadowMinBias"),
             program.GetUniformLocation("uEnableShadowMap"),
             program.GetUniformLocation("uEnableShadowCascades"),
             program.GetUniformLocation("uCascadeSplitDistance"),
+            program.GetUniformLocation("uCascadeMidSplitDistance"),
             program.GetUniformLocation("uCascadeBlendWidth"),
+            program.GetUniformLocation("uShadowDistance"),
+            program.GetUniformLocation("uShadowFadeStart"),
             program.GetUniformLocation("uEnableCloudAttenuation"));
 
     private static GodRayUpsampleUniformLocs ResolveGodRayUpsampleUniformLocs(GlShaderProgram program) =>
@@ -422,14 +450,21 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uDebugDensity"),
             program.GetUniformLocation("uLightViewProj"),
             program.GetUniformLocation("uLightViewProjNear"),
+            program.GetUniformLocation("uLightViewProjMid"),
             program.GetUniformLocation("uShadowTexelSize"),
+            program.GetUniformLocation("uShadowTexelSizeNear"),
+            program.GetUniformLocation("uShadowTexelSizeMid"),
             program.GetUniformLocation("uShadowMinBias"),
             program.GetUniformLocation("uEnableShadowMap"),
             program.GetUniformLocation("uEnableShadowCascades"),
             program.GetUniformLocation("uCascadeSplitDistance"),
+            program.GetUniformLocation("uCascadeMidSplitDistance"),
             program.GetUniformLocation("uCascadeBlendWidth"),
+            program.GetUniformLocation("uShadowDistance"),
+            program.GetUniformLocation("uShadowFadeStart"),
             program.GetUniformLocation("uShadowMap"),
             program.GetUniformLocation("uShadowMapNear"),
+            program.GetUniformLocation("uShadowMapMid"),
             program.GetUniformLocation("uSliceIndex"));
 
     private static VolumeInjectComputeUniformLocs ResolveVolumeInjectComputeUniformLocs(GlShaderProgram program) =>
@@ -454,14 +489,21 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uDebugDensity"),
             program.GetUniformLocation("uLightViewProj"),
             program.GetUniformLocation("uLightViewProjNear"),
+            program.GetUniformLocation("uLightViewProjMid"),
             program.GetUniformLocation("uShadowTexelSize"),
+            program.GetUniformLocation("uShadowTexelSizeNear"),
+            program.GetUniformLocation("uShadowTexelSizeMid"),
             program.GetUniformLocation("uShadowMinBias"),
             program.GetUniformLocation("uEnableShadowMap"),
             program.GetUniformLocation("uEnableShadowCascades"),
             program.GetUniformLocation("uCascadeSplitDistance"),
+            program.GetUniformLocation("uCascadeMidSplitDistance"),
             program.GetUniformLocation("uCascadeBlendWidth"),
+            program.GetUniformLocation("uShadowDistance"),
+            program.GetUniformLocation("uShadowFadeStart"),
             program.GetUniformLocation("uShadowMap"),
-            program.GetUniformLocation("uShadowMapNear"));
+            program.GetUniformLocation("uShadowMapNear"),
+            program.GetUniformLocation("uShadowMapMid"));
 
     private static VolumeIntegrateUniformLocs ResolveVolumeIntegrateUniformLocs(GlShaderProgram program) =>
         new(

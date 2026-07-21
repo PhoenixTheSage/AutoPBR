@@ -507,6 +507,8 @@ public static class Resources
     public static string Preview3DTimeOfDaySpeedTooltip => GetString("Preview3DTimeOfDaySpeedTooltip");
     public static string Preview3DEnableShadowCascades => GetString("Preview3DEnableShadowCascades");
     public static string Preview3DEnableShadowCascadesTooltip => GetString("Preview3DEnableShadowCascadesTooltip");
+    public static string Preview3DShadowDistance => GetString("Preview3DShadowDistance");
+    public static string Preview3DShadowDistanceTooltip => GetString("Preview3DShadowDistanceTooltip");
     public static string Preview3DVolumetricQualityLow => GetString("Preview3DVolumetricQualityLow");
     public static string Preview3DVolumetricQualityMedium => GetString("Preview3DVolumetricQualityMedium");
     public static string Preview3DVolumetricQualityHigh => GetString("Preview3DVolumetricQualityHigh");

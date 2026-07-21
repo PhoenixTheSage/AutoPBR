@@ -51,9 +51,17 @@ internal ref struct GlRenderFrame
     public Vector3 WorldLightDir;
     public Matrix4x4 ShadowVp;
     public Matrix4x4 ShadowVpNear;
+    public Matrix4x4 ShadowVpMid;
     public bool ShadowCascadesActive;
     public float CascadeSplitWorldDistance;
+    public float CascadeMidSplitWorldDistance;
     public float CascadeBlendWorldWidth;
+    public float ShadowDistance;
+    public float ShadowFadeStart;
+    /// <summary>
+    /// Scales receiver shadow bias for large terrain-fitted far frustums (1 = subject-sized reference).
+    /// </summary>
+    public float ShadowBiasScale;
     public Matrix4x4 ModelMatrix;
     public int EntityAlphaModeUniform;
     public bool EntityBlendDraw;

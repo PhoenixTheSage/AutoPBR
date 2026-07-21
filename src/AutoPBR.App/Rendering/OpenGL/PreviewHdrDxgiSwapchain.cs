@@ -9,9 +9,9 @@ namespace AutoPBR.App.Rendering.OpenGL;
 
 /// <summary>
 /// DXGI scRGB present for native WGL HDR.
-/// GL renders into a stable shared D3D11 texture (NV_DX interop registered once);
-/// each Present copies that texture into a flip backbuffer owned by a <em>child</em> HWND
-/// so the WGL preview HWND is never bound to DXGI (SDR SwapBuffers stays safe).
+/// GL renders into a private scene FBO, Y-flip-resolves into double-buffered NV_DX shared
+/// D3D11 textures, then <c>CopyResource</c> into the DXGI backbuffer for Present.
+/// Present uses a <em>child</em> HWND so the WGL preview HWND is never bound to DXGI.
 /// </summary>
 internal sealed class PreviewHdrDxgiSwapchain : IDisposable
 {
@@ -289,14 +289,14 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
 
     public bool IsActive =>
         _swapChain != IntPtr.Zero &&
+        _sceneFbo != 0 &&
+        !_disposed &&
         _sharedTextures[0] != IntPtr.Zero &&
         _sharedTextures[1] != IntPtr.Zero &&
-        _sceneFbo != 0 &&
         _resolveFbos[0] != 0 &&
         _resolveFbos[1] != 0 &&
         _registeredObjects[0] != IntPtr.Zero &&
-        _registeredObjects[1] != IntPtr.Zero &&
-        !_disposed;
+        _registeredObjects[1] != IntPtr.Zero;
 
     /// <summary>Private scene FBO (not the NV_DX shared texture). Resolve/flip happens before Present.</summary>
     public int Framebuffer => (int)_sceneFbo;
@@ -355,8 +355,7 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             // Keep the UI-owned present HWND; only rebuild DXGI/GL around it.
             TeardownDxgi(disposePresentWindow: false);
             if (!TryCreateDeviceAndSwapchain(width, height, out failure) ||
-                !TryCreateSharedTexture(width, height, out failure) ||
-                !TryRegisterGlInterop(wglGl, gl, width, height, out failure))
+                !TryCreatePresentResources(wglGl, gl, width, height, out failure))
             {
                 _lastFailure = failure;
                 TeardownGl(gl);
@@ -423,11 +422,8 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
     }
 
     /// <summary>
-    /// Resolves the private scene color into a shared NV_DX texture with a Y-flip.
-    /// Uses double-buffered shared textures + fences so we do not ClientWaitSync the current
-    /// frame before Present (that hard sync was ~halving HDR FPS vs SDR SwapBuffers).
-    /// Prefers <c>glBlitFramebuffer</c> (Y-inverted dest); falls back to the fullscreen shader
-    /// if blit is unsupported on the locked NV_DX target.
+    /// Resolves the private scene color into the active shared NV_DX target with a Y-flip.
+    /// Present copies the previous resolve into the DXGI backbuffer (one-frame pipeline).
     /// </summary>
     public bool TryFlipFramebufferY(GL gl)
     {
@@ -445,7 +441,6 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             return false;
         }
 
-        // Buffer is free once its prior present-age fence signals (usually already done).
         WaitResolveFence(gl, write);
 
         if (!PreviewDesktopWglDxInterop.TryLockObject(_dxInteropDevice, _registeredObjects[write]))
@@ -455,34 +450,28 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
         }
 
         _lockedBuffer = write;
-
-        // Scene/overlay passes often leave sticky GL errors; ignore those before our work.
         DrainGlErrors(gl);
 
         try
         {
-            // Step-1 opt: blit with inverted dest Y. Keep shader path as proven fallback.
-            if (_yFlipPath != 2 && TryResolveByBlit(gl, write))
+            var resolveFbo = _resolveFbos[write];
+            if (_yFlipPath != 2 && TryResolveByBlit(gl, resolveFbo))
             {
                 _yFlipPath = 1;
                 EndFrame();
-                // Step 4: FenceSync alone publishes completion; skip Flush to cut CPU/driver overhead.
                 _resolveFences[write] = gl.FenceSync(SyncCondition.SyncGpuCommandsComplete, SyncBehaviorFlags.None);
                 _lastFailure = null;
                 return true;
             }
 
-            if (!TryResolveByShader(gl, write))
+            if (!TryResolveByShader(gl, resolveFbo))
             {
                 return false;
             }
 
             _yFlipPath = 2;
             EndFrame();
-            // Publish without waiting — Present shows the previous buffer; this fence is waited
-            // when that buffer is presented next frame (after scene render has overlapped it).
             _resolveFences[write] = gl.FenceSync(SyncCondition.SyncGpuCommandsComplete, SyncBehaviorFlags.None);
-
             _lastFailure = null;
             return true;
         }
@@ -496,7 +485,7 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
     }
 
     /// <summary>Y-flip resolve via blit. Returns false if the driver rejects the blit.</summary>
-    private bool TryResolveByBlit(GL gl, int write)
+    private bool TryResolveByBlit(GL gl, uint resolveFbo)
     {
         var priorRead = gl.GetInteger(GetPName.ReadFramebufferBinding);
         var priorDraw = gl.GetInteger(GetPName.DrawFramebufferBinding);
@@ -504,7 +493,7 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
         {
             gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _sceneFbo);
             gl.ReadBuffer(ReadBufferMode.ColorAttachment0);
-            gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _resolveFbos[write]);
+            gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, resolveFbo);
             gl.DrawBuffer(DrawBufferMode.ColorAttachment0);
             gl.BlitFramebuffer(
                 0,
@@ -533,7 +522,7 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
         }
     }
 
-    private bool TryResolveByShader(GL gl, int write)
+    private bool TryResolveByShader(GL gl, uint resolveFbo)
     {
         var priorDraw = gl.GetInteger(GetPName.DrawFramebufferBinding);
         var priorProgram = gl.GetInteger(GetPName.CurrentProgram);
@@ -550,7 +539,7 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
         {
             // Full Framebuffer bind (not Draw-only) so the scene FBO is not left as the active
             // read target while sampling its color texture.
-            gl.BindFramebuffer(FramebufferTarget.Framebuffer, _resolveFbos[write]);
+            gl.BindFramebuffer(FramebufferTarget.Framebuffer, resolveFbo);
             gl.DrawBuffer(DrawBufferMode.ColorAttachment0);
             gl.Viewport(0, 0, (uint)_width, (uint)_height);
             gl.Disable(EnableCap.DepthTest);
@@ -600,6 +589,12 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
         }
 
         EndFrame();
+        return TryPresentSharedCopy(gl, vsync, out failure);
+    }
+
+    private bool TryPresentSharedCopy(GL gl, bool vsync, out string? failure)
+    {
+        failure = null;
 
         // One-frame pipeline: present the previous resolve so we never ClientWaitSync the
         // buffer we just wrote. First frame has no previous image — wait once on write.
@@ -639,13 +634,10 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             copy(_context, backBuffer, shared);
 
             var present = GetVTableFn<PresentDelegate>(_swapChain, 8);
-            // Step 5: when vsync is off and the swapchain supports it, allow tearing so Present
-            // is not capped by the compositor refresh cadence.
             var presentFlags = !vsync && _allowTearing ? DXGI_PRESENT_ALLOW_TEARING : 0u;
             hr = present(_swapChain, vsync ? 1u : 0u, presentFlags);
             if (hr != S_OK && hr != unchecked((int)0x087A0001))
             {
-                // Some drivers reject tearing on windowed child HWNDs; drop the flag and retry once.
                 if (presentFlags != 0)
                 {
                     _allowTearing = false;
@@ -671,12 +663,17 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
 
     private void WaitResolveFence(GL gl, int index)
     {
+        WaitFenceSlot(gl, _resolveFences, index);
+    }
+
+    private static void WaitFenceSlot(GL gl, nint[] fences, int index)
+    {
         if ((uint)index >= SharedBufferCount)
         {
             return;
         }
 
-        var fence = _resolveFences[index];
+        var fence = fences[index];
         if (fence == 0)
         {
             return;
@@ -684,7 +681,7 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
 
         _ = gl.ClientWaitSync(fence, SyncObjectMask.Bit, PreviewGlCommandDrain.DefaultTimeoutNanoseconds);
         gl.DeleteSync(fence);
-        _resolveFences[index] = 0;
+        fences[index] = 0;
     }
 
     public void Dispose() => Dispose(gl: null);
@@ -999,40 +996,7 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
         return true;
     }
 
-    private bool TryCreateSharedTexture(int width, int height, out string? failure)
-    {
-        failure = null;
-        var desc = new D3D11Texture2DDesc
-        {
-            Width = (uint)width,
-            Height = (uint)height,
-            MipLevels = 1,
-            ArraySize = 1,
-            Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
-            SampleDesc = new DxgiSampleDesc { Count = 1, Quality = 0 },
-            Usage = D3D11_USAGE_DEFAULT,
-            BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE,
-            CpuAccessFlags = 0,
-            MiscFlags = D3D11_RESOURCE_MISC_SHARED
-        };
-
-        var createTex = GetVTableFn<CreateTexture2DDelegate>(_device, CreateTexture2DVtableIndex);
-        for (var i = 0; i < SharedBufferCount; i++)
-        {
-            var hr = createTex(_device, ref desc, IntPtr.Zero, out var texture);
-            if (hr != S_OK || texture == IntPtr.Zero)
-            {
-                failure = $"CreateTexture2D(shared HDR[{i}]) failed (hr=0x{hr:X8}).";
-                return false;
-            }
-
-            _sharedTextures[i] = texture;
-        }
-
-        return true;
-    }
-
-    private bool TryRegisterGlInterop(GlInterface wglGl, GL gl, int width, int height, out string? failure)
+    private bool TryCreatePresentResources(GlInterface wglGl, GL gl, int width, int height, out string? failure)
     {
         failure = null;
         if (!PreviewDesktopWglDxInterop.TryOpenDevice(wglGl, _device, out _dxInteropDevice))
@@ -1041,6 +1005,18 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             return false;
         }
 
+        if (!TryCreateSharedTexture(width, height, out failure) ||
+            !TryRegisterSharedInterop(gl, out failure))
+        {
+            return false;
+        }
+
+        return TryCreateSceneFramebuffer(gl, width, height, out failure);
+    }
+
+    private bool TryRegisterSharedInterop(GL gl, out string? failure)
+    {
+        failure = null;
         for (var i = 0; i < SharedBufferCount; i++)
         {
             _glTextures[i] = gl.GenTexture();
@@ -1055,6 +1031,43 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             }
         }
 
+        for (var i = 0; i < SharedBufferCount; i++)
+        {
+            _resolveFbos[i] = gl.GenFramebuffer();
+            if (!PreviewDesktopWglDxInterop.TryLockObject(_dxInteropDevice, _registeredObjects[i]))
+            {
+                failure = $"wglDXLockObjectsNV failed during HDR FBO[{i}] setup.";
+                return false;
+            }
+
+            try
+            {
+                gl.BindFramebuffer(FramebufferTarget.Framebuffer, _resolveFbos[i]);
+                gl.FramebufferTexture2D(
+                    FramebufferTarget.Framebuffer,
+                    FramebufferAttachment.ColorAttachment0,
+                    TextureTarget.Texture2D,
+                    _glTextures[i],
+                    0);
+                var status = gl.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
+                gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+                if (status != GLEnum.FramebufferComplete)
+                {
+                    failure = $"HDR interop FBO[{i}] incomplete ({status}).";
+                    return false;
+                }
+            }
+            finally
+            {
+                PreviewDesktopWglDxInterop.TryUnlockObject(_dxInteropDevice, _registeredObjects[i]);
+            }
+        }
+
+        return true;
+    }
+
+    private bool TryCreateSceneFramebuffer(GL gl, int width, int height, out string? failure)
+    {
         // Private scene color + depth (unlocked for the whole Genesis frame).
         if (!TryCreateFlipResources(gl, width, height, out failure))
         {
@@ -1091,36 +1104,37 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             return false;
         }
 
+        return true;
+    }
+
+    private bool TryCreateSharedTexture(int width, int height, out string? failure)
+    {
+        failure = null;
+        var desc = new D3D11Texture2DDesc
+        {
+            Width = (uint)width,
+            Height = (uint)height,
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
+            SampleDesc = new DxgiSampleDesc { Count = 1, Quality = 0 },
+            Usage = D3D11_USAGE_DEFAULT,
+            BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE,
+            CpuAccessFlags = 0,
+            MiscFlags = D3D11_RESOURCE_MISC_SHARED
+        };
+
+        var createTex = GetVTableFn<CreateTexture2DDelegate>(_device, CreateTexture2DVtableIndex);
         for (var i = 0; i < SharedBufferCount; i++)
         {
-            _resolveFbos[i] = gl.GenFramebuffer();
-            if (!PreviewDesktopWglDxInterop.TryLockObject(_dxInteropDevice, _registeredObjects[i]))
+            var hr = createTex(_device, ref desc, IntPtr.Zero, out var texture);
+            if (hr != S_OK || texture == IntPtr.Zero)
             {
-                failure = $"wglDXLockObjectsNV failed during HDR FBO[{i}] setup.";
+                failure = $"CreateTexture2D(shared HDR[{i}]) failed (hr=0x{hr:X8}).";
                 return false;
             }
 
-            try
-            {
-                gl.BindFramebuffer(FramebufferTarget.Framebuffer, _resolveFbos[i]);
-                gl.FramebufferTexture2D(
-                    FramebufferTarget.Framebuffer,
-                    FramebufferAttachment.ColorAttachment0,
-                    TextureTarget.Texture2D,
-                    _glTextures[i],
-                    0);
-                var status = gl.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
-                gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-                if (status != GLEnum.FramebufferComplete)
-                {
-                    failure = $"HDR interop FBO[{i}] incomplete ({status}).";
-                    return false;
-                }
-            }
-            finally
-            {
-                PreviewDesktopWglDxInterop.TryUnlockObject(_dxInteropDevice, _registeredObjects[i]);
-            }
+            _sharedTextures[i] = texture;
         }
 
         return true;
@@ -1403,6 +1417,7 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             _glDepthRb = 0;
             Array.Clear(_resolveFbos);
             Array.Clear(_glTextures);
+            Array.Clear(_registeredObjects);
         }
 
         _sceneFboComplete = false;

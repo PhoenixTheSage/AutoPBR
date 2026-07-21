@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Threading.Tasks;
 
 using AutoPBR.App.Rendering.Scene;
 using AutoPBR.Preview;
@@ -23,6 +24,14 @@ public sealed partial class OpenGlPreviewBackend
     private readonly List<TerrainChunkDrawCull.Candidate> _terrainDrawCandidates = new(256);
     private readonly List<int> _terrainDrawSelected = new(256);
     private readonly List<TerrainGpuChunk> _terrainDrawChunkScratch = new(256);
+
+    /// <summary>Shadow-pass candidate snapshot (built once per frame; culled per cascade).</summary>
+    private readonly List<TerrainChunkDrawCull.Candidate> _terrainShadowCandidates = new(256);
+    private readonly List<TerrainGpuChunk> _terrainShadowChunkScratch = new(256);
+    private readonly List<int> _terrainShadowSelectedNear = new(256);
+    private readonly List<int> _terrainShadowSelectedMid = new(256);
+    private readonly List<int> _terrainShadowSelectedFar = new(256);
+    private const int TerrainShadowParallelCullMinCandidates = 64;
 
     private void EnsureTerrainStreamer()
     {
@@ -217,7 +226,8 @@ public sealed partial class OpenGlPreviewBackend
         bool patches,
         bool enableParallaxSetting,
         Action<bool> setParallaxEnabled,
-        bool shadowFullOnly = false)
+        bool shadowFullOnly = false,
+        float maxCasterDistanceXz = 0f)
     {
         _ = gl;
         if (_terrainGpuChunks.Count == 0)
@@ -225,35 +235,11 @@ public sealed partial class OpenGlPreviewBackend
             return;
         }
 
-        var pomRadiusSq = PreviewStageConstants.TerrainNearPomRadius *
-                          PreviewStageConstants.TerrainNearPomRadius;
-
-        _terrainDrawChunkScratch.Clear();
-        _terrainDrawCandidates.Clear();
-        foreach (var chunk in _terrainGpuChunks.Values)
-        {
-            if (chunk.Mesh.IndexCount <= 0)
-            {
-                continue;
-            }
-
-            var dx = chunk.BoundsCenter.X - cameraPosition.X;
-            var dz = chunk.BoundsCenter.Z - cameraPosition.Z;
-            var nearCam = dx * dx + dz * dz <= pomRadiusSq;
-            var nearPom = enableParallaxSetting &&
-                          chunk.Lod == TerrainChunkLodKind.Full &&
-                          nearCam;
-            var sourceIndex = _terrainDrawChunkScratch.Count;
-            _terrainDrawChunkScratch.Add(chunk);
-            _terrainDrawCandidates.Add(new TerrainChunkDrawCull.Candidate
-            {
-                BoundsCenter = chunk.BoundsCenter,
-                BoundsRadius = chunk.BoundsRadius,
-                Lod = chunk.Lod,
-                NearPom = nearPom,
-                SourceIndex = sourceIndex
-            });
-        }
+        CollectTerrainDrawCandidates(
+            cameraPosition,
+            enableParallaxSetting,
+            _terrainDrawChunkScratch,
+            _terrainDrawCandidates);
 
         if (_terrainDrawCandidates.Count == 0)
         {
@@ -266,14 +252,180 @@ public sealed partial class OpenGlPreviewBackend
             cameraPosition,
             PreviewStageConstants.TerrainFrustumDrawFallbackCount,
             fullOnly: shadowFullOnly,
-            _terrainDrawSelected);
+            _terrainDrawSelected,
+            maxCasterDistanceXz: maxCasterDistanceXz);
 
+        DrawTerrainCandidates(
+            _terrainDrawCandidates,
+            _terrainDrawChunkScratch,
+            _terrainDrawSelected,
+            patches,
+            enableParallaxSetting,
+            setParallaxEnabled);
+    }
+
+    private void CollectTerrainDrawCandidates(
+        Vector3 cameraPosition,
+        bool enableParallaxSetting,
+        List<TerrainGpuChunk> scratch,
+        List<TerrainChunkDrawCull.Candidate> candidates)
+    {
+        scratch.Clear();
+        candidates.Clear();
+        if (_terrainGpuChunks.Count == 0)
+        {
+            return;
+        }
+
+        var pomEnableRadius = PreviewStageConstants.TerrainNearPomRadius +
+                              PreviewStageConstants.TerrainNearPomFadeWidth;
+        var pomEnableRadiusSq = pomEnableRadius * pomEnableRadius;
+
+        foreach (var chunk in _terrainGpuChunks.Values)
+        {
+            if (chunk.Mesh.IndexCount <= 0)
+            {
+                continue;
+            }
+
+            var dx = chunk.BoundsCenter.X - cameraPosition.X;
+            var dz = chunk.BoundsCenter.Z - cameraPosition.Z;
+            // Keep POM enabled through the fade band; fragment shader softens strength by distance.
+            var nearCam = dx * dx + dz * dz <= pomEnableRadiusSq;
+            var nearPom = enableParallaxSetting &&
+                          chunk.Lod == TerrainChunkLodKind.Full &&
+                          nearCam;
+            var sourceIndex = scratch.Count;
+            scratch.Add(chunk);
+            candidates.Add(new TerrainChunkDrawCull.Candidate
+            {
+                BoundsCenter = chunk.BoundsCenter,
+                BoundsRadius = chunk.BoundsRadius,
+                Lod = chunk.Lod,
+                NearPom = nearPom,
+                SourceIndex = sourceIndex
+            });
+        }
+    }
+
+    private void PrepareTerrainShadowCasterSelections(
+        Vector3 cameraPosition,
+        Matrix4x4 nearVp,
+        Matrix4x4 midVp,
+        Matrix4x4 farVp,
+        float nearCasterDistanceXz,
+        float midCasterDistanceXz,
+        float farCasterDistanceXz,
+        bool cascadesActive)
+    {
+        _terrainShadowSelectedNear.Clear();
+        _terrainShadowSelectedMid.Clear();
+        _terrainShadowSelectedFar.Clear();
+        CollectTerrainDrawCandidates(
+            cameraPosition,
+            enableParallaxSetting: false,
+            _terrainShadowChunkScratch,
+            _terrainShadowCandidates);
+        if (_terrainShadowCandidates.Count == 0)
+        {
+            return;
+        }
+
+        var fallback = PreviewStageConstants.TerrainFrustumDrawFallbackCount;
+        if (!cascadesActive)
+        {
+            TerrainChunkDrawCull.Select(
+                _terrainShadowCandidates,
+                farVp,
+                cameraPosition,
+                fallback,
+                fullOnly: false,
+                _terrainShadowSelectedFar,
+                maxCasterDistanceXz: farCasterDistanceXz);
+            return;
+        }
+
+        if (_terrainShadowCandidates.Count >= TerrainShadowParallelCullMinCandidates)
+        {
+            Parallel.Invoke(
+                () => TerrainChunkDrawCull.Select(
+                    _terrainShadowCandidates,
+                    nearVp,
+                    cameraPosition,
+                    fallback,
+                    fullOnly: true,
+                    _terrainShadowSelectedNear,
+                    maxCasterDistanceXz: nearCasterDistanceXz),
+                () => TerrainChunkDrawCull.Select(
+                    _terrainShadowCandidates,
+                    midVp,
+                    cameraPosition,
+                    fallback,
+                    fullOnly: false,
+                    _terrainShadowSelectedMid,
+                    maxCasterDistanceXz: midCasterDistanceXz),
+                () => TerrainChunkDrawCull.Select(
+                    _terrainShadowCandidates,
+                    farVp,
+                    cameraPosition,
+                    fallback,
+                    fullOnly: false,
+                    _terrainShadowSelectedFar,
+                    maxCasterDistanceXz: farCasterDistanceXz));
+            return;
+        }
+
+        TerrainChunkDrawCull.Select(
+            _terrainShadowCandidates,
+            nearVp,
+            cameraPosition,
+            fallback,
+            fullOnly: true,
+            _terrainShadowSelectedNear,
+            maxCasterDistanceXz: nearCasterDistanceXz);
+        TerrainChunkDrawCull.Select(
+            _terrainShadowCandidates,
+            midVp,
+            cameraPosition,
+            fallback,
+            fullOnly: false,
+            _terrainShadowSelectedMid,
+            maxCasterDistanceXz: midCasterDistanceXz);
+        TerrainChunkDrawCull.Select(
+            _terrainShadowCandidates,
+            farVp,
+            cameraPosition,
+            fallback,
+            fullOnly: false,
+            _terrainShadowSelectedFar,
+            maxCasterDistanceXz: farCasterDistanceXz);
+    }
+
+    private void DrawPreparedTerrainShadowCasters(List<int> selected)
+    {
+        DrawTerrainCandidates(
+            _terrainShadowCandidates,
+            _terrainShadowChunkScratch,
+            selected,
+            patches: false,
+            enableParallaxSetting: false,
+            setParallaxEnabled: static _ => { });
+    }
+
+    private static void DrawTerrainCandidates(
+        List<TerrainChunkDrawCull.Candidate> candidates,
+        List<TerrainGpuChunk> scratch,
+        List<int> selected,
+        bool patches,
+        bool enableParallaxSetting,
+        Action<bool> setParallaxEnabled)
+    {
         var lastPom = !enableParallaxSetting;
         GlMeshBuffer? lastMesh = null;
-        foreach (var idx in _terrainDrawSelected)
+        foreach (var idx in selected)
         {
-            var candidate = _terrainDrawCandidates[idx];
-            var chunk = _terrainDrawChunkScratch[candidate.SourceIndex];
+            var candidate = candidates[idx];
+            var chunk = scratch[candidate.SourceIndex];
             var pom = candidate.NearPom;
             if (pom != lastPom)
             {

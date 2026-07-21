@@ -39,8 +39,14 @@ public static class PreviewStageConstants
     /// <summary>Deterministic heightfield seed.</summary>
     public const int TerrainHeightSeed = 0x41504252; // 'APBR'
 
-    /// <summary>Full-detail chunks whose center is within this camera XZ radius keep POM enabled.</summary>
+    /// <summary>Full-detail chunks whose center is within this camera XZ radius keep POM at full strength.</summary>
     public const float TerrainNearPomRadius = 22f;
+
+    /// <summary>
+    /// Extra XZ distance beyond <see cref="TerrainNearPomRadius"/> where ground POM / parallax shadow fade to off.
+    /// Prevents a hard lighting seam when approaching chunks.
+    /// </summary>
+    public const float TerrainNearPomFadeWidth = 8f;
 
     /// <summary>
     /// Legacy bake LOD stamp. Streaming uses <see cref="TerrainLodRingChunks"/> instead.

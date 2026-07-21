@@ -10,9 +10,11 @@
 in vec2 vUv;uniform sampler2D uSceneDepth;
 uniform sampler2DShadow uShadowMap;
 uniform sampler2DShadow uShadowMapNear;
+uniform sampler2DShadow uShadowMapMid;
 uniform mat4 uInvViewProj;
 uniform mat4 uLightViewProj;
 uniform mat4 uLightViewProjNear;
+uniform mat4 uLightViewProjMid;
 uniform vec3 uCameraPos;
 uniform vec2 uSunUv;
 uniform float uSunDiscRadius;
@@ -26,11 +28,16 @@ uniform float uGroundWorldY;
 uniform float uFogSlabHeight;
 uniform float uHeightFogStrength;
 uniform vec2 uShadowTexelSize;
+uniform vec2 uShadowTexelSizeNear;
+uniform vec2 uShadowTexelSizeMid;
 uniform float uShadowMinBias;
 uniform int uEnableShadowMap;
 uniform int uEnableShadowCascades;
 uniform float uCascadeSplitDistance;
+uniform float uCascadeMidSplitDistance;
 uniform float uCascadeBlendWidth;
+uniform float uShadowDistance;
+uniform float uShadowFadeStart;
 uniform int uEnableCloudAttenuation;
 
 out vec4 FragColor;
@@ -115,9 +122,12 @@ void main()
         if (sampleDepth >= SKY_DEPTH_EPS)
         {
             vec3 worldPos = grMarchWorldPos(marchUv, sampleDepth, uInvViewProj, uCameraPos, uLayerHeight, layerTop);
-            float lightVis = grShadowGateCascaded(worldPos, uCameraPos, uLightViewProjNear, uLightViewProj,
-                uShadowMapNear, uShadowMap, uShadowTexelSize, uShadowMinBias, uEnableShadowMap,
-                uEnableShadowCascades, uCascadeSplitDistance, uCascadeBlendWidth);
+            float lightVis = grShadowGateCascaded(worldPos, uCameraPos,
+                uLightViewProjNear, uLightViewProjMid, uLightViewProj,
+                uShadowMapNear, uShadowMapMid, uShadowMap,
+                uShadowTexelSizeNear, uShadowTexelSizeMid, uShadowTexelSize, uShadowMinBias, uEnableShadowMap,
+                uEnableShadowCascades, uCascadeSplitDistance, uCascadeMidSplitDistance, uCascadeBlendWidth,
+                uShadowDistance, uShadowFadeStart);
             float cloudAtten = grCloudAttenuation(worldPos, uGroundWorldY, uFogSlabHeight, uLayerHeight, layerTop,
                 uCloudDensity, uVolumeSize, uHeightFogStrength, uEnableCloudAttenuation);
             shaft += visibility * weight * beamFalloff * lightVis * cloudAtten;

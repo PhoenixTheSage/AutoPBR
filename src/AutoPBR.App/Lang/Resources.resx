@@ -1640,7 +1640,13 @@
     <value>Shadow cascades</value>
   </data>
   <data name="Preview3DEnableShadowCascadesTooltip" xml:space="preserve">
-    <value>Near + far directional shadow maps; volume god rays pick the cascade by distance from the camera.</value>
+    <value>Near / mid / far directional shadow maps with stepped resolution (4096 → 2048 → 1024) by distance from the camera.</value>
+  </data>
+  <data name="Preview3DShadowDistance" xml:space="preserve">
+    <value>Shadow distance</value>
+  </data>
+  <data name="Preview3DShadowDistanceTooltip" xml:space="preserve">
+    <value>Maximum world-unit radius for directional shadow casting and receiving. Shadows fade out near this limit.</value>
   </data>
   <data name="Preview3DVolumetricQualityLow" xml:space="preserve">
     <value>Low</value>

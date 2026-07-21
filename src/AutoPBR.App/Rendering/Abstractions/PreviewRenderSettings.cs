@@ -196,8 +196,8 @@ public sealed class PreviewRenderSettings
     /// <summary>Genesis Shadows Phase 2: master toggle for the directional shadow map pass.</summary>
     public bool EnableShadows { get; init; } = true;
 
-    /// <summary>Genesis Shadows Phase 2: shadow map resolution per side (256-4096, square).</summary>
-    public int ShadowMapResolution { get; init; } = 1024;
+    /// <summary>Genesis Shadows Phase 2: shadow map resolution per side (256-4096, square). Near cascade uses this when cascades are on.</summary>
+    public int ShadowMapResolution { get; init; } = 4096;
 
     /// <summary>Genesis Shadows Phase 2: minimum slope-scaled depth bias to combat acne.</summary>
     public float ShadowMinBias { get; init; } = 0.002f;
@@ -209,8 +209,13 @@ public sealed class PreviewRenderSettings
     public float ShadowSoftnessTexels { get; init; } = 1.0f;
 
     /// <summary>
-    /// PHASE3-CSM stub: persisted boolean so Phase 3 can light up cascades without restructuring.
-    /// No runtime branch in Phase 2 (single shadow map).
+    /// Max world-space radius from the camera for directional shadow casting/receiving.
+    /// Far cascade coverage and distance fade use this (clamped 32..256).
+    /// </summary>
+    public float ShadowDistance { get; init; } = 128f;
+
+    /// <summary>
+    /// Cascaded directional shadows (near/mid/far distance LODs with stepped map resolutions).
     /// </summary>
     public bool EnableShadowCascades { get; init; }
 

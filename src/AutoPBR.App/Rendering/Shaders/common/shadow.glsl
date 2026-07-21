@@ -34,16 +34,17 @@ float shadowMapTexelDepth(vec2 shadowTexelSize)
     return max(max(shadowTexelSize.x, shadowTexelSize.y), 1.0 / 4096.0);
 }
 
-// minBias/maxBias are normalized-depth offsets; always enforce ~1.75 texels minimum so fitted
-// subject ortho extents (large world span / 1024) do not acne-strip receivers.
+// minBias/maxBias are normalized-depth offsets. Soften grazing slope so flat receivers at low
+// sun (terrain pad) do not peter-pan away from caster contact. Keep a light texel floor for acne.
 float computeShadowBias(vec3 N, vec3 L, float minBias, float maxBias, vec2 shadowTexelSize)
 {
     float ndl = clamp(dot(normalize(N), normalize(L)), 0.0, 1.0);
     float slope = 1.0 - ndl;
     float texel = shadowMapTexelDepth(shadowTexelSize);
-    float slopeBias = maxBias * slope;
+    // Quadratic slope keeps mid-angles useful without full maxBias on near-grazing ground.
+    float slopeBias = maxBias * slope * slope;
     float configured = max(minBias, slopeBias);
-    return max(configured, texel * 1.75);
+    return max(configured, texel * 0.5);
 }
 
 float sampleShadowPcf3x3(sampler2DShadow shadowTex, vec3 shadowUv, vec2 texelSize)
@@ -106,6 +107,16 @@ float sampleShadowPcfSoft(sampler2DShadow shadowTex, vec3 shadowUv, vec2 texelSi
     return sum / totalWeight;
 }
 
+float shadowUvEdgeWeight(vec2 uv)
+{
+    // Soften the ortho border slightly; keep the band tight so large terrain maps do not
+    // show a wide soft dark rectangle before full coverage.
+    const float edge = 0.02;
+    float wx = smoothstep(0.0, edge, uv.x) * smoothstep(0.0, edge, 1.0 - uv.x);
+    float wy = smoothstep(0.0, edge, uv.y) * smoothstep(0.0, edge, 1.0 - uv.y);
+    return clamp(wx * wy, 0.0, 1.0);
+}
+
 float sampleSceneShadowFromWorld(vec3 worldPos, mat4 lightVp, sampler2DShadow shadowMap, vec2 texelSize,
     float minBias, float maxBias, vec3 N, vec3 L, float softnessTexels)
 {
@@ -118,7 +129,8 @@ float sampleSceneShadowFromWorld(vec3 worldPos, mat4 lightVp, sampler2DShadow sh
     vec3 sUv = shadowPack.xyz;
     float bias = computeShadowBias(N, L, minBias, maxBias, texelSize);
     sUv.z = clamp(sUv.z - bias, 0.0, 1.0);
-    return sampleShadowPcfSoft(shadowMap, sUv, texelSize, softnessTexels);
+    float vis = sampleShadowPcfSoft(shadowMap, sUv, texelSize, softnessTexels);
+    return mix(1.0, vis, shadowUvEdgeWeight(sUv.xy));
 }
 
 float sampleSceneShadowFromClip(vec4 lightClip, sampler2DShadow shadowMap, vec2 texelSize,
@@ -138,48 +150,101 @@ float sampleSceneShadowFromClip(vec4 lightClip, sampler2DShadow shadowMap, vec2 
 
     float bias = computeShadowBias(N, L, minBias, maxBias, texelSize);
     sUv.z = clamp(sUv.z - bias, 0.0, 1.0);
-    return sampleShadowPcfSoft(shadowMap, sUv, texelSize, softnessTexels);
+    float vis = sampleShadowPcfSoft(shadowMap, sUv, texelSize, softnessTexels);
+    return mix(1.0, vis, shadowUvEdgeWeight(sUv.xy));
+}
+
+float shadowRangeFade(float dist, float fadeStart, float shadowDistance)
+{
+    float endDist = max(shadowDistance, fadeStart + 1e-3);
+    return 1.0 - smoothstep(fadeStart, endDist, dist);
+}
+
+float shadowCascadeBlendT(float dist, float splitDist, float blendWidth)
+{
+    float halfBand = max(blendWidth, 0.0) * 0.5;
+    if (halfBand > 1e-5)
+    {
+        return smoothstep(splitDist - halfBand, splitDist + halfBand, dist);
+    }
+
+    return dist > splitDist ? 1.0 : 0.0;
 }
 
 float sampleSceneShadowCascaded(vec3 worldPos, vec3 cameraPos, vec4 lightClipFar,
-    mat4 lightVpNear, mat4 lightVpFar,
-    sampler2DShadow shadowNear, sampler2DShadow shadowFar, vec2 texelSize,
+    mat4 lightVpNear, mat4 lightVpMid, mat4 lightVpFar,
+    sampler2DShadow shadowNear, sampler2DShadow shadowMid, sampler2DShadow shadowFar,
+    vec2 texelSizeNear, vec2 texelSizeMid, vec2 texelSizeFar,
     float minBias, float maxBias, vec3 N, vec3 L, float softnessTexels,
-    int enableShadow, int enableCascades, float splitDist, float blendWidth)
+    int enableShadow, int enableCascades, float splitNear, float splitMid, float blendWidth,
+    float shadowDistance, float shadowFadeStart)
 {
     if (enableShadow < 1)
     {
         return 1.0;
     }
 
+    float dist = length(worldPos - cameraPos);
+    float rangeFade = shadowRangeFade(dist, shadowFadeStart, shadowDistance);
+    if (rangeFade <= 1e-4)
+    {
+        return 1.0;
+    }
+
+    float outerSoftness = min(softnessTexels, 1.0);
+
     if (enableCascades < 1)
     {
-        return sampleSceneShadowFromClip(lightClipFar, shadowFar, texelSize, minBias, maxBias, N, L, softnessTexels);
+        float singleVis = sampleSceneShadowFromClip(
+            lightClipFar, shadowFar, texelSizeFar, minBias, maxBias, N, L, outerSoftness);
+        return mix(1.0, singleVis, rangeFade);
     }
 
-    float dist = length(worldPos - cameraPos);
-    float halfBand = max(blendWidth, 0.0) * 0.5;
-    float blendStart = splitDist - halfBand;
-    float blendEnd = splitDist + halfBand;
+    // Neighbor blend for cascade detail. Always min() with far so large terrain casters that only
+    // fit the wide far ortho still darken near-camera receivers (circular "lit hole" otherwise).
+    float nearMidT = shadowCascadeBlendT(dist, splitNear, blendWidth);
+    float midFarT = shadowCascadeBlendT(dist, splitMid, blendWidth);
 
-    if (halfBand <= 1e-5 || dist <= blendStart)
+    float farVis = sampleSceneShadowFromWorld(worldPos, lightVpFar, shadowFar, texelSizeFar,
+        minBias, maxBias, N, L, outerSoftness);
+
+    float vis;
+    if (nearMidT <= 0.0)
     {
-        return sampleSceneShadowFromWorld(worldPos, lightVpNear, shadowNear, texelSize,
+        float nearVis = sampleSceneShadowFromWorld(worldPos, lightVpNear, shadowNear, texelSizeNear,
             minBias, maxBias, N, L, softnessTexels);
+        float midVis = sampleSceneShadowFromWorld(worldPos, lightVpMid, shadowMid, texelSizeMid,
+            minBias, maxBias, N, L, outerSoftness);
+        vis = min(min(nearVis, midVis), farVis);
     }
-
-    if (dist >= blendEnd)
+    else if (nearMidT < 1.0)
     {
-        return sampleSceneShadowFromWorld(worldPos, lightVpFar, shadowFar, texelSize,
+        float nearVis = sampleSceneShadowFromWorld(worldPos, lightVpNear, shadowNear, texelSizeNear,
             minBias, maxBias, N, L, softnessTexels);
+        float midVis = sampleSceneShadowFromWorld(worldPos, lightVpMid, shadowMid, texelSizeMid,
+            minBias, maxBias, N, L, outerSoftness);
+        float blended = mix(nearVis, midVis, nearMidT);
+        vis = min(min(blended, midVis), farVis);
+    }
+    else if (midFarT <= 0.0)
+    {
+        float midVis = sampleSceneShadowFromWorld(worldPos, lightVpMid, shadowMid, texelSizeMid,
+            minBias, maxBias, N, L, outerSoftness);
+        vis = min(midVis, farVis);
+    }
+    else if (midFarT < 1.0)
+    {
+        float midVis = sampleSceneShadowFromWorld(worldPos, lightVpMid, shadowMid, texelSizeMid,
+            minBias, maxBias, N, L, outerSoftness);
+        float blended = mix(midVis, farVis, midFarT);
+        vis = min(blended, farVis);
+    }
+    else
+    {
+        vis = farVis;
     }
 
-    float nearVis = sampleSceneShadowFromWorld(worldPos, lightVpNear, shadowNear, texelSize,
-        minBias, maxBias, N, L, softnessTexels);
-    float farVis = sampleSceneShadowFromWorld(worldPos, lightVpFar, shadowFar, texelSize,
-        minBias, maxBias, N, L, softnessTexels);
-    float blendT = smoothstep(blendStart, blendEnd, dist);
-    return mix(nearVis, farVis, blendT);
+    return mix(1.0, vis, rangeFade);
 }
 
 #endif // GENESIS_SHADOW_GLSL

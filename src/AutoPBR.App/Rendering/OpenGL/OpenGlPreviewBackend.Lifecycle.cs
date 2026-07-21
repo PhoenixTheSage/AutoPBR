@@ -944,6 +944,13 @@ public sealed partial class OpenGlPreviewBackend
         _shadowTarget = null;
         _shadowTargetCascadeNear?.Dispose();
         _shadowTargetCascadeNear = null;
+        _shadowTargetCascadeMid?.Dispose();
+        _shadowTargetCascadeMid = null;
+        _shadowTargetsNearRes = 0;
+        _shadowTargetsMidRes = 0;
+        _shadowTargetsFarRes = 0;
+        _shadowTargetsWantCascades = false;
+        _shadowTargetsDirty = false;
         DestroyAtmosphereResources();
         DestroyImageHistogramResources();
         DestroyGodRayResources();
@@ -992,6 +999,12 @@ public sealed partial class OpenGlPreviewBackend
         _shadowProgram = null;
         _shadowTarget = null;
         _shadowTargetCascadeNear = null;
+        _shadowTargetCascadeMid = null;
+        _shadowTargetsNearRes = 0;
+        _shadowTargetsMidRes = 0;
+        _shadowTargetsFarRes = 0;
+        _shadowTargetsWantCascades = false;
+        _shadowTargetsDirty = false;
         _shaderCtx = null;
         _shaderToolchainPlan = null;
         _entityBoneUbo = 0;

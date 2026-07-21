@@ -117,6 +117,18 @@ public sealed class PreviewVolumeInjectShaderEsTests
     }
 
     [Fact]
+    public void VolumeInject_SkipsShadowGateWhenMediumDensityIsEmpty()
+    {
+        var adapted = ResolveAndAdapt("genesis_volume_inject.frag", useOpenGlEs: false);
+        Assert.Contains("if (mediumRho > 1e-4)", adapted, StringComparison.Ordinal);
+        Assert.Contains("shadowGate = grShadowGateCascaded", adapted, StringComparison.Ordinal);
+        var densityGate = adapted.IndexOf("if (mediumRho > 1e-4)", StringComparison.Ordinal);
+        var gateAssign = adapted.IndexOf("shadowGate = grShadowGateCascaded", StringComparison.Ordinal);
+        Assert.True(densityGate >= 0 && gateAssign > densityGate,
+            "cascade shadow gate must be behind empty-density early-out");
+    }
+
+    [Fact]
     public void GenesisClouds_DefinesDensityFunctionsBeforeUse()
     {
         // Regression: the flattened TU once referenced vcCloudDensityRaw from the light-march helper
