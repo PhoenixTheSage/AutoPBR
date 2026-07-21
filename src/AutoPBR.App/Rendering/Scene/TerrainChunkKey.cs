@@ -1,5 +1,7 @@
 using System.Numerics;
 
+using AutoPBR.Preview;
+
 namespace AutoPBR.App.Rendering.Scene;
 
 public readonly record struct TerrainChunkKey(int X, int Z)
@@ -39,6 +41,13 @@ public sealed class PreviewTerrainChunkMesh
     public required TerrainChunkLodKind Lod { get; init; }
     public required float[] InterleavedVertices { get; init; }
     public required uint[] Indices { get; init; }
+
+    /// <summary>
+    /// Contiguous index ranges by terrain grass material slot. Empty means draw the full index buffer
+    /// with material slot 0 (BuiltIn / LOD).
+    /// </summary>
+    public PreviewDrawBatch[] DrawBatches { get; init; } = [];
+
     public Vector3 BoundsCenter { get; init; }
     public float BoundsRadius { get; init; }
     public int MinRelativeHeight { get; init; }

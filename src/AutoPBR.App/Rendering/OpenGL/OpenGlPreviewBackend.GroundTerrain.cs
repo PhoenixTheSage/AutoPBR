@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Threading.Tasks;
 
+using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.Scene;
 using AutoPBR.Preview;
 
@@ -15,10 +16,20 @@ public sealed partial class OpenGlPreviewBackend
         public required TerrainChunkKey Key { get; init; }
         public required TerrainChunkLodKind Lod { get; set; }
         public required GlMeshBuffer Mesh { get; init; }
+        public PreviewDrawBatch[] DrawBatches { get; set; } = [];
         public Vector3 BoundsCenter { get; set; }
         public float BoundsRadius { get; set; }
         public int MinRelativeHeight { get; set; }
         public int MaxRelativeHeight { get; set; }
+    }
+
+    private void ApplyTerrainGrassBakeSettings(PreviewTerrainGrassBakeSettings settings)
+    {
+        EnsureTerrainStreamer();
+        _terrainStreamer!.GrassBakeSettings = settings;
+        DisposeTerrainGpuChunks();
+        _terrainStreamer.InvalidateAll();
+        _terrainStreamingNeedsFrames = true;
     }
 
     private readonly List<TerrainChunkDrawCull.Candidate> _terrainDrawCandidates = new(256);
@@ -152,6 +163,7 @@ public sealed partial class OpenGlPreviewBackend
         {
             existing.Mesh.Upload(cpu.InterleavedVertices, cpu.Indices);
             existing.Lod = cpu.Lod;
+            existing.DrawBatches = cpu.DrawBatches;
             existing.BoundsCenter = cpu.BoundsCenter;
             existing.BoundsRadius = cpu.BoundsRadius;
             existing.MinRelativeHeight = cpu.MinRelativeHeight;
@@ -167,6 +179,7 @@ public sealed partial class OpenGlPreviewBackend
             Key = cpu.Key,
             Lod = cpu.Lod,
             Mesh = mesh,
+            DrawBatches = cpu.DrawBatches,
             BoundsCenter = cpu.BoundsCenter,
             BoundsRadius = cpu.BoundsRadius,
             MinRelativeHeight = cpu.MinRelativeHeight,
@@ -261,7 +274,8 @@ public sealed partial class OpenGlPreviewBackend
             _terrainDrawSelected,
             patches,
             enableParallaxSetting,
-            setParallaxEnabled);
+            setParallaxEnabled,
+            shadowPass: false);
     }
 
     private void CollectTerrainDrawCandidates(
@@ -409,19 +423,23 @@ public sealed partial class OpenGlPreviewBackend
             selected,
             patches: false,
             enableParallaxSetting: false,
-            setParallaxEnabled: static _ => { });
+            setParallaxEnabled: static _ => { },
+            shadowPass: true);
     }
 
-    private static void DrawTerrainCandidates(
+    private void DrawTerrainCandidates(
         List<TerrainChunkDrawCull.Candidate> candidates,
         List<TerrainGpuChunk> scratch,
         List<int> selected,
         bool patches,
         bool enableParallaxSetting,
-        Action<bool> setParallaxEnabled)
+        Action<bool> setParallaxEnabled,
+        bool shadowPass)
     {
         var lastPom = !enableParallaxSetting;
         GlMeshBuffer? lastMesh = null;
+        var lastMaterial = int.MinValue;
+        var multiSlot = _grassGroundSlots.Length > 1;
         foreach (var idx in selected)
         {
             var candidate = candidates[idx];
@@ -433,7 +451,37 @@ public sealed partial class OpenGlPreviewBackend
                 lastPom = pom;
             }
 
-            chunk.Mesh.Draw(patches, keepBound: true);
+            var batches = chunk.DrawBatches;
+            if (batches.Length == 0 || !multiSlot)
+            {
+                if (multiSlot && lastMaterial != 0)
+                {
+                    BindGroundSlotForDraw(0, shadowPass);
+                    lastMaterial = 0;
+                }
+
+                chunk.Mesh.Draw(patches, keepBound: true);
+            }
+            else
+            {
+                chunk.Mesh.BindVertexArray();
+                foreach (var batch in batches)
+                {
+                    if (batch.IndexCount <= 0)
+                    {
+                        continue;
+                    }
+
+                    if (batch.MaterialIndex != lastMaterial)
+                    {
+                        BindGroundSlotForDraw(batch.MaterialIndex, shadowPass);
+                        lastMaterial = batch.MaterialIndex;
+                    }
+
+                    chunk.Mesh.DrawRange(batch.FirstIndex, batch.IndexCount, patches, keepBound: true);
+                }
+            }
+
             if (lastMesh is not null && !ReferenceEquals(lastMesh, chunk.Mesh))
             {
                 lastMesh.ClearBoundTracking();
@@ -448,5 +496,72 @@ public sealed partial class OpenGlPreviewBackend
         {
             setParallaxEnabled(enableParallaxSetting);
         }
+
+        // Restore opaque ground alpha after overlay cutout batches.
+        if (multiSlot)
+        {
+            SetGroundAlphaMode(cutout: false, shadowPass);
+        }
+    }
+
+    private void BindGroundSlotForDraw(int materialIndex, bool shadowPass)
+    {
+        if ((uint)materialIndex >= (uint)_grassGroundSlots.Length)
+        {
+            materialIndex = 0;
+        }
+
+        var slot = _grassGroundSlots[materialIndex];
+        if (shadowPass)
+        {
+            if (_shadowProgram is not null && slot.Albedo is not null)
+            {
+                var su = _shadowUniformLocs;
+                slot.Albedo.Bind(0);
+                SetIntOnProgramLoc(_shadowProgram, su.Albedo, 0);
+                SetGroundAlphaMode(slot.Cutout, shadowPass: true);
+            }
+
+            return;
+        }
+
+        if (_program is null)
+        {
+            return;
+        }
+
+        var u = _mainUniformLocs;
+        BindGroundGpuSlot(slot);
+        SetIntLoc(u.Albedo, 0);
+        SetIntLoc(u.Normal, 1);
+        SetIntLoc(u.Specular, 2);
+        SetIntLoc(u.Height, 3);
+        SetIntLoc(u.HasNormal, slot.HasNormal ? 1 : 0);
+        SetIntLoc(u.HasSpecular, slot.HasSpecular ? 1 : 0);
+        SetIntLoc(u.HasHeight, slot.HasHeight ? 1 : 0);
+        SetVec2Loc(u.ParallaxHeightTexSize, new Vector2(slot.Width, slot.TexHeight));
+        SetGroundAlphaMode(slot.Cutout, shadowPass: false);
+    }
+
+    private void SetGroundAlphaMode(bool cutout, bool shadowPass)
+    {
+        if (shadowPass)
+        {
+            if (_shadowProgram is null)
+            {
+                return;
+            }
+
+            var su = _shadowUniformLocs;
+            SetIntOnProgramLoc(_shadowProgram, su.EntityAlphaMode, cutout ? (int)PreviewEntityAlphaMode.Cutout : 0);
+            return;
+        }
+
+        if (_program is null)
+        {
+            return;
+        }
+
+        SetIntLoc(_mainUniformLocs.EntityAlphaMode, cutout ? (int)PreviewEntityAlphaMode.Cutout : 0);
     }
 }

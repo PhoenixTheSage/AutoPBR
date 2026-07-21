@@ -67,10 +67,15 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private GlTexture2D? _neutralHeight;
     private bool _grassGroundReady;
     private PreviewMaterial? _grassGroundMaterial;
+    private PreviewMaterial[]? _grassGroundSlotMaterials;
+    private bool _grassGroundOverlayCutout = true;
     private bool _grassGroundMaterialDirty = true;
     private bool _grassGroundHasNormal;
     private bool _grassGroundHasSpecular;
     private bool _grassGroundHasHeight;
+    private GroundGpuSlot[] _grassGroundSlots = [];
+    private PreviewTerrainGrassBakeSettings _terrainGrassBakeSettings = PreviewTerrainGrassBakeSettings.BuiltIn;
+    private bool _terrainGrassBakeSettingsDirty;
     private GlLineShaderProgram? _lineProgram;
     private uint _gridVao;
     private uint _gridVbo;
@@ -466,8 +471,72 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
         lock (_sync)
         {
             _grassGroundMaterial = material;
+            _grassGroundSlotMaterials = material is null ? null : [material];
+            _grassGroundOverlayCutout = true;
             _grassGroundMaterialDirty = true;
             InvalidatePreviewTaaHistory();
+        }
+    }
+
+    public void SetGroundMaterials(PreviewMaterial[]? slotMaterials, bool overlayIsCutout = true)
+    {
+        lock (_sync)
+        {
+            if (slotMaterials is null || slotMaterials.Length == 0)
+            {
+                _grassGroundMaterial = null;
+                _grassGroundSlotMaterials = null;
+            }
+            else
+            {
+                _grassGroundSlotMaterials = slotMaterials;
+                _grassGroundMaterial = slotMaterials[0];
+            }
+
+            _grassGroundOverlayCutout = overlayIsCutout;
+            _grassGroundMaterialDirty = true;
+            InvalidatePreviewTaaHistory();
+        }
+    }
+
+    public void SetTerrainGrassBakeSettings(PreviewTerrainGrassBakeSettings settings)
+    {
+        lock (_sync)
+        {
+            if (settings.Equals(_terrainGrassBakeSettings))
+            {
+                return;
+            }
+
+            _terrainGrassBakeSettings = settings;
+            _terrainGrassBakeSettingsDirty = true;
+            InvalidatePreviewTaaHistory();
+        }
+    }
+
+    private sealed class GroundGpuSlot
+    {
+        public GlTexture2D? Albedo { get; set; }
+        public GlTexture2D? Normal { get; set; }
+        public GlTexture2D? Spec { get; set; }
+        public GlTexture2D? Height { get; set; }
+        public bool HasNormal { get; set; }
+        public bool HasSpecular { get; set; }
+        public bool HasHeight { get; set; }
+        public int Width { get; set; } = 1;
+        public int TexHeight { get; set; } = 1;
+        public bool Cutout { get; set; }
+
+        public void DisposeTextures()
+        {
+            Albedo?.Dispose();
+            Albedo = null;
+            Normal?.Dispose();
+            Normal = null;
+            Spec?.Dispose();
+            Spec = null;
+            Height?.Dispose();
+            Height = null;
         }
     }
 

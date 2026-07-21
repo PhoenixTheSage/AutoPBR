@@ -173,7 +173,7 @@ public sealed class BlockModelMergerTests
 
         zipStream.Position = 0;
         using var zipArchive = new ZipArchive(zipStream, ZipArchiveMode.Read);
-        var sources = PreviewAssetSourceFactory.Create(
+        using var sources = PreviewAssetSourceFactory.Create(
             new ZipAssetSource(zipArchive),
             install.Root,
             null);
@@ -191,6 +191,93 @@ public sealed class BlockModelMergerTests
 
         Assert.True(MinecraftInstallAssetPaths.TryResolveAssetsRoot(versionRoot, out var assetsRoot));
         Assert.EndsWith("assets", assetsRoot, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void MinecraftInstallAssetPaths_versions_folder_prefers_latest_non_snapshot_jar()
+    {
+        using var fixture = new BlockModelFixture();
+        var versionsDir = Path.Combine(fixture.Root, "versions");
+        WriteVersionJar(versionsDir, "26.1.2", type: "release", assetMarker: "old");
+        WriteVersionJar(versionsDir, "26.3-snapshot-4", type: "snapshot", assetMarker: "snap");
+        WriteVersionJar(versionsDir, "26.2", type: "release", assetMarker: "latest");
+
+        Assert.True(MinecraftInstallAssetPaths.TryResolve(versionsDir, out var location));
+        Assert.Equal(MinecraftInstallAssetsKind.ClientJar, location.Kind);
+        Assert.Contains($"{Path.DirectorySeparatorChar}26.2{Path.DirectorySeparatorChar}", location.Path, StringComparison.OrdinalIgnoreCase);
+
+        Assert.True(MinecraftInstallAssetPaths.TryResolvePreferredVersionFolder(fixture.Root, out var versionFolder));
+        Assert.Equal("26.2", Path.GetFileName(versionFolder), ignoreCase: true);
+
+        Assert.True(MinecraftInstallAssetSource.TryOpen(versionsDir, out var source, out var lifetime));
+        using (lifetime)
+        {
+            Assert.True(source!.TryReadText(
+                "assets/minecraft/models/block/stone.json",
+                out var text));
+            Assert.Contains("latest", text, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void MinecraftInstallAssetPaths_accepts_explicit_snapshot_version_folder()
+    {
+        using var fixture = new BlockModelFixture();
+        var versionsDir = Path.Combine(fixture.Root, "versions");
+        WriteVersionJar(versionsDir, "26.2", type: "release", assetMarker: "release");
+        WriteVersionJar(versionsDir, "26.3-snapshot-4", type: "snapshot", assetMarker: "snap");
+        var snapshotFolder = Path.Combine(versionsDir, "26.3-snapshot-4");
+
+        Assert.True(MinecraftInstallAssetPaths.TryResolve(snapshotFolder, out var location));
+        Assert.Equal(MinecraftInstallAssetsKind.ClientJar, location.Kind);
+        Assert.Contains("26.3-snapshot-4", location.Path, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void MinecraftInstallAssetPaths_resolves_local_dot_minecraft_versions_when_present()
+    {
+        var versionsDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            ".minecraft",
+            "versions");
+        if (!Directory.Exists(versionsDir))
+        {
+            return;
+        }
+
+        Assert.True(MinecraftInstallAssetPaths.TryResolve(versionsDir, out var location));
+        Assert.Equal(MinecraftInstallAssetsKind.ClientJar, location.Kind);
+        Assert.True(File.Exists(location.Path));
+        Assert.DoesNotContain("snapshot", location.Path, StringComparison.OrdinalIgnoreCase);
+
+        Assert.True(MinecraftInstallAssetSource.TryOpen(versionsDir, out var source, out var lifetime));
+        using (lifetime)
+        {
+            Assert.True(source!.Exists("assets/minecraft/textures/block/grass_block_top.png"));
+            Assert.True(source.Exists("assets/minecraft/models/block/stone.json"));
+            Assert.True(source.Exists("assets/minecraft/textures/colormap/grass.png"));
+        }
+    }
+
+    private static void WriteVersionJar(string versionsDir, string id, string type, string assetMarker)
+    {
+        var versionDir = Path.Combine(versionsDir, id);
+        Directory.CreateDirectory(versionDir);
+        File.WriteAllText(
+            Path.Combine(versionDir, id + ".json"),
+            $$"""{"id":"{{id}}","type":"{{type}}"}""");
+
+        var jarPath = Path.Combine(versionDir, id + ".jar");
+        using var zip = ZipFile.Open(jarPath, ZipArchiveMode.Create);
+        var entry = zip.CreateEntry("assets/minecraft/models/block/stone.json");
+        using (var writer = new StreamWriter(entry.Open(), Encoding.UTF8))
+        {
+            writer.Write($$"""{"marker":"{{assetMarker}}"}""");
+        }
+
+        var grass = zip.CreateEntry("assets/minecraft/textures/block/grass_block_top.png");
+        using var grassStream = grass.Open();
+        grassStream.WriteByte(0);
     }
 
     internal sealed class BlockModelFixture : IDisposable

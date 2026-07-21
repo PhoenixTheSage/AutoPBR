@@ -61,9 +61,10 @@ public static class PreviewTerrainMeshBaker
         var layerMax = maxH;
         int HeightAt(int x, int z) => PreviewTerrainHeightfield.GetHeight(heightCopy, x, z, halfExtent);
 
-        var verts = new List<float>(side * side * 24);
-        var indices = new List<uint>(side * side * 36);
+        var buckets = CreateMaterialBuckets();
         var batches = new List<PreviewDrawBatch>();
+        var allVerts = new List<float>(side * side * 24);
+        var allIndices = new List<uint>(side * side * 36);
 
         for (var cz0 = -halfExtent; cz0 < halfExtent; cz0 += chunkSize)
         {
@@ -71,25 +72,49 @@ public static class PreviewTerrainMeshBaker
             {
                 var cx1 = Math.Min(cx0 + chunkSize, halfExtent);
                 var cz1 = Math.Min(cz0 + chunkSize, halfExtent);
-                var indexStart = indices.Count;
+                for (var i = 0; i < buckets.Length; i++)
+                {
+                    buckets[i].Clear();
+                }
+
+                PreviewTerrainColumnSample ColumnAt(int x, int z)
+                {
+                    var h = HeightAt(x, z);
+                    return new PreviewTerrainColumnSample(
+                        h,
+                        PreviewTerrainBiomeId.Plains,
+                        PreviewTerrainBlockKind.Grass,
+                        PreviewTerrainBlockKind.Dirt,
+                        PreviewTerrainBlockKind.Stone);
+                }
 
                 EmitChunkGreedy(
                     HeightAt,
+                    ColumnAt,
                     fillDepth,
                     layerMin,
                     layerMax,
                     cx0, cx1, cz0, cz1,
                     surfaceWorldY,
                     metersPerTile,
-                    verts,
-                    indices);
+                    PreviewTerrainGrassBakeSettings.BuiltIn,
+                    buckets);
 
-                var indexCount = indices.Count - indexStart;
-                if (indexCount <= 0)
+                if (!TryConcatMaterialBuckets(buckets, out var chunkVerts, out var chunkIndices, out _) ||
+                    chunkIndices.Length == 0)
                 {
                     continue;
                 }
 
+                var indexStart = allIndices.Count;
+                var baseVertex = (uint)(allVerts.Count / PreviewMesh.FloatsPerVertex);
+                allVerts.AddRange(chunkVerts);
+                foreach (var idx in chunkIndices)
+                {
+                    allIndices.Add(baseVertex + idx);
+                }
+
+                var indexCount = allIndices.Count - indexStart;
                 var centerX = (cx0 + cx1) * 0.5f;
                 var centerZ = (cz0 + cz1) * 0.5f;
                 var padXZ = Math.Max(Math.Abs(centerX), Math.Abs(centerZ));
@@ -117,8 +142,8 @@ public static class PreviewTerrainMeshBaker
             Mesh = new PreviewMesh
             {
                 Name = name,
-                InterleavedVertices = verts.ToArray(),
-                Indices = indices.ToArray()
+                InterleavedVertices = allVerts.ToArray(),
+                Indices = allIndices.ToArray()
             },
             ChunkBatches = batches.ToArray(),
             MinRelativeHeight = minH,
@@ -132,6 +157,7 @@ public static class PreviewTerrainMeshBaker
     /// </summary>
     public static PreviewTerrainChunkMesh? BakeFullChunk(
         TerrainChunkKey key,
+        PreviewTerrainGrassBakeSettings grassSettings = default,
         int chunkSize = PreviewStageConstants.TerrainChunkSize,
         int fillDepth = PreviewStageConstants.TerrainFillDepth,
         float metersPerTile = PreviewStageConstants.MetersPerGrassTile,
@@ -141,6 +167,13 @@ public static class PreviewTerrainMeshBaker
         int maxRelief = PreviewStageConstants.TerrainMaxReliefBlocks,
         int seed = PreviewStageConstants.TerrainHeightSeed)
     {
+        if (grassSettings.Mode == default &&
+            !grassSettings.BetterGrassEnabled &&
+            !grassSettings.EmitOverlay)
+        {
+            grassSettings = PreviewTerrainGrassBakeSettings.BuiltIn;
+        }
+
         chunkSize = Math.Max(1, chunkSize);
         fillDepth = Math.Max(1, fillDepth);
         if (metersPerTile <= 1e-6f)
@@ -153,10 +186,10 @@ public static class PreviewTerrainMeshBaker
         var cx1 = cx0 + chunkSize;
         var cz1 = cz0 + chunkSize;
 
-        // Cache halo heights once (Lod already does this). Live SampleColumn inside IsSolid
-        // was tens of thousands of FBM evals per Full chunk.
+        // Cache halo column samples once. Live biome sampling inside IsSolid would be extremely hot.
+        _ = maxRelief;
         var side = chunkSize + 2;
-        var board = new int[side * side];
+        var board = new PreviewTerrainColumnSample[side * side];
         var ox = cx0 - 1;
         var oz = cz0 - 1;
         var minH = int.MaxValue;
@@ -165,13 +198,13 @@ public static class PreviewTerrainMeshBaker
         {
             for (var lx = 0; lx < side; lx++)
             {
-                var h = PreviewTerrainHeightfield.SampleColumn(
-                    ox + lx, oz + lz, flatPadHalfExtent, transitionBlocks, maxRelief, seed);
-                board[lz * side + lx] = h;
+                var sample = PreviewTerrainBiomeSampler.Sample(
+                    ox + lx, oz + lz, flatPadHalfExtent, transitionBlocks, seed);
+                board[lz * side + lx] = sample;
                 if (lx > 0 && lx < side - 1 && lz > 0 && lz < side - 1)
                 {
-                    minH = Math.Min(minH, h);
-                    maxH = Math.Max(maxH, h);
+                    minH = Math.Min(minH, sample.Height);
+                    maxH = Math.Max(maxH, sample.Height);
                 }
             }
         }
@@ -183,33 +216,36 @@ public static class PreviewTerrainMeshBaker
 
         var layerMin = minH - fillDepth + 1;
         var layerMax = maxH;
-        int HeightAt(int x, int z)
+        PreviewTerrainColumnSample ColumnAt(int x, int z)
         {
             var lx = x - ox;
             var lz = z - oz;
             if ((uint)lx >= (uint)side || (uint)lz >= (uint)side)
             {
-                return PreviewTerrainHeightfield.SampleColumn(
-                    x, z, flatPadHalfExtent, transitionBlocks, maxRelief, seed);
+                return PreviewTerrainBiomeSampler.Sample(
+                    x, z, flatPadHalfExtent, transitionBlocks, seed);
             }
 
             return board[lz * side + lx];
         }
 
-        var verts = new List<float>(chunkSize * chunkSize * 48);
-        var indices = new List<uint>(chunkSize * chunkSize * 72);
+        int HeightAt(int x, int z) => ColumnAt(x, z).Height;
+
+        var buckets = CreateMaterialBuckets();
         EmitChunkGreedy(
             HeightAt,
+            ColumnAt,
             fillDepth,
             layerMin,
             layerMax,
             cx0, cx1, cz0, cz1,
             surfaceWorldY,
             metersPerTile,
-            verts,
-            indices);
+            grassSettings,
+            buckets);
 
-        if (indices.Count == 0)
+        if (!TryConcatMaterialBuckets(buckets, out var verts, out var indices, out var batches) ||
+            indices.Length == 0)
         {
             return null;
         }
@@ -223,8 +259,9 @@ public static class PreviewTerrainMeshBaker
         {
             Key = key,
             Lod = TerrainChunkLodKind.Full,
-            InterleavedVertices = verts.ToArray(),
-            Indices = indices.ToArray(),
+            InterleavedVertices = verts,
+            Indices = indices,
+            DrawBatches = batches,
             BoundsCenter = center,
             BoundsRadius = Vector3.Distance(center, boundsMax),
             MinRelativeHeight = minH,
@@ -232,8 +269,75 @@ public static class PreviewTerrainMeshBaker
         };
     }
 
+    private static List<float>[] CreateMaterialBuckets()
+    {
+        var buckets = new List<float>[PreviewTerrainGrassSlots.MaxCount];
+        for (var i = 0; i < buckets.Length; i++)
+        {
+            buckets[i] = new List<float>(256);
+        }
+
+        return buckets;
+    }
+
+    private static bool TryConcatMaterialBuckets(
+        List<float>[] buckets,
+        out float[] verts,
+        out uint[] indices,
+        out PreviewDrawBatch[] batches)
+    {
+        var totalFloats = 0;
+        for (var i = 0; i < buckets.Length; i++)
+        {
+            totalFloats += buckets[i].Count;
+        }
+
+        if (totalFloats == 0)
+        {
+            verts = [];
+            indices = [];
+            batches = [];
+            return false;
+        }
+
+        var vertList = new List<float>(totalFloats);
+        var indexList = new List<uint>(totalFloats / PreviewMesh.FloatsPerVertex * 6 / 4);
+        var batchList = new List<PreviewDrawBatch>(PreviewTerrainGrassSlots.MaxCount);
+        for (var slot = 0; slot < buckets.Length; slot++)
+        {
+            var bucket = buckets[slot];
+            if (bucket.Count == 0)
+            {
+                continue;
+            }
+
+            var vertexCount = bucket.Count / PreviewMesh.FloatsPerVertex;
+            var indexStart = indexList.Count;
+            var baseVertex = (uint)(vertList.Count / PreviewMesh.FloatsPerVertex);
+            vertList.AddRange(bucket);
+            for (var v = 0; v < vertexCount; v += 4)
+            {
+                var b = baseVertex + (uint)v;
+                indexList.Add(b);
+                indexList.Add(b + 1);
+                indexList.Add(b + 2);
+                indexList.Add(b);
+                indexList.Add(b + 2);
+                indexList.Add(b + 3);
+            }
+
+            batchList.Add(new PreviewDrawBatch(indexStart, indexList.Count - indexStart, slot));
+        }
+
+        verts = vertList.ToArray();
+        indices = indexList.ToArray();
+        batches = batchList.ToArray();
+        return true;
+    }
+
     private static void EmitChunkGreedy(
         Func<int, int, int> heightAt,
+        Func<int, int, PreviewTerrainColumnSample> columnAt,
         int fillDepth,
         int layerMin,
         int layerMax,
@@ -243,8 +347,8 @@ public static class PreviewTerrainMeshBaker
         int cz1,
         float surfaceWorldY,
         float metersPerTile,
-        List<float> verts,
-        List<uint> indices)
+        PreviewTerrainGrassBakeSettings grassSettings,
+        List<float>[] buckets)
     {
         var sizeX = cx1 - cx0;
         var sizeZ = cz1 - cz0;
@@ -254,16 +358,17 @@ public static class PreviewTerrainMeshBaker
             return;
         }
 
-        EmitAxisSlices(heightAt, fillDepth, layerMin, layerMax, cx0, cx1, cz0, cz1,
-            surfaceWorldY, metersPerTile, axis: 1, verts, indices);
-        EmitAxisSlices(heightAt, fillDepth, layerMin, layerMax, cx0, cx1, cz0, cz1,
-            surfaceWorldY, metersPerTile, axis: 0, verts, indices);
-        EmitAxisSlices(heightAt, fillDepth, layerMin, layerMax, cx0, cx1, cz0, cz1,
-            surfaceWorldY, metersPerTile, axis: 2, verts, indices);
+        EmitAxisSlices(heightAt, columnAt, fillDepth, layerMin, layerMax, cx0, cx1, cz0, cz1,
+            surfaceWorldY, metersPerTile, axis: 1, grassSettings, buckets);
+        EmitAxisSlices(heightAt, columnAt, fillDepth, layerMin, layerMax, cx0, cx1, cz0, cz1,
+            surfaceWorldY, metersPerTile, axis: 0, grassSettings, buckets);
+        EmitAxisSlices(heightAt, columnAt, fillDepth, layerMin, layerMax, cx0, cx1, cz0, cz1,
+            surfaceWorldY, metersPerTile, axis: 2, grassSettings, buckets);
     }
 
     private static void EmitAxisSlices(
         Func<int, int, int> heightAt,
+        Func<int, int, PreviewTerrainColumnSample> columnAt,
         int fillDepth,
         int layerMin,
         int layerMax,
@@ -274,8 +379,8 @@ public static class PreviewTerrainMeshBaker
         float surfaceWorldY,
         float metersPerTile,
         int axis,
-        List<float> verts,
-        List<uint> indices)
+        PreviewTerrainGrassBakeSettings grassSettings,
+        List<float>[] buckets)
     {
         int uSize, vSize, wMin, wMax;
         if (axis == 0)
@@ -287,8 +392,8 @@ public static class PreviewTerrainMeshBaker
         }
         else if (axis == 1)
         {
-            EmitYFaces(heightAt, fillDepth, layerMin, layerMax, cx0, cx1, cz0, cz1,
-                surfaceWorldY, metersPerTile, verts, indices);
+            EmitYFaces(heightAt, columnAt, fillDepth, layerMin, layerMax, cx0, cx1, cz0, cz1,
+                surfaceWorldY, metersPerTile, grassSettings, buckets);
             return;
         }
         else
@@ -345,7 +450,9 @@ public static class PreviewTerrainMeshBaker
                             continue;
                         }
 
-                        mask[v * uSize + u] = 1;
+                        var mat = ResolveHorizontalFaceMaterial(
+                            columnAt, bx, by, bz, nx, nz, grassSettings);
+                        mask[v * uSize + u] = (byte)(mat + 1);
                         any = true;
                     }
                 }
@@ -356,13 +463,102 @@ public static class PreviewTerrainMeshBaker
                 }
 
                 GreedyEmitMask(mask, uSize, vSize, axis, positive, w, cx0, cz0, layerMin,
-                    surfaceWorldY, metersPerTile, verts, indices);
+                    surfaceWorldY, metersPerTile, grassSettings, buckets);
             }
         }
     }
 
+    /// <summary>
+    /// Horizontal face material from biome column stack + cliff Δh rules.
+    /// Grass BetterGrass/overlay still apply on grass surfaces when BlockModelFaces is active.
+    /// </summary>
+    internal static int ResolveHorizontalFaceMaterial(
+        Func<int, int, PreviewTerrainColumnSample> columnAt,
+        int bx,
+        int by,
+        int bz,
+        int neighborX,
+        int neighborZ,
+        PreviewTerrainGrassBakeSettings grassSettings)
+    {
+        var col = columnAt(bx, bz);
+        var columnH = col.Height;
+        if (by != columnH)
+        {
+            var depthFromSurface = columnH - by;
+            return BlockKindToSlot(depthFromSurface <= 1 ? col.Subsurface : col.Deep);
+        }
+
+        var neighbor = columnAt(neighborX, neighborZ);
+        var delta = columnH - neighbor.Height;
+
+        if (col.Biome == PreviewTerrainBiomeId.Mountains &&
+            delta >= PreviewStageConstants.TerrainCliffDeltaBlocks)
+        {
+            return delta >= PreviewStageConstants.TerrainCliffDeltaBlocks + 2
+                ? PreviewTerrainGrassSlots.Gravel
+                : PreviewTerrainGrassSlots.Stone;
+        }
+
+        return col.Surface switch
+        {
+            PreviewTerrainBlockKind.Sand => PreviewTerrainGrassSlots.Sand,
+            PreviewTerrainBlockKind.Stone => PreviewTerrainGrassSlots.Stone,
+            PreviewTerrainBlockKind.Gravel => PreviewTerrainGrassSlots.Gravel,
+            PreviewTerrainBlockKind.Dirt => PreviewTerrainGrassSlots.Dirt,
+            _ => ResolveGrassSurfaceSide(columnH, neighbor.Height, grassSettings),
+        };
+    }
+
+    /// <summary>Legacy height-only overload for existing tests.</summary>
+    internal static int ResolveHorizontalFaceMaterial(
+        Func<int, int, int> heightAt,
+        int bx,
+        int by,
+        int bz,
+        int neighborX,
+        int neighborZ,
+        PreviewTerrainGrassBakeSettings grassSettings) =>
+        ResolveHorizontalFaceMaterial(
+            (x, z) => new PreviewTerrainColumnSample(
+                heightAt(x, z),
+                PreviewTerrainBiomeId.Plains,
+                PreviewTerrainBlockKind.Grass,
+                PreviewTerrainBlockKind.Dirt,
+                PreviewTerrainBlockKind.Stone),
+            bx, by, bz, neighborX, neighborZ, grassSettings);
+
+    private static int ResolveGrassSurfaceSide(
+        int columnH,
+        int neighborH,
+        PreviewTerrainGrassBakeSettings grassSettings)
+    {
+        if (grassSettings.Mode != PreviewTerrainGrassMode.BlockModelFaces)
+        {
+            return PreviewTerrainGrassSlots.Top;
+        }
+
+        if (grassSettings.BetterGrassEnabled && neighborH < columnH)
+        {
+            return PreviewTerrainGrassSlots.Top;
+        }
+
+        return PreviewTerrainGrassSlots.Side;
+    }
+
+    internal static int BlockKindToSlot(PreviewTerrainBlockKind kind) =>
+        kind switch
+        {
+            PreviewTerrainBlockKind.Sand => PreviewTerrainGrassSlots.Sand,
+            PreviewTerrainBlockKind.Stone => PreviewTerrainGrassSlots.Stone,
+            PreviewTerrainBlockKind.Gravel => PreviewTerrainGrassSlots.Gravel,
+            PreviewTerrainBlockKind.Dirt => PreviewTerrainGrassSlots.Dirt,
+            _ => PreviewTerrainGrassSlots.Top,
+        };
+
     private static void EmitYFaces(
         Func<int, int, int> heightAt,
+        Func<int, int, PreviewTerrainColumnSample> columnAt,
         int fillDepth,
         int layerMin,
         int layerMax,
@@ -372,8 +568,8 @@ public static class PreviewTerrainMeshBaker
         int cz1,
         float surfaceWorldY,
         float metersPerTile,
-        List<float> verts,
-        List<uint> indices)
+        PreviewTerrainGrassBakeSettings grassSettings,
+        List<float>[] buckets)
     {
         var uSize = cx1 - cx0;
         var vSize = cz1 - cz0;
@@ -402,7 +598,8 @@ public static class PreviewTerrainMeshBaker
                             continue;
                         }
 
-                        mask[v * uSize + u] = 1;
+                        var mat = ResolveYFaceMaterial(positive, columnAt(bx, bz), grassSettings);
+                        mask[v * uSize + u] = (byte)(mat + 1);
                         any = true;
                     }
                 }
@@ -413,10 +610,43 @@ public static class PreviewTerrainMeshBaker
                 }
 
                 GreedyEmitMask(mask, uSize, vSize, axis: 1, positive, w: by, cx0, cz0, layerMin,
-                    surfaceWorldY, metersPerTile, verts, indices);
+                    surfaceWorldY, metersPerTile, grassSettings, buckets);
             }
         }
     }
+
+    internal static int ResolveYFaceMaterial(
+        bool positiveUp,
+        PreviewTerrainColumnSample column,
+        PreviewTerrainGrassBakeSettings grassSettings)
+    {
+        if (positiveUp)
+        {
+            if (grassSettings.Mode != PreviewTerrainGrassMode.BlockModelFaces &&
+                column.Surface == PreviewTerrainBlockKind.Grass)
+            {
+                return PreviewTerrainGrassSlots.Top;
+            }
+
+            return BlockKindToSlot(column.Surface);
+        }
+
+        return column.Biome is PreviewTerrainBiomeId.Mountains or PreviewTerrainBiomeId.Desert
+            ? PreviewTerrainGrassSlots.Stone
+            : PreviewTerrainGrassSlots.Dirt;
+    }
+
+    /// <summary>Legacy overload for existing tests (Plains underside/top).</summary>
+    internal static int ResolveYFaceMaterial(bool positiveUp, PreviewTerrainGrassBakeSettings grassSettings) =>
+        ResolveYFaceMaterial(
+            positiveUp,
+            new PreviewTerrainColumnSample(
+                0,
+                PreviewTerrainBiomeId.Plains,
+                PreviewTerrainBlockKind.Grass,
+                PreviewTerrainBlockKind.Dirt,
+                PreviewTerrainBlockKind.Stone),
+            grassSettings);
 
     private static void GreedyEmitMask(
         byte[] mask,
@@ -430,21 +660,22 @@ public static class PreviewTerrainMeshBaker
         int layerMin,
         float surfaceWorldY,
         float metersPerTile,
-        List<float> verts,
-        List<uint> indices)
+        PreviewTerrainGrassBakeSettings grassSettings,
+        List<float>[] buckets)
     {
         for (var v = 0; v < vSize; v++)
         {
             for (var u = 0; u < uSize;)
             {
-                if (mask[v * uSize + u] == 0)
+                var cell = mask[v * uSize + u];
+                if (cell == 0)
                 {
                     u++;
                     continue;
                 }
 
                 var width = 1;
-                while (u + width < uSize && mask[v * uSize + u + width] != 0)
+                while (u + width < uSize && mask[v * uSize + u + width] == cell)
                 {
                     width++;
                 }
@@ -455,7 +686,7 @@ public static class PreviewTerrainMeshBaker
                 {
                     for (var k = 0; k < width; k++)
                     {
-                        if (mask[(v + height) * uSize + u + k] == 0)
+                        if (mask[(v + height) * uSize + u + k] != cell)
                         {
                             done = true;
                             break;
@@ -476,8 +707,19 @@ public static class PreviewTerrainMeshBaker
                     }
                 }
 
+                var material = cell - 1;
                 EmitMergedQuad(axis, positive, w, u, v, width, height, cx0, cz0, layerMin,
-                    surfaceWorldY, metersPerTile, verts, indices);
+                    surfaceWorldY, metersPerTile, buckets[material]);
+
+                // Vanilla grass side overlay shell (skipped when BetterGrass replaced the side with Top).
+                if (grassSettings.EmitOverlay &&
+                    material == PreviewTerrainGrassSlots.Side &&
+                    axis != 1)
+                {
+                    EmitMergedQuad(axis, positive, w, u, v, width, height, cx0, cz0, layerMin,
+                        surfaceWorldY, metersPerTile, buckets[PreviewTerrainGrassSlots.Overlay]);
+                }
+
                 u += width;
             }
         }
@@ -496,8 +738,7 @@ public static class PreviewTerrainMeshBaker
         int layerMin,
         float surfaceWorldY,
         float metersPerTile,
-        List<float> verts,
-        List<uint> indices)
+        List<float> verts)
     {
         Span<Vector3> corners = stackalloc Vector3[4];
         Span<Vector2> uvs = stackalloc Vector2[4];
@@ -600,7 +841,7 @@ public static class PreviewTerrainMeshBaker
             }
         }
 
-        AddSolidFace(n, tFallback, wSign, corners, uvs, verts, indices);
+        AddSolidFace(n, tFallback, wSign, corners, uvs, verts);
     }
 
     internal static bool IsSolid(
@@ -639,8 +880,7 @@ public static class PreviewTerrainMeshBaker
         float fallbackWSign,
         ReadOnlySpan<Vector3> cornersIn,
         ReadOnlySpan<Vector2> uvsIn,
-        List<float> verts,
-        List<uint> indices)
+        List<float> verts)
     {
         Span<Vector3> corners = stackalloc Vector3[4];
         Span<Vector2> uvs = stackalloc Vector2[4];
@@ -655,7 +895,6 @@ public static class PreviewTerrainMeshBaker
         }
 
         PreviewTangentBasis.Derive(corners, uvs, normal, fallbackTangent, fallbackWSign, out var tangent, out var wSign);
-        var baseIndex = (uint)(verts.Count / PreviewMesh.FloatsPerVertex);
         for (var i = 0; i < 4; i++)
         {
             var p = corners[i];
@@ -673,13 +912,6 @@ public static class PreviewTerrainMeshBaker
             verts.Add(tangent.Z);
             verts.Add(wSign);
         }
-
-        indices.Add(baseIndex);
-        indices.Add(baseIndex + 1);
-        indices.Add(baseIndex + 2);
-        indices.Add(baseIndex);
-        indices.Add(baseIndex + 2);
-        indices.Add(baseIndex + 3);
     }
 }
 

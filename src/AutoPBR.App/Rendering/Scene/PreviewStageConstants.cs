@@ -30,14 +30,31 @@ public static class PreviewStageConstants
     /// <summary>Chunk size in columns for streaming / LOD batches.</summary>
     public const int TerrainChunkSize = 16;
 
-    /// <summary>Max |relative| hill height in blocks outside the flat pad.</summary>
+    /// <summary>Max |relative| hill height in blocks outside the flat pad (Plains default).</summary>
     public const int TerrainMaxReliefBlocks = 6;
+
+    /// <summary>Desert dune max |relative| height.</summary>
+    public const int TerrainDesertMaxReliefBlocks = 10;
+
+    /// <summary>Mountain max |relative| height (allows multi-block cliff steps).</summary>
+    public const int TerrainMountainMaxReliefBlocks = 20;
+
+    /// <summary>Beach max |relative| height (kept low/coastal).</summary>
+    public const int TerrainBeachMaxReliefBlocks = 2;
+
+    /// <summary>
+    /// Neighbor column |Δh| at or above this uses stone/gravel cliff faces in mountain biomes.
+    /// </summary>
+    public const int TerrainCliffDeltaBlocks = 2;
 
     /// <summary>How many solid layers to keep below each column surface (thickness).</summary>
     public const int TerrainFillDepth = 3;
 
     /// <summary>Deterministic heightfield seed.</summary>
     public const int TerrainHeightSeed = 0x41504252; // 'APBR'
+
+    /// <summary>Salt XOR'd into climate noise sampling (biomes).</summary>
+    public const int TerrainClimateSeedSalt = unchecked((int)0xC11A7E00);
 
     /// <summary>Full-detail chunks whose center is within this camera XZ radius keep POM at full strength.</summary>
     public const float TerrainNearPomRadius = 22f;

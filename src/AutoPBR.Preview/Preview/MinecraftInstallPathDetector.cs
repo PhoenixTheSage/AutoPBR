@@ -2,28 +2,20 @@ namespace AutoPBR.Preview;
 
 public static class MinecraftInstallPathDetector
 {
+    /// <summary>
+    /// Auto-detects a Minecraft version folder (latest non-snapshot with a usable client jar)
+    /// or an extracted assets root under common <c>.minecraft</c> locations.
+    /// </summary>
     public static string? TryDetectDefaultAssetsRoot()
     {
         foreach (var gameRoot in EnumerateCandidateGameRoots())
         {
-            var versionsDir = Path.Combine(gameRoot, "versions");
-            if (!Directory.Exists(versionsDir))
+            if (MinecraftInstallAssetPaths.TryResolvePreferredVersionFolder(gameRoot, out var versionFolder))
             {
-                continue;
+                return versionFolder;
             }
 
-            var versionFolder = Directory.EnumerateDirectories(versionsDir)
-                .Select(Path.GetFileName)
-                .Where(n => !string.IsNullOrWhiteSpace(n))
-                .OrderByDescending(n => n, StringComparer.OrdinalIgnoreCase)
-                .FirstOrDefault();
-            if (versionFolder is null)
-            {
-                continue;
-            }
-
-            var versionRoot = Path.Combine(versionsDir, versionFolder);
-            if (MinecraftInstallAssetPaths.TryResolveAssetsRoot(versionRoot, out var assetsRoot))
+            if (MinecraftInstallAssetPaths.TryResolveAssetsRoot(gameRoot, out var assetsRoot))
             {
                 return assetsRoot;
             }

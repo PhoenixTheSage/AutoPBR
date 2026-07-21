@@ -995,7 +995,7 @@
     <value>Minecraft assets</value>
   </data>
   <data name="MinecraftAssetsFolderTooltip" xml:space="preserve">
-    <value>Optional path to a Minecraft version folder or extracted assets/ root. Used to resolve vanilla block models for texture-only pack preview.</value>
+    <value>Optional path to a Minecraft versions folder, version folder, client jar, or extracted assets/ root. When pointing at versions/, uses the latest non-snapshot client jar for vanilla block models and terrain preview.</value>
   </data>
   <data name="MinecraftAssetsFolderWatermark" xml:space="preserve">
     <value>Auto-detected from .minecraft when empty</value>

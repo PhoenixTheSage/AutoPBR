@@ -44,13 +44,19 @@ public static class PreviewGroundMapsResolver
             }
         }
 
-        if (MinecraftInstallAssetPaths.TryResolveAssetsRoot(minecraftAssetsDirectory, out var assetsRoot))
+        if (MinecraftInstallAssetSource.TryOpen(minecraftAssetsDirectory, out var installSource, out var installLifetime))
         {
-            var installDiffuse = Path.Combine(assetsRoot, "minecraft", "textures", "block", "grass_block_top.png");
-            if (File.Exists(installDiffuse))
+            try
             {
-                return await TryResolveFromDiffuseFileAsync(installDiffuse, options, cancellationToken)
-                    .ConfigureAwait(false);
+                if (installSource!.TryReadBytes(GrassBlockTopArchivePath, out var bytes) && bytes.Length > 0)
+                {
+                    return await TryResolveFromDiffuseBytesAsync(bytes, GrassBlockTopArchivePath, options, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                installLifetime?.Dispose();
             }
         }
 
@@ -58,12 +64,37 @@ public static class PreviewGroundMapsResolver
     }
 
     /// <summary>Runs the single-texture conversion preview pipeline on a loose diffuse PNG.</summary>
+    public static Task<PreviewTextureMaps?> TryResolveFromDiffuseFileAsync(
+        string diffuseFilePath,
+        AutoPBROptions options,
+        CancellationToken cancellationToken = default) =>
+        TryResolveFromDiffuseFileAsync(diffuseFilePath, GrassBlockTopArchivePath, options, cancellationToken);
+
+    /// <summary>Runs the single-texture conversion preview pipeline on a loose diffuse PNG at a zip-relative path.</summary>
     public static async Task<PreviewTextureMaps?> TryResolveFromDiffuseFileAsync(
         string diffuseFilePath,
+        string archivePath,
         AutoPBROptions options,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(diffuseFilePath) || !File.Exists(diffuseFilePath))
+        {
+            return null;
+        }
+
+        var bytes = await File.ReadAllBytesAsync(diffuseFilePath, cancellationToken).ConfigureAwait(false);
+        return await TryResolveFromDiffuseBytesAsync(bytes, archivePath, options, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Runs the single-texture conversion preview pipeline on in-memory diffuse PNG bytes.</summary>
+    public static async Task<PreviewTextureMaps?> TryResolveFromDiffuseBytesAsync(
+        byte[] diffusePngBytes,
+        string archivePath,
+        AutoPBROptions options,
+        CancellationToken cancellationToken = default)
+    {
+        if (diffusePngBytes is null || diffusePngBytes.Length == 0 || string.IsNullOrWhiteSpace(archivePath))
         {
             return null;
         }
@@ -73,6 +104,7 @@ public static class PreviewGroundMapsResolver
             throw new InvalidOperationException("SpecularData is required (load textures_data.json first).");
         }
 
+        var targetRel = archivePath.Replace('\\', '/').TrimStart('/');
         var baseTemp = string.IsNullOrWhiteSpace(options.TempDirectory)
             ? Path.GetTempPath()
             : options.TempDirectory;
@@ -82,10 +114,10 @@ public static class PreviewGroundMapsResolver
 
         try
         {
-            var rel = GrassBlockTopArchivePath.Replace('/', Path.DirectorySeparatorChar);
+            var rel = targetRel.Replace('/', Path.DirectorySeparatorChar);
             var dest = Path.Combine(extracted, rel);
             Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-            File.Copy(diffuseFilePath, dest, overwrite: true);
+            await File.WriteAllBytesAsync(dest, diffusePngBytes, cancellationToken).ConfigureAwait(false);
 
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -99,7 +131,6 @@ public static class PreviewGroundMapsResolver
                 return null;
             }
 
-            var targetRel = GrassBlockTopArchivePath;
             TextureWorkItem target = textures[0];
             foreach (var t in textures)
             {

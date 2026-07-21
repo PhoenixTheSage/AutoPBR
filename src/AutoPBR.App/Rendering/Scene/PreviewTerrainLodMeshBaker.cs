@@ -89,12 +89,15 @@ public static class PreviewTerrainLodMeshBaker
         var boundsMin = new Vector3(cx0, minY, cz0);
         var boundsMax = new Vector3(cx1, maxY, cz1);
         var center = (boundsMin + boundsMax) * 0.5f;
+        var indexArray = indices.ToArray();
         return new PreviewTerrainChunkMesh
         {
             Key = key,
             Lod = TerrainChunkLodKind.Lod,
             InterleavedVertices = verts.ToArray(),
-            Indices = indices.ToArray(),
+            Indices = indexArray,
+            // Distant LOD stays Top-only (single material slot 0).
+            DrawBatches = [new PreviewDrawBatch(0, indexArray.Length, PreviewTerrainGrassSlots.Top)],
             BoundsCenter = center,
             BoundsRadius = Vector3.Distance(center, boundsMax),
             MinRelativeHeight = minH,

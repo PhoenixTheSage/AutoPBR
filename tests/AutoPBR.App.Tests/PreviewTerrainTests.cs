@@ -377,6 +377,86 @@ public sealed class PreviewTerrainTests
     }
 
     [Fact]
+    public void ResolveHorizontalFaceMaterial_BetterGrass_uses_Top_on_height_step()
+    {
+        int HeightAt(int x, int z) => z == 0 ? 2 : 0;
+        var settings = new PreviewTerrainGrassBakeSettings(
+            PreviewTerrainGrassMode.BlockModelFaces,
+            BetterGrassEnabled: true,
+            EmitOverlay: true);
+
+        var mat = PreviewTerrainMeshBaker.ResolveHorizontalFaceMaterial(
+            HeightAt, bx: 0, by: 2, bz: 0, neighborX: 0, neighborZ: 1, settings);
+        Assert.Equal(PreviewTerrainGrassSlots.Top, mat);
+    }
+
+    [Fact]
+    public void ResolveHorizontalFaceMaterial_without_BetterGrass_uses_Side_on_surface()
+    {
+        int HeightAt(int x, int z) => 2;
+        var settings = new PreviewTerrainGrassBakeSettings(
+            PreviewTerrainGrassMode.BlockModelFaces,
+            BetterGrassEnabled: false,
+            EmitOverlay: true);
+
+        var mat = PreviewTerrainMeshBaker.ResolveHorizontalFaceMaterial(
+            HeightAt, bx: 0, by: 2, bz: 0, neighborX: 1, neighborZ: 0, settings);
+        Assert.Equal(PreviewTerrainGrassSlots.Side, mat);
+    }
+
+    [Fact]
+    public void ResolveHorizontalFaceMaterial_fill_layer_uses_Dirt()
+    {
+        int HeightAt(int x, int z) => 2;
+        var settings = new PreviewTerrainGrassBakeSettings(
+            PreviewTerrainGrassMode.BlockModelFaces,
+            BetterGrassEnabled: true,
+            EmitOverlay: false);
+
+        var mat = PreviewTerrainMeshBaker.ResolveHorizontalFaceMaterial(
+            HeightAt, bx: 0, by: 1, bz: 0, neighborX: 1, neighborZ: 0, settings);
+        Assert.Equal(PreviewTerrainGrassSlots.Dirt, mat);
+    }
+
+    [Fact]
+    public void ResolveYFaceMaterial_BlockModel_top_and_bottom()
+    {
+        var settings = new PreviewTerrainGrassBakeSettings(
+            PreviewTerrainGrassMode.BlockModelFaces,
+            BetterGrassEnabled: true,
+            EmitOverlay: false);
+        Assert.Equal(PreviewTerrainGrassSlots.Top, PreviewTerrainMeshBaker.ResolveYFaceMaterial(true, settings));
+        Assert.Equal(PreviewTerrainGrassSlots.Dirt, PreviewTerrainMeshBaker.ResolveYFaceMaterial(false, settings));
+    }
+
+    [Fact]
+    public void BakeFullChunk_BlockModelFaces_emits_material_batches_including_overlay()
+    {
+        var settings = new PreviewTerrainGrassBakeSettings(
+            PreviewTerrainGrassMode.BlockModelFaces,
+            BetterGrassEnabled: true,
+            EmitOverlay: true);
+        var mesh = PreviewTerrainMeshBaker.BakeFullChunk(new TerrainChunkKey(0, 0), settings);
+        Assert.NotNull(mesh);
+        Assert.NotEmpty(mesh!.DrawBatches);
+        Assert.Contains(mesh.DrawBatches, b => b.MaterialIndex == PreviewTerrainGrassSlots.Top);
+        Assert.Contains(mesh.DrawBatches, b => b.MaterialIndex == PreviewTerrainGrassSlots.Dirt);
+        // Flat pad under subject may still expose side/overlay on relief edges outside pad.
+        Assert.True(
+            mesh.DrawBatches.Any(b => b.MaterialIndex == PreviewTerrainGrassSlots.Side) ||
+            mesh.DrawBatches.Any(b => b.MaterialIndex == PreviewTerrainGrassSlots.Top));
+    }
+
+    [Fact]
+    public void BakeLodChunk_uses_Top_only_batch()
+    {
+        var lod = PreviewTerrainLodMeshBaker.BakeLodChunk(new TerrainChunkKey(0, 0));
+        Assert.NotNull(lod);
+        Assert.Single(lod!.DrawBatches);
+        Assert.Equal(PreviewTerrainGrassSlots.Top, lod.DrawBatches[0].MaterialIndex);
+    }
+
+    [Fact]
     public void TerrainChunkStreamer_desired_rings_match_view_distance()
     {
         using var streamer = new TerrainChunkStreamer();

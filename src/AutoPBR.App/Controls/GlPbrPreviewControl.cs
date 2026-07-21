@@ -341,6 +341,44 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         }
     }
 
+    /// <summary>Updates multi-slot LabPBR ground materials (BlockModel-style terrain).</summary>
+    public void SetGroundMaterials(PreviewMaterial[]? slotMaterials, bool overlayIsCutout = true)
+    {
+        void Core()
+        {
+            _backend.SetGroundMaterials(slotMaterials, overlayIsCutout);
+            RecoverPreviewFrame();
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            Core();
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(Core);
+        }
+    }
+
+    /// <summary>Updates Full-chunk terrain grass bake flags and invalidates resident meshes.</summary>
+    public void SetTerrainGrassBakeSettings(PreviewTerrainGrassBakeSettings settings)
+    {
+        void Core()
+        {
+            _backend.SetTerrainGrassBakeSettings(settings);
+            RecoverPreviewFrame();
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            Core();
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(Core);
+        }
+    }
+
     private void EnsureBackendInitialized()
     {
         if (_backendInitialized)

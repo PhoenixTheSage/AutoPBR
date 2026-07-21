@@ -34,7 +34,8 @@ public partial class MainWindowViewModel
             return true;
         }
 
-        return PreviewGrassColormapTint.NeedsGrassColormapTint(PreviewArchivePath);
+        return PreviewGrassColormapTint.NeedsGrassColormapTint(PreviewArchivePath) ||
+               PreviewGroundNeedsGrassColormapTint();
     }
 
     /// <summary>Load grass colormap from the scanned pack, install path, or native catalogs and refresh ground tint.</summary>

@@ -37,22 +37,99 @@ public sealed partial class OpenGlPreviewBackend
 
     private void UploadGroundMaterial(GL gl, PreviewMaterial? material, bool nearest)
     {
-        Debug.Assert(_grassGroundAlbedo is not null && _grassGroundNormal is not null &&
-                     _grassGroundSpec is not null && _grassGroundHeight is not null);
-        UploadMaterialToTextures(
-            gl,
-            material,
-            nearest,
-            _grassGroundAlbedo,
-            _grassGroundNormal,
-            _grassGroundSpec,
-            _grassGroundHeight,
-            out _grassGroundHasNormal,
-            out _grassGroundHasSpecular,
-            out _grassGroundHasHeight);
-        // Bootstrap sets ready via bundled fallback; VM-driven SetGroundMaterial uploads must also
-        // open the draw gate (idle 3D never reaches subject selection to "accidentally" fix this).
+        UploadGroundMaterials(gl, material is null ? null : [material], overlayIsCutout: true, nearest);
+    }
+
+    private void UploadGroundMaterials(
+        GL gl,
+        PreviewMaterial[]? slotMaterials,
+        bool overlayIsCutout,
+        bool nearest)
+    {
+        DisposeGroundGpuResources();
+        if (slotMaterials is null || slotMaterials.Length == 0)
+        {
+            _grassGroundReady = false;
+            return;
+        }
+
+        var slots = new GroundGpuSlot[slotMaterials.Length];
+        for (var i = 0; i < slotMaterials.Length; i++)
+        {
+            var mat = slotMaterials[i];
+            var slot = new GroundGpuSlot
+            {
+                Albedo = new GlTexture2D(gl),
+                Normal = new GlTexture2D(gl),
+                Spec = new GlTexture2D(gl),
+                Height = new GlTexture2D(gl),
+                Cutout = overlayIsCutout && i == PreviewTerrainGrassSlots.Overlay,
+                Width = Math.Max(1, mat.Width),
+                TexHeight = Math.Max(1, mat.Height),
+            };
+            UploadMaterialToTextures(
+                gl,
+                mat,
+                nearest,
+                slot.Albedo,
+                slot.Normal,
+                slot.Spec,
+                slot.Height,
+                out var hasN,
+                out var hasS,
+                out var hasH);
+            slot.HasNormal = hasN;
+            slot.HasSpecular = hasS;
+            slot.HasHeight = hasH;
+            slots[i] = slot;
+        }
+
+        _grassGroundSlots = slots;
+        var primary = slots[0];
+        _grassGroundAlbedo = primary.Albedo;
+        _grassGroundNormal = primary.Normal;
+        _grassGroundSpec = primary.Spec;
+        _grassGroundHeight = primary.Height;
+        _grassGroundHasNormal = primary.HasNormal;
+        _grassGroundHasSpecular = primary.HasSpecular;
+        _grassGroundHasHeight = primary.HasHeight;
         _grassGroundReady = _grassGroundAlbedo is not null;
+    }
+
+    private void DisposeGroundGpuResources()
+    {
+        if (_grassGroundSlots.Length > 0)
+        {
+            foreach (var slot in _grassGroundSlots)
+            {
+                slot.DisposeTextures();
+            }
+
+            _grassGroundSlots = [];
+            _grassGroundAlbedo = null;
+            _grassGroundNormal = null;
+            _grassGroundSpec = null;
+            _grassGroundHeight = null;
+            return;
+        }
+
+        _grassGroundAlbedo?.Dispose();
+        _grassGroundAlbedo = null;
+        _grassGroundNormal?.Dispose();
+        _grassGroundNormal = null;
+        _grassGroundSpec?.Dispose();
+        _grassGroundSpec = null;
+        _grassGroundHeight?.Dispose();
+        _grassGroundHeight = null;
+    }
+
+    private static void BindGroundGpuSlot(GroundGpuSlot slot, int albedoUnit = 0)
+    {
+        var u = (uint)albedoUnit;
+        slot.Albedo?.Bind(u);
+        slot.Normal?.Bind(u + 1);
+        slot.Spec?.Bind(u + 2);
+        slot.Height?.Bind(u + 3);
     }
 
     private void UploadMaterial(GL gl, PreviewMaterial? material, bool nearest)
@@ -910,14 +987,7 @@ public sealed partial class OpenGlPreviewBackend
         DisposeTerrainGpuChunks();
         _terrainStreamer?.Dispose();
         _terrainStreamer = null;
-        _grassGroundAlbedo?.Dispose();
-        _grassGroundAlbedo = null;
-        _grassGroundNormal?.Dispose();
-        _grassGroundNormal = null;
-        _grassGroundSpec?.Dispose();
-        _grassGroundSpec = null;
-        _grassGroundHeight?.Dispose();
-        _grassGroundHeight = null;
+        DisposeGroundGpuResources();
         _neutralNormal?.Dispose();
         _neutralNormal = null;
         _neutralSpec?.Dispose();
@@ -979,6 +1049,7 @@ public sealed partial class OpenGlPreviewBackend
         _terrainGpuChunks.Clear();
         _terrainStreamer?.Dispose();
         _terrainStreamer = null;
+        _grassGroundSlots = [];
         _grassGroundAlbedo = null;
         _grassGroundNormal = null;
         _grassGroundSpec = null;

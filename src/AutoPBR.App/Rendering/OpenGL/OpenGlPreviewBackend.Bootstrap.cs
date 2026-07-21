@@ -80,14 +80,7 @@ public sealed partial class OpenGlPreviewBackend
         DisposeTerrainGpuChunks();
         _terrainStreamer?.Dispose();
         _terrainStreamer = null;
-        _grassGroundAlbedo?.Dispose();
-        _grassGroundAlbedo = null;
-        _grassGroundNormal?.Dispose();
-        _grassGroundNormal = null;
-        _grassGroundSpec?.Dispose();
-        _grassGroundSpec = null;
-        _grassGroundHeight?.Dispose();
-        _grassGroundHeight = null;
+        DisposeGroundGpuResources();
         _neutralNormal?.Dispose();
         _neutralNormal = null;
         _neutralSpec?.Dispose();
@@ -502,10 +495,6 @@ public sealed partial class OpenGlPreviewBackend
                 _neutralSpec.UploadRgba(1, 1, [120, 60, 40, 255]);
                 _neutralHeight = new GlTexture2D(gl);
                 _neutralHeight.UploadRgba(1, 1, [128, 128, 128, 255]);
-                _grassGroundAlbedo = new GlTexture2D(gl);
-                _grassGroundNormal = new GlTexture2D(gl);
-                _grassGroundSpec = new GlTexture2D(gl);
-                _grassGroundHeight = new GlTexture2D(gl);
                 _grassGroundReady = TryUploadBundledGroundFallback(gl);
                 return true;
 

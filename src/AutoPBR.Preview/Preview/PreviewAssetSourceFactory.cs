@@ -7,8 +7,11 @@ internal enum PreviewModelJsonOrigin
     NativeBundled,
 }
 
-internal sealed class PreviewAssetSources
+internal sealed class PreviewAssetSources : IDisposable
 {
+    private readonly IDisposable? _installLifetime;
+    private bool _disposed;
+
     public required IAssetSource Composite { get; init; }
 
     public IAssetSource? PackSource { get; init; }
@@ -16,6 +19,11 @@ internal sealed class PreviewAssetSources
     public IAssetSource? InstallSource { get; init; }
 
     public IAssetSource? NativeSource { get; init; }
+
+    public PreviewAssetSources(IDisposable? installLifetime = null)
+    {
+        _installLifetime = installLifetime;
+    }
 
     public PreviewModelJsonOrigin ResolveModelJsonOrigin(string modelJsonZipPath)
     {
@@ -44,6 +52,17 @@ internal sealed class PreviewAssetSources
             PreviewModelJsonOrigin.NativeBundled => $"{modelJsonZipPath} · native",
             _ => modelJsonZipPath,
         };
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _installLifetime?.Dispose();
+    }
 }
 
 internal static class PreviewAssetSourceFactory
@@ -54,11 +73,10 @@ internal static class PreviewAssetSourceFactory
         string? minecraftAssetsDirectory,
         string? nativeRootDirectory)
     {
-        IAssetSource? installSource = null;
-        if (MinecraftInstallAssetPaths.TryResolveAssetsRoot(minecraftAssetsDirectory, out var installRoot))
-        {
-            installSource = new DirectoryAssetSource(installRoot);
-        }
+        MinecraftInstallAssetSource.TryOpen(
+            minecraftAssetsDirectory,
+            out var installSource,
+            out var installLifetime);
 
         IAssetSource? nativeSource = null;
         if (!string.IsNullOrWhiteSpace(nativeRootDirectory) && Directory.Exists(nativeRootDirectory))
@@ -77,7 +95,7 @@ internal static class PreviewAssetSourceFactory
             sources.Add(nativeSource);
         }
 
-        return new PreviewAssetSources
+        return new PreviewAssetSources(installLifetime)
         {
             Composite = sources.Count == 1 ? packSource : new CompositeAssetSource(sources.ToArray()),
             PackSource = packSource,

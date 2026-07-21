@@ -497,19 +497,34 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         bool groundMaterialDirty;
-        PreviewMaterial? groundMaterial;
+        PreviewMaterial[]? groundSlots;
+        bool groundOverlayCutout;
+        bool terrainGrassBakeDirty;
+        PreviewTerrainGrassBakeSettings terrainGrassBake;
         lock (_sync)
         {
             groundMaterialDirty = _grassGroundMaterialDirty;
-            groundMaterial = _grassGroundMaterial;
+            groundSlots = _grassGroundSlotMaterials;
+            groundOverlayCutout = _grassGroundOverlayCutout;
+            terrainGrassBakeDirty = _terrainGrassBakeSettingsDirty;
+            terrainGrassBake = _terrainGrassBakeSettings;
         }
 
         if (groundMaterialDirty)
         {
-            UploadGroundMaterial(frame.Gl, groundMaterial, nearest: true);
+            UploadGroundMaterials(frame.Gl, groundSlots, groundOverlayCutout, nearest: true);
             lock (_sync)
             {
                 _grassGroundMaterialDirty = false;
+            }
+        }
+
+        if (terrainGrassBakeDirty)
+        {
+            ApplyTerrainGrassBakeSettings(terrainGrassBake);
+            lock (_sync)
+            {
+                _terrainGrassBakeSettingsDirty = false;
             }
         }
 

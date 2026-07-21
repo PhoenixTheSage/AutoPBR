@@ -27,7 +27,26 @@ public sealed class TerrainChunkStreamer : IDisposable
     private TerrainChunkKey _cameraChunk;
     private TerrainChunkKey _lastDesiredCameraChunk;
     private int _lastDesiredViewDistance = int.MinValue;
+    private PreviewTerrainGrassBakeSettings _grassBakeSettings = PreviewTerrainGrassBakeSettings.BuiltIn;
     private bool _disposed;
+
+    public PreviewTerrainGrassBakeSettings GrassBakeSettings
+    {
+        get
+        {
+            lock (_desiredLock)
+            {
+                return _grassBakeSettings;
+            }
+        }
+        set
+        {
+            lock (_desiredLock)
+            {
+                _grassBakeSettings = value;
+            }
+        }
+    }
 
     public int ChunkViewDistance
     {
@@ -179,6 +198,19 @@ public sealed class TerrainChunkStreamer : IDisposable
         _inflight.TryRemove(key, out _);
     }
 
+    /// <summary>Drop residency and queued bakes so the next tick rebakes all desired chunks.</summary>
+    public void InvalidateAll()
+    {
+        while (_ready.TryDequeue(out _))
+        {
+        }
+
+        _inflight.Clear();
+        _resident.Clear();
+        _lastDesiredCameraChunk = default;
+        _lastDesiredViewDistance = int.MinValue;
+    }
+
     public int DrainReady(List<PreviewTerrainChunkMesh> destination, int maxCount)
     {
         var n = 0;
@@ -234,8 +266,9 @@ public sealed class TerrainChunkStreamer : IDisposable
                 // Drop stale resident so GL replaces after upload.
                 _resident.TryRemove(jobKey, out _);
 
+                var grassSettings = GrassBakeSettings;
                 PreviewTerrainChunkMesh? mesh = needLod == TerrainChunkLodKind.Full
-                    ? PreviewTerrainMeshBaker.BakeFullChunk(jobKey)
+                    ? PreviewTerrainMeshBaker.BakeFullChunk(jobKey, grassSettings)
                     : PreviewTerrainLodMeshBaker.BakeLodChunk(jobKey);
 
                 if (mesh is not null)

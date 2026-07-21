@@ -66,7 +66,7 @@ public static class ResourcePackPreviewRenderer
             {
                 var zipSource = new ZipAssetSource(zip);
                 var nativeRoot = previewNativeProfile?.RootDirectory;
-                var assetSources = PreviewAssetSourceFactory.Create(
+                using var assetSources = PreviewAssetSourceFactory.Create(
                     zipSource,
                     options.MinecraftAssetsDirectory,
                     nativeRoot);
@@ -353,7 +353,7 @@ public static class ResourcePackPreviewRenderer
         }
 
         using var zip = ZipFile.OpenRead(inputZipPath);
-        var assetSources = PreviewAssetSourceFactory.Create(
+        using var assetSources = PreviewAssetSourceFactory.Create(
             new ZipAssetSource(zip),
             options.MinecraftAssetsDirectory,
             previewNativeProfile?.RootDirectory);
@@ -421,7 +421,7 @@ public static class ResourcePackPreviewRenderer
         {
             var zipSource = new ZipAssetSource(zip);
             var nativeRoot = previewNativeProfile?.RootDirectory;
-            var assetSources = PreviewAssetSourceFactory.Create(
+            using var assetSources = PreviewAssetSourceFactory.Create(
                 zipSource,
                 options.MinecraftAssetsDirectory,
                 nativeRoot);

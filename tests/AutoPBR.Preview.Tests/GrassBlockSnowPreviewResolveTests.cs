@@ -54,7 +54,7 @@ public sealed class GrassBlockSnowPreviewResolveTests
             using var zip = System.IO.Compression.ZipFile.OpenRead(ClientJar);
             var zipSource = new ZipAssetSource(zip);
             const string texturePath = "assets/minecraft/textures/block/grass_block_snow.png";
-            var assetSources = PreviewAssetSourceFactory.Create(zipSource, null, null);
+            using var assetSources = PreviewAssetSourceFactory.Create(zipSource, null, null);
             var resolved = RuntimeBlockPreviewModelResolver.Resolve(
                 zipSource,
                 assetSources,

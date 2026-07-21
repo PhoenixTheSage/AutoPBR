@@ -1,6 +1,7 @@
 using System.Numerics;
 
 using AutoPBR.Core.Models;
+using AutoPBR.Preview;
 
 using JetBrains.Annotations;
 
@@ -18,6 +19,15 @@ public interface IRenderPreviewBackend : IDisposable
     void SetScene(IRenderPreviewScene scene);
     void SetMaterial(PreviewMaterial? material);
     void SetGroundMaterial(PreviewMaterial? material);
+
+    /// <summary>
+    /// Multi-slot LabPBR ground materials for BlockModel-style terrain (top/side/dirt/overlay).
+    /// Empty or null falls back to <see cref="SetGroundMaterial"/>.
+    /// </summary>
+    void SetGroundMaterials(PreviewMaterial[]? slotMaterials, bool overlayIsCutout = true);
+
+    /// <summary>CPU bake flags for streamed Full terrain chunks; invalidates resident meshes when changed.</summary>
+    void SetTerrainGrassBakeSettings(PreviewTerrainGrassBakeSettings settings);
     void SetBlockModelPreview(PreviewModelSubject? subject, PreviewMaterial[]? slotMaterials);
     void SetRenderSettings(PreviewRenderSettings settings);
     void RenderFrame(TimeSpan elapsed);

@@ -656,6 +656,7 @@ public sealed partial class OpenGlPreviewBackend
 
             SetIntOnProgramLoc(_shadowProgram!, su.SceneKind, 0);
             SetIntOnProgramLoc(_shadowProgram!, su.EntityAlphaMode, 0);
+            SetFloatOnProgramLoc(_shadowProgram!, su.AlphaCutoff, frame.Settings.AlphaCutoff);
             SetIntOnProgramLoc(_shadowProgram!, su.GenesisUseMaterialDrawRecord, 0);
             SetIntOnProgramLoc(_shadowProgram!, su.GenesisUseMaterialTextureArray, 0);
             if (_grassGroundAlbedo is not null)

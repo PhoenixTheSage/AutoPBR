@@ -19,46 +19,55 @@ public static class PreviewColormapLoader
         image = null;
         using var pack = TryOpenPackZip(packZipPath);
         var packSource = pack is not null ? new ZipAssetSource(pack) : null;
-        IAssetSource? installSource = null;
-        if (MinecraftInstallAssetPaths.TryResolveAssetsRoot(minecraftAssetsDirectory, out var installRoot))
+        IDisposable? installLifetime = null;
+        try
         {
-            installSource = new DirectoryAssetSource(installRoot);
-        }
+            IAssetSource? installSource = null;
+            if (!MinecraftInstallAssetSource.TryOpen(minecraftAssetsDirectory, out installSource, out installLifetime))
+            {
+                installSource = null;
+            }
 
-        IAssetSource? nativeSource = null;
-        if (!string.IsNullOrWhiteSpace(nativeRootDirectory) && Directory.Exists(nativeRootDirectory))
+            IAssetSource? nativeSource = null;
+            if (!string.IsNullOrWhiteSpace(nativeRootDirectory) && Directory.Exists(nativeRootDirectory))
+            {
+                nativeSource = new DirectoryAssetSource(nativeRootDirectory);
+            }
+
+            var sources = new List<IAssetSource>();
+            if (packSource is not null)
+            {
+                sources.Add(packSource);
+            }
+
+            if (installSource is not null)
+            {
+                sources.Add(installSource);
+            }
+
+            if (nativeSource is not null)
+            {
+                sources.Add(nativeSource);
+            }
+
+            if (sources.Count == 0)
+            {
+                return false;
+            }
+
+            var composite = sources.Count == 1 ? sources[0] : new CompositeAssetSource(sources.ToArray());
+            if (!composite.TryReadBytes(PreviewGrassColormapTint.GrassColormapArchivePath, out var bytes) ||
+                bytes.Length == 0)
+            {
+                return false;
+            }
+
+            return TryDecodeRgba(bytes, out image);
+        }
+        finally
         {
-            nativeSource = new DirectoryAssetSource(nativeRootDirectory);
+            installLifetime?.Dispose();
         }
-
-        var sources = new List<IAssetSource>();
-        if (packSource is not null)
-        {
-            sources.Add(packSource);
-        }
-
-        if (installSource is not null)
-        {
-            sources.Add(installSource);
-        }
-
-        if (nativeSource is not null)
-        {
-            sources.Add(nativeSource);
-        }
-
-        if (sources.Count == 0)
-        {
-            return false;
-        }
-
-        var composite = sources.Count == 1 ? sources[0] : new CompositeAssetSource(sources.ToArray());
-        if (!composite.TryReadBytes(PreviewGrassColormapTint.GrassColormapArchivePath, out var bytes) || bytes.Length == 0)
-        {
-            return false;
-        }
-
-        return TryDecodeRgba(bytes, out image);
     }
 
     private static ZipArchive? TryOpenPackZip(string? packZipPath)

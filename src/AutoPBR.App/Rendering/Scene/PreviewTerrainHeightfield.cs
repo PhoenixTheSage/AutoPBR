@@ -18,28 +18,10 @@ public static class PreviewTerrainHeightfield
         int maxRelief = PreviewStageConstants.TerrainMaxReliefBlocks,
         int seed = PreviewStageConstants.TerrainHeightSeed)
     {
-        flatPadHalfExtent = Math.Max(0, flatPadHalfExtent);
-        transitionBlocks = Math.Max(0, transitionBlocks);
-        maxRelief = Math.Max(0, maxRelief);
-
-        var chebyshev = Math.Max(Math.Abs(x), Math.Abs(z));
-        var pad = flatPadHalfExtent;
-        if (chebyshev <= pad)
-        {
-            return 0;
-        }
-
-        var noise = SampleFbm(x, z, seed);
-        var relief = (int)Math.Round(noise * maxRelief);
-        relief = Math.Clamp(relief, -maxRelief, maxRelief);
-        var blendEnd = pad + transitionBlocks;
-        if (chebyshev < blendEnd && transitionBlocks > 0)
-        {
-            var t = (chebyshev - pad) / (float)transitionBlocks;
-            return (int)Math.Round(relief * SmoothStep(t));
-        }
-
-        return relief;
+        // Biome-aware height (pad/transition handled inside sampler). maxRelief is ignored —
+        // biomes supply their own relief caps. Parameter retained for call-site compatibility.
+        _ = maxRelief;
+        return PreviewTerrainBiomeSampler.SampleHeight(x, z, flatPadHalfExtent, transitionBlocks, seed);
     }
 
     /// <summary>
@@ -100,13 +82,8 @@ public static class PreviewTerrainHeightfield
         return Math.Clamp(n, -1f, 1f);
     }
 
-    private static float SmoothStep(float t)
-    {
-        t = Math.Clamp(t, 0f, 1f);
-        return t * t * (3f - 2f * t);
-    }
-
-    private static float SampleValueNoise(float x, float z, int seed)
+    /// <summary>Interpolated value noise in [-1, 1].</summary>
+    internal static float SampleValueNoise(float x, float z, int seed)
     {
         var x0 = (int)MathF.Floor(x);
         var z0 = (int)MathF.Floor(z);
@@ -125,7 +102,8 @@ public static class PreviewTerrainHeightfield
         return (nx0 + (nx1 - nx0) * sz) * 2f - 1f;
     }
 
-    private static float Hash01(int x, int z, int seed)
+    /// <summary>Deterministic hash in [0, 1].</summary>
+    internal static float Hash01(int x, int z, int seed)
     {
         unchecked
         {
