@@ -60,12 +60,16 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
     private PreviewHdrDxgiSwapchain? _hdrSwapchain;
     private IntPtr _nativeHwnd;
     private bool _hdrPresentPathFailed;
+    private bool _hdrYFlipFailureLogged;
     private bool _anglePathStarted;
     private bool _backendInitialized;
     private bool _lastRaisedHdrNativeWglActive;
     private bool _lastRaisedHdrPresentPathFailed;
     private bool _lastRaisedHdrDisplaySupportsHdr;
     private float _lastRaisedHdrPeakNits;
+    private PreviewHdrDisplayInfo _cachedHdrDisplayInfo = PreviewHdrDisplayInfo.Unsupported;
+    private long _cachedHdrProbeTicks;
+    private static readonly long HdrProbeCacheTicks = Stopwatch.Frequency; // ~1s
 
     /// <summary>Raised on the UI thread when HDR display probe / present status changes.</summary>
     public event Action<PreviewHdrDisplayInfo, bool, bool>? HdrProbeUpdated;
@@ -566,6 +570,12 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
     {
         if (!_backend.NeedsContinuousRendering)
         {
+            return;
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            RequestContinuousFrameIfNeeded();
             return;
         }
 
@@ -1205,8 +1215,8 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         UpdateNativeWglOverlayBitmaps();
         if (_nativeHwnd != IntPtr.Zero)
         {
-            var display = PreviewHdrDisplayProbe.ProbeForWindow(_nativeHwnd);
-            RaiseHdrProbeUpdated(display, nativeWglActive: true, _hdrPresentPathFailed);
+            InvalidateHdrDisplayProbeCache();
+            RaiseHdrProbeUpdated(GetCachedHdrDisplayInfo(), nativeWglActive: true, _hdrPresentPathFailed);
         }
 
         RecoverPreviewFrame();
@@ -1234,7 +1244,11 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         var debug = RenderDebugOverlayBitmap(OverlayDebugText, scale);
         var fps = OverlayFpsVisible ? RenderFpsOverlayBitmap(OverlayFpsText, scale) : null;
         _backend.SetNativeWglOverlay(debug, fps, Math.Max(1, (int)Math.Round(8.0 * scale)));
-        RecoverPreviewFrame();
+        // Continuous native frames already pick up the new overlay; avoid a UI→frame storm.
+        if (!_backend.NeedsContinuousRendering)
+        {
+            RecoverPreviewFrame();
+        }
     }
 
     private static PreviewNativeWglOverlayBitmap? RenderDebugOverlayBitmap(string? text, double renderScale)
@@ -1342,13 +1356,13 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
             // DXGI CreateSwapChainForHwnd owns this HWND while alive; WGL SwapBuffers can hang until released.
             ReleaseHdrSwapchain(gl);
             var display = _nativeHwnd != IntPtr.Zero
-                ? PreviewHdrDisplayProbe.ProbeForWindow(_nativeHwnd)
+                ? GetCachedHdrDisplayInfo()
                 : PreviewHdrDisplayInfo.Unsupported;
             RaiseHdrProbeUpdated(display, nativeWglActive: _nativeWglPresenter is not null, _hdrPresentPathFailed);
             return false;
         }
 
-        var displayInfo = PreviewHdrDisplayProbe.ProbeForWindow(_nativeHwnd);
+        var displayInfo = GetCachedHdrDisplayInfo();
         RaiseHdrProbeUpdated(displayInfo, nativeWglActive: true, presentPathFailed: false);
         if (!displayInfo.SupportsHdr)
         {
@@ -1367,6 +1381,15 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
 
             if (!_hdrSwapchain.TryEnsure(_nativeHwnd, width, height, context.GlInterface, gl, out var ensureFailure))
             {
+                // Present HWND is created asynchronously on the UI thread; retry next frame.
+                if (string.Equals(
+                        ensureFailure,
+                        PreviewHdrDxgiSwapchain.PresentWindowPendingMessage,
+                        StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 return FailHdrPresent(displayInfo, gl, "HDR DXGI present unavailable: " + (ensureFailure ?? "unknown"));
             }
 
@@ -1380,8 +1403,9 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
                 _backend.GlRenderNativeWglPresenter(width, height, _hdrSwapchain.Framebuffer);
                 // DXGI is top-down; flip after overlays so the full frame (including HUD) is upright.
                 // Orientation-only failure must not kill the HDR session.
-                if (!_hdrSwapchain.TryFlipFramebufferY(gl))
+                if (!_hdrSwapchain.TryFlipFramebufferY(gl) && !_hdrYFlipFailureLogged)
                 {
+                    _hdrYFlipFailureLogged = true;
                     _backend.EmitPreviewDiagnostic(
                         "[3D preview] HDR Y-flip failed (" +
                         (_hdrSwapchain.LastFailure ?? "unknown") +
@@ -1445,13 +1469,34 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
     public void ClearHdrPresentFailureLatch()
     {
         _hdrPresentPathFailed = false;
+        _hdrYFlipFailureLogged = false;
         _backend.ClearHdrPresentSuppression();
         // Force the next probe raise even if display flags are unchanged.
         _lastRaisedHdrPresentPathFailed = true;
+        InvalidateHdrDisplayProbeCache();
         var display = _nativeHwnd != IntPtr.Zero
-            ? PreviewHdrDisplayProbe.ProbeForWindow(_nativeHwnd)
+            ? GetCachedHdrDisplayInfo()
             : PreviewHdrDisplayInfo.Unsupported;
         RaiseHdrProbeUpdated(display, nativeWglActive: _nativeWglPresenter is not null, presentPathFailed: false);
+    }
+
+    private void InvalidateHdrDisplayProbeCache() => Interlocked.Exchange(ref _cachedHdrProbeTicks, 0);
+
+    private PreviewHdrDisplayInfo GetCachedHdrDisplayInfo()
+    {
+        var now = Stopwatch.GetTimestamp();
+        var cachedAt = Volatile.Read(ref _cachedHdrProbeTicks);
+        if (cachedAt != 0 && now - cachedAt < HdrProbeCacheTicks)
+        {
+            return _cachedHdrDisplayInfo;
+        }
+
+        var probed = _nativeHwnd != IntPtr.Zero
+            ? PreviewHdrDisplayProbe.ProbeForWindow(_nativeHwnd)
+            : PreviewHdrDisplayInfo.Unsupported;
+        _cachedHdrDisplayInfo = probed;
+        Volatile.Write(ref _cachedHdrProbeTicks, now);
+        return probed;
     }
 
     internal void OnNativeWglFrameCompleted()

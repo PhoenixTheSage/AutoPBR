@@ -54,6 +54,16 @@ internal static class PreviewDesktopWglOwnerThread
             return;
         }
 
+        PostDeferred(work, phase);
+    }
+
+    /// <summary>
+    /// Always enqueues work for a later turn of the owner loop.
+    /// Use this for follow-up frames — <see cref="Post"/> invokes inline when already on the owner
+    /// thread, which would recurse forever if a frame posts the next frame.
+    /// </summary>
+    public static void PostDeferred(Action work, string phase = "posted")
+    {
         EnsureStarted();
         Interlocked.Increment(ref _pendingCount);
         _queue!.Add(new PostedWorkItem(work, phase));

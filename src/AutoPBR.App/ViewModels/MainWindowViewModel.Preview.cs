@@ -230,8 +230,16 @@ public partial class MainWindowViewModel
 
     private void OnPreviewHdrProbeUpdated(PreviewHdrDisplayInfo display, bool nativeWglActive, bool presentPathFailed)
     {
+        var wasActive = PreviewHdrPresentActive;
+        var priorStatus = PreviewHdrStatusText;
         UpdatePreviewHdrProbe(display, nativeWglActive, presentPathFailed);
-        Push3DRenderSettingsOnly();
+        // Probe raises can arrive from the render path; only push GPU settings when the decision changes.
+        if (PreviewHdrPresentActive != wasActive ||
+            !string.Equals(PreviewHdrStatusText, priorStatus, StringComparison.Ordinal))
+        {
+            Push3DRenderSettingsOnly();
+        }
+
         SyncHdr2DPresentPreference();
     }
 

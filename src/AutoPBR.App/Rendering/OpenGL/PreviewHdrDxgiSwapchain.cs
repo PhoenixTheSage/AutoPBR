@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 
 using Avalonia.OpenGL;
+using Avalonia.Threading;
 
 using Silk.NET.OpenGL;
 
@@ -9,7 +10,8 @@ namespace AutoPBR.App.Rendering.OpenGL;
 /// <summary>
 /// DXGI scRGB present for native WGL HDR.
 /// GL renders into a stable shared D3D11 texture (NV_DX interop registered once);
-/// each Present copies that texture into the current flip backbuffer.
+/// each Present copies that texture into a flip backbuffer owned by a <em>child</em> HWND
+/// so the WGL preview HWND is never bound to DXGI (SDR SwapBuffers stays safe).
 /// </summary>
 internal sealed class PreviewHdrDxgiSwapchain : IDisposable
 {
@@ -36,8 +38,26 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
 
     // ID3D11Device::CreateTexture2D
     private const int CreateTexture2DVtableIndex = 5;
-    // ID3D11DeviceContext::CopyResource
+    // ID3D11DeviceContext::CopyResource / ClearState / Flush
     private const int CopyResourceVtableIndex = 47;
+    private const int ClearStateVtableIndex = 110;
+    private const int FlushVtableIndex = 111;
+
+    private const string PresentClassName = "AutoPBR.HdrDxgiPresentHost";
+    private const int WsChild = 0x4000_0000;
+    private const int WsVisible = 0x1000_0000;
+    private const int WsClipSiblings = 0x0400_0000;
+    private const int WsExTransparent = 0x0000_0020;
+    private const int WsExNoActivate = 0x0800_0000;
+    private const uint WmEraseBkgnd = 0x0014;
+    private const IntPtr HwndTop = 0;
+    private const uint SwpNoActivate = 0x0010;
+    private const uint SwpShowWindow = 0x0040;
+    private const uint SwpNoCopyBits = 0x0100;
+
+    private static readonly object PresentClassGate = new();
+    private static readonly WndProcDelegate PresentWndProc = PresentWndProcCore;
+    private static bool _presentClassRegistered;
 
     [DllImport("d3d11.dll", ExactSpelling = true)]
     private static extern int D3D11CreateDevice(
@@ -99,6 +119,69 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     private delegate void CopyResourceDelegate(IntPtr thisPtr, IntPtr dst, IntPtr src);
 
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate void ClearStateDelegate(IntPtr thisPtr);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate void FlushDelegate(IntPtr thisPtr);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct WndClass
+    {
+        public uint Style;
+        public WndProcDelegate LpfnWndProc;
+        public int CbClsExtra;
+        public int CbWndExtra;
+        public IntPtr HInstance;
+        public IntPtr HIcon;
+        public IntPtr HCursor;
+        public IntPtr HbrBackground;
+        public string? LpszMenuName;
+        public string LpszClassName;
+    }
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern ushort RegisterClassW(ref WndClass lpWndClass);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr CreateWindowExW(
+        int dwExStyle,
+        string lpClassName,
+        string lpWindowName,
+        int dwStyle,
+        int x,
+        int y,
+        int nWidth,
+        int nHeight,
+        IntPtr hWndParent,
+        IntPtr hMenu,
+        IntPtr hInstance,
+        IntPtr lpParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DestroyWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(
+        IntPtr hWnd,
+        IntPtr hWndInsertAfter,
+        int x,
+        int y,
+        int cx,
+        int cy,
+        uint uFlags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr DefWindowProcW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr GetModuleHandleW(IntPtr lpModuleName);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct DxgiSwapChainDesc1
     {
@@ -154,7 +237,11 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
     private int _flipTexLoc = -1;
     private int _width;
     private int _height;
-    private IntPtr _hwnd;
+    private IntPtr _parentHwnd;
+    private IntPtr _presentHwnd;
+    private int _presentHwndWidth;
+    private int _presentHwndHeight;
+    private int _presentWindowCreateInFlight;
     private bool _disposed;
     private string? _lastFailure;
     private bool _frameLocked;
@@ -196,6 +283,9 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
     public int Framebuffer => (int)_glFbo;
     public string? LastFailure => _lastFailure;
 
+    /// <summary>Returned when the present child HWND is still being created on the UI thread.</summary>
+    public const string PresentWindowPendingMessage = "HDR present HWND is being created on the UI thread.";
+
     public bool TryEnsure(
         IntPtr hwnd,
         int width,
@@ -215,23 +305,36 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
         width = Math.Max(1, width);
         height = Math.Max(1, height);
 
-        var needsRecreate = _hwnd != hwnd || _device == IntPtr.Zero || _width != width || _height != height;
+        // Present child HWND is owned by the Avalonia UI thread. Never CreateWindow/Wait from the
+        // WGL owner — that deadlocks with UI→Owner.Run(Dispose).
+        if (!EnsurePresentWindow(hwnd, width, height, out failure))
+        {
+            _lastFailure = failure;
+            return false;
+        }
+
+        var needsRecreate =
+            _parentHwnd != hwnd ||
+            _device == IntPtr.Zero ||
+            _width != width ||
+            _height != height;
         if (needsRecreate)
         {
             EndFrame();
             TeardownGl(gl);
-            TeardownDxgi();
-            if (!TryCreateDeviceAndSwapchain(hwnd, width, height, out failure) ||
+            // Keep the UI-owned present HWND; only rebuild DXGI/GL around it.
+            TeardownDxgi(disposePresentWindow: false);
+            if (!TryCreateDeviceAndSwapchain(width, height, out failure) ||
                 !TryCreateSharedTexture(width, height, out failure) ||
                 !TryRegisterGlInterop(wglGl, gl, width, height, out failure))
             {
                 _lastFailure = failure;
                 TeardownGl(gl);
-                TeardownDxgi();
+                TeardownDxgi(disposePresentWindow: false);
                 return false;
             }
 
-            _hwnd = hwnd;
+            _parentHwnd = hwnd;
             _width = width;
             _height = height;
         }
@@ -447,9 +550,203 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
         TeardownDxgi();
     }
 
-    private bool TryCreateDeviceAndSwapchain(IntPtr hwnd, int width, int height, out string? failure)
+    private bool EnsurePresentWindow(IntPtr parentHwnd, int width, int height, out string? failure)
     {
         failure = null;
+        if (!EnsurePresentClassRegistered())
+        {
+            failure = "HDR present window class registration failed.";
+            return false;
+        }
+
+        var present = Volatile.Read(ref _presentHwnd);
+        var parentOk = _parentHwnd == parentHwnd || _parentHwnd == IntPtr.Zero;
+        var sizeOk = _presentHwndWidth == width && _presentHwndHeight == height;
+        if (present != IntPtr.Zero && parentOk && sizeOk)
+        {
+            _parentHwnd = parentHwnd;
+            return true;
+        }
+
+        // Parent changed: drop the old child (UI thread) and request a new one.
+        if (present != IntPtr.Zero && _parentHwnd != IntPtr.Zero && _parentHwnd != parentHwnd)
+        {
+            DestroyPresentWindow();
+            present = IntPtr.Zero;
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            if (!TryCreateOrResizePresentWindowCore(parentHwnd, width, height, out failure))
+            {
+                return false;
+            }
+
+            _parentHwnd = parentHwnd;
+            return true;
+        }
+
+        if (Interlocked.CompareExchange(ref _presentWindowCreateInFlight, 1, 0) == 0)
+        {
+            var capturedParent = parentHwnd;
+            var capturedW = width;
+            var capturedH = height;
+            Dispatcher.UIThread.Post(
+                () =>
+                {
+                    try
+                    {
+                        _ = TryCreateOrResizePresentWindowCore(capturedParent, capturedW, capturedH, out _);
+                        _parentHwnd = capturedParent;
+                    }
+                    finally
+                    {
+                        Interlocked.Exchange(ref _presentWindowCreateInFlight, 0);
+                    }
+                },
+                DispatcherPriority.Send);
+        }
+
+        failure = PresentWindowPendingMessage;
+        return false;
+    }
+
+    private bool TryCreateOrResizePresentWindowCore(IntPtr parentHwnd, int width, int height, out string? failure)
+    {
+        failure = null;
+        var existing = _presentHwnd;
+        if (existing != IntPtr.Zero && _parentHwnd == parentHwnd)
+        {
+            _ = SetWindowPos(
+                existing,
+                HwndTop,
+                0,
+                0,
+                width,
+                height,
+                SwpShowWindow | SwpNoActivate | SwpNoCopyBits);
+            _presentHwndWidth = width;
+            _presentHwndHeight = height;
+            return true;
+        }
+
+        if (existing != IntPtr.Zero)
+        {
+            _ = DestroyWindow(existing);
+            _presentHwnd = IntPtr.Zero;
+        }
+
+        var hwnd = CreateWindowExW(
+            WsExTransparent | WsExNoActivate,
+            PresentClassName,
+            "AutoPBR HDR Present",
+            WsChild | WsVisible | WsClipSiblings,
+            0,
+            0,
+            width,
+            height,
+            parentHwnd,
+            IntPtr.Zero,
+            GetModuleHandleW(IntPtr.Zero),
+            IntPtr.Zero);
+        if (hwnd == IntPtr.Zero)
+        {
+            failure = "CreateWindowEx for HDR present child failed.";
+            return false;
+        }
+
+        _ = SetWindowPos(
+            hwnd,
+            HwndTop,
+            0,
+            0,
+            width,
+            height,
+            SwpShowWindow | SwpNoActivate | SwpNoCopyBits);
+        _presentHwnd = hwnd;
+        _presentHwndWidth = width;
+        _presentHwndHeight = height;
+        return true;
+    }
+
+    private void DestroyPresentWindow()
+    {
+        var hwnd = Interlocked.Exchange(ref _presentHwnd, IntPtr.Zero);
+        _presentHwndWidth = 0;
+        _presentHwndHeight = 0;
+        if (hwnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            _ = DestroyWindow(hwnd);
+            return;
+        }
+
+        // Never Wait here: UI may already be blocked inside Owner.Run(Dispose).
+        Dispatcher.UIThread.Post(() => DestroyWindow(hwnd), DispatcherPriority.Send);
+    }
+
+    private static bool EnsurePresentClassRegistered()
+    {
+        lock (PresentClassGate)
+        {
+            if (_presentClassRegistered)
+            {
+                return true;
+            }
+
+            var wndClass = new WndClass
+            {
+                Style = 0,
+                LpfnWndProc = PresentWndProc,
+                CbClsExtra = 0,
+                CbWndExtra = 0,
+                HInstance = GetModuleHandleW(IntPtr.Zero),
+                HIcon = IntPtr.Zero,
+                HCursor = IntPtr.Zero,
+                HbrBackground = IntPtr.Zero,
+                LpszMenuName = null,
+                LpszClassName = PresentClassName
+            };
+
+            var atom = RegisterClassW(ref wndClass);
+            if (atom == 0)
+            {
+                var err = Marshal.GetLastWin32Error();
+                // Already registered in this process.
+                if (err != 1410)
+                {
+                    return false;
+                }
+            }
+
+            _presentClassRegistered = true;
+            return true;
+        }
+    }
+
+    private static IntPtr PresentWndProcCore(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
+    {
+        if (msg == WmEraseBkgnd)
+        {
+            return 1;
+        }
+
+        return DefWindowProcW(hWnd, msg, wParam, lParam);
+    }
+
+    private bool TryCreateDeviceAndSwapchain(int width, int height, out string? failure)
+    {
+        failure = null;
+        if (_presentHwnd == IntPtr.Zero)
+        {
+            failure = "HDR present HWND missing.";
+            return false;
+        }
+
         IntPtr device;
         IntPtr context;
         int featureLevel;
@@ -503,7 +800,7 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
         };
 
         var createSc = GetVTableFn<CreateSwapChainForHwndDelegate>(factory, 15);
-        hr = createSc(factory, device, hwnd, ref desc, IntPtr.Zero, IntPtr.Zero, out var swapChain);
+        hr = createSc(factory, device, _presentHwnd, ref desc, IntPtr.Zero, IntPtr.Zero, out var swapChain);
         if (hr != S_OK || swapChain == IntPtr.Zero)
         {
             failure = $"CreateSwapChainForHwnd failed (hr=0x{hr:X8}).";
@@ -879,15 +1176,34 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
         }
     }
 
-    private void TeardownDxgi()
+    private void TeardownDxgi(bool disposePresentWindow = true)
     {
         ReleaseCom(ref _sharedTexture);
         ReleaseCom(ref _swapChain3);
+        // Flip-model swapchains defer destruction; ClearState+Flush forces HWND release.
         ReleaseCom(ref _swapChain);
+        if (_context != IntPtr.Zero)
+        {
+            try
+            {
+                GetVTableFn<ClearStateDelegate>(_context, ClearStateVtableIndex)(_context);
+                GetVTableFn<FlushDelegate>(_context, FlushVtableIndex)(_context);
+            }
+            catch
+            {
+                // Best-effort; continue releasing COM objects.
+            }
+        }
+
         ReleaseCom(ref _factory);
         ReleaseCom(ref _context);
         ReleaseCom(ref _device);
-        _hwnd = IntPtr.Zero;
+        if (disposePresentWindow)
+        {
+            DestroyPresentWindow();
+            _parentHwnd = IntPtr.Zero;
+        }
+
         _width = 0;
         _height = 0;
     }

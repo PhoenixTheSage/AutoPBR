@@ -52,7 +52,9 @@ internal sealed class PreviewNativeWglPresenter : IDisposable
             return;
         }
 
-        PreviewDesktopWglOwnerThread.Post(RenderFrameOnOwnerThread, phase: "native-wgl-render");
+        // Always enqueue. Post() would invoke inline on the owner thread and recurse forever when
+        // continuous rendering re-requests the next frame from RenderFrameOnOwnerThread.
+        PreviewDesktopWglOwnerThread.PostDeferred(RenderFrameOnOwnerThread, phase: "native-wgl-render");
     }
 
     public void ConfigureVsync(bool enabled)
@@ -90,34 +92,36 @@ internal sealed class PreviewNativeWglPresenter : IDisposable
         }
 
         _disposed = true;
+        _ready = false;
+        Interlocked.Exchange(ref _frameQueued, 1);
         var context = _context;
         _context = null;
-        _ready = false;
-        if (context is not null)
+        if (context is null)
         {
-            try
-            {
-                PreviewDesktopWglOwnerThread.Run(
-                    () =>
-                    {
-                        if (_glInitialized)
-                        {
-                            using (context.MakeCurrent())
-                            {
-                                _backend.GlDeinit(context.GlInterface);
-                            }
-                        }
-
-                        context.Dispose();
-                    },
-                    TimeSpan.FromSeconds(2));
-            }
-            catch (Exception ex)
-            {
-                _backend.EmitPreviewDiagnostic($"[3D preview] Native WGL teardown failed: {ex.GetType().Name}: {ex.Message}");
-            }
+            return;
         }
 
+        try
+        {
+            PreviewDesktopWglOwnerThread.Run(
+                () =>
+                {
+                    if (_glInitialized)
+                    {
+                        using (context.MakeCurrent())
+                        {
+                            _backend.GlDeinit(context.GlInterface);
+                        }
+                    }
+
+                    context.Dispose();
+                },
+                TimeSpan.FromSeconds(2));
+        }
+        catch (Exception ex)
+        {
+            _backend.EmitPreviewDiagnostic($"[3D preview] Native WGL teardown failed: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     private void StartWglInit()
@@ -199,8 +203,15 @@ internal sealed class PreviewNativeWglPresenter : IDisposable
             return;
         }
 
-        if (!_disposed && _backend.NeedsContinuousRendering)
+        if (_disposed)
         {
+            return;
+        }
+
+        if (_backend.NeedsContinuousRendering)
+        {
+            // Stay on the owner thread (per-frame UI hops starve Avalonia). PostDeferred avoids
+            // stack overflow from inline Post-on-owner re-entry.
             RequestFrame();
             return;
         }
