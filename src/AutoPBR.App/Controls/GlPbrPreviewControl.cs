@@ -61,6 +61,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
     private IntPtr _nativeHwnd;
     private bool _hdrPresentPathFailed;
     private bool _hdrYFlipFailureLogged;
+    private bool _hdrYFlipPathLogged;
     private bool _anglePathStarted;
     private bool _backendInitialized;
     private bool _lastRaisedHdrNativeWglActive;
@@ -438,6 +439,8 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         _hdrSwapchain = null;
         _nativeHwnd = IntPtr.Zero;
         _hdrPresentPathFailed = false;
+        _hdrYFlipFailureLogged = false;
+        _hdrYFlipPathLogged = false;
         RaiseHdrProbeUpdated(PreviewHdrDisplayInfo.Unsupported, nativeWglActive: false, presentPathFailed: false);
     }
 
@@ -1411,6 +1414,13 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
                         (_hdrSwapchain.LastFailure ?? "unknown") +
                         "); presenting without flip.");
                 }
+                else if (!_hdrYFlipPathLogged &&
+                         !string.Equals(_hdrSwapchain.YFlipResolvePath, "undecided", StringComparison.Ordinal))
+                {
+                    _hdrYFlipPathLogged = true;
+                    _backend.EmitPreviewDiagnostic(
+                        "[3D preview] HDR Y-flip resolve path: " + _hdrSwapchain.YFlipResolvePath + ".");
+                }
             }
             finally
             {
@@ -1469,6 +1479,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
     {
         _hdrPresentPathFailed = false;
         _hdrYFlipFailureLogged = false;
+        _hdrYFlipPathLogged = false;
         _backend.ClearHdrPresentSuppression();
         // Force the next probe raise even if display flags are unchanged.
         _lastRaisedHdrPresentPathFailed = true;

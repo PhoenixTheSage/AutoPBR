@@ -247,6 +247,8 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
     private int _lockedBuffer = -1;
     private bool _havePresentableFrame;
     private bool _sceneFboComplete;
+    /// <summary>0 = undecided, 1 = blit, 2 = shader fallback.</summary>
+    private int _yFlipPath;
     private IntPtr _parentHwnd;
     private IntPtr _presentHwnd;
     private int _presentHwndWidth;
@@ -296,6 +298,14 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
     /// <summary>Private scene FBO (not the NV_DX shared texture). Resolve/flip happens before Present.</summary>
     public int Framebuffer => (int)_sceneFbo;
     public string? LastFailure => _lastFailure;
+
+    /// <summary>Resolve path after the first successful Y-flip: <c>blit</c>, <c>shader</c>, or <c>undecided</c>.</summary>
+    public string YFlipResolvePath => _yFlipPath switch
+    {
+        1 => "blit",
+        2 => "shader",
+        _ => "undecided"
+    };
 
     /// <summary>Returned when the present child HWND is still being created on the UI thread.</summary>
     public const string PresentWindowPendingMessage = "HDR present HWND is being created on the UI thread.";
@@ -354,6 +364,7 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             _writeIndex = 0;
             _havePresentableFrame = false;
             _sceneFboComplete = false;
+            _yFlipPath = 0;
         }
 
         _lastFailure = null;
@@ -409,6 +420,8 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
     /// Resolves the private scene color into a shared NV_DX texture with a Y-flip.
     /// Uses double-buffered shared textures + fences so we do not ClientWaitSync the current
     /// frame before Present (that hard sync was ~halving HDR FPS vs SDR SwapBuffers).
+    /// Prefers <c>glBlitFramebuffer</c> (Y-inverted dest); falls back to the fullscreen shader
+    /// if blit is unsupported on the locked NV_DX target.
     /// </summary>
     public bool TryFlipFramebufferY(GL gl)
     {
@@ -440,6 +453,83 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
         // Scene/overlay passes often leave sticky GL errors; ignore those before our work.
         DrainGlErrors(gl);
 
+        try
+        {
+            // Step-1 opt: blit with inverted dest Y. Keep shader path as proven fallback.
+            if (_yFlipPath != 2 && TryResolveByBlit(gl, write))
+            {
+                _yFlipPath = 1;
+                EndFrame();
+                gl.Flush();
+                _resolveFences[write] = gl.FenceSync(SyncCondition.SyncGpuCommandsComplete, SyncBehaviorFlags.None);
+                _lastFailure = null;
+                return true;
+            }
+
+            if (!TryResolveByShader(gl, write))
+            {
+                return false;
+            }
+
+            _yFlipPath = 2;
+            EndFrame();
+            // Publish without waiting — Present shows the previous buffer; this fence is waited
+            // when that buffer is presented next frame (after scene render has overlapped it).
+            gl.Flush();
+            _resolveFences[write] = gl.FenceSync(SyncCondition.SyncGpuCommandsComplete, SyncBehaviorFlags.None);
+
+            _lastFailure = null;
+            return true;
+        }
+        finally
+        {
+            if (_lockedBuffer >= 0)
+            {
+                EndFrame();
+            }
+        }
+    }
+
+    /// <summary>Y-flip resolve via blit. Returns false if the driver rejects the blit.</summary>
+    private bool TryResolveByBlit(GL gl, int write)
+    {
+        var priorRead = gl.GetInteger(GetPName.ReadFramebufferBinding);
+        var priorDraw = gl.GetInteger(GetPName.DrawFramebufferBinding);
+        try
+        {
+            gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _sceneFbo);
+            gl.ReadBuffer(ReadBufferMode.ColorAttachment0);
+            gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _resolveFbos[write]);
+            gl.DrawBuffer(DrawBufferMode.ColorAttachment0);
+            gl.BlitFramebuffer(
+                0,
+                0,
+                _width,
+                _height,
+                0,
+                _height,
+                _width,
+                0,
+                ClearBufferMask.ColorBufferBit,
+                BlitFramebufferFilter.Nearest);
+            var blitErr = gl.GetError();
+            if (blitErr != GLEnum.NoError)
+            {
+                DrainGlErrors(gl);
+                return false;
+            }
+
+            return true;
+        }
+        finally
+        {
+            gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, (uint)Math.Max(0, priorRead));
+            gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, (uint)Math.Max(0, priorDraw));
+        }
+    }
+
+    private bool TryResolveByShader(GL gl, int write)
+    {
         var priorDraw = gl.GetInteger(GetPName.DrawFramebufferBinding);
         var priorProgram = gl.GetInteger(GetPName.CurrentProgram);
         var priorVao = gl.GetInteger(GetPName.VertexArrayBinding);
@@ -479,13 +569,6 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
                 return false;
             }
 
-            EndFrame();
-            // Publish without waiting — Present shows the previous buffer; this fence is waited
-            // when that buffer is presented next frame (after scene render has overlapped it).
-            gl.Flush();
-            _resolveFences[write] = gl.FenceSync(SyncCondition.SyncGpuCommandsComplete, SyncBehaviorFlags.None);
-
-            _lastFailure = null;
             return true;
         }
         finally
@@ -499,10 +582,6 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             gl.BindVertexArray((uint)Math.Max(0, priorVao));
             gl.UseProgram((uint)Math.Max(0, priorProgram));
             gl.BindFramebuffer(FramebufferTarget.Framebuffer, (uint)Math.Max(0, priorDraw));
-            if (_lockedBuffer >= 0)
-            {
-                EndFrame();
-            }
         }
     }
 
@@ -1297,6 +1376,7 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
 
         _sceneFboComplete = false;
         _havePresentableFrame = false;
+        _yFlipPath = 0;
         _writeIndex = 0;
     }
 
