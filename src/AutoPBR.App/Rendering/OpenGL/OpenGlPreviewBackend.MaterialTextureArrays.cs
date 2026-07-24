@@ -7,10 +7,11 @@ namespace AutoPBR.App.Rendering.OpenGL;
 
 public sealed partial class OpenGlPreviewBackend
 {
-    private const int MainPassAlbedoArrayUnit = 7;
-    private const int MainPassNormalArrayUnit = 8;
-    private const int MainPassSpecularArrayUnit = 9;
-    private const int MainPassHeightArrayUnit = 10;
+    // Keep clear of main-pass globals: shadow far/near/mid = 4/5/7, sky LUT = 6, material 2D = 0–3.
+    private const int MainPassAlbedoArrayUnit = 8;
+    private const int MainPassNormalArrayUnit = 9;
+    private const int MainPassSpecularArrayUnit = 10;
+    private const int MainPassHeightArrayUnit = 11;
     private const int ShadowPassAlbedoArrayUnit = 1;
 
     private bool ShouldUseMaterialTextureArrays() =>
@@ -45,10 +46,16 @@ public sealed partial class OpenGlPreviewBackend
         if (!GenesisMaterialTextureArrayEligibility.TryResolve(
                 ShouldUseMaterialTextureArrays(),
                 materialDrawRecordsUploaded,
-                frame.EnableTessellationDisplacementEff,
                 frame.BlockModel is not null,
                 slots is { Length: > 0 },
                 out var eligibilityReason))
+        {
+            return false;
+        }
+
+        // Program selection may have compiled without array samplers even when eligibility
+        // would otherwise pass (e.g. session compile fallback). Never claim arrays are live then.
+        if (!_activeGenesisProgramKey.MaterialTextureArrays)
         {
             return false;
         }

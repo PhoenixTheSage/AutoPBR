@@ -107,7 +107,7 @@ public sealed partial class OpenGlPreviewBackend
         int GenesisUseMaterialTextureArray,
         int GenesisDrawRecordIndex);
 
-    private readonly record struct LineProgramUniformLocs(int Mvp);
+    private readonly record struct LineProgramUniformLocs(int Mvp, int ColorMul);
 
     private readonly record struct MoonProgramUniformLocs(
         int ViewProj,
@@ -235,7 +235,7 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uGenesisDrawRecordIndex"));
 
     private static LineProgramUniformLocs ResolveLineProgramUniformLocs(GlLineShaderProgram program) =>
-        new(program.GetUniformLocation("uMvp"));
+        new(program.GetUniformLocation("uMvp"), program.GetUniformLocation("uColorMul"));
 
     private static MoonProgramUniformLocs ResolveMoonProgramUniformLocs(GlMoonBillboardProgram program) =>
         new(

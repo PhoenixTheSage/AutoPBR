@@ -49,9 +49,30 @@ internal static class UserSettingsSynchronizer
         vm.Preview3DEnableLegacyEntityWobble = settings.Preview3DEnableLegacyEntityWobble;
         vm.Preview3DPauseEntityIdleAnimation = settings.Preview3DPauseEntityIdleAnimation;
         vm.Preview3DShowGrid = settings.Preview3DShowGrid;
+        vm.Preview3DGridColor = Avalonia.Media.Color.FromUInt32(
+            settings.Preview3DGridColorArgb == 0
+                ? PreviewStageConstants.DefaultGridColorArgb
+                : settings.Preview3DGridColorArgb);
         vm.Preview3DShowGroundMesh = settings.Preview3DShowGroundMesh;
         vm.Preview3DChunkViewDistance = Math.Clamp(
             settings.Preview3DChunkViewDistance, 2, 24);
+        vm.Preview3DWorldSeed = Math.Clamp(settings.Preview3DWorldSeed, 0, int.MaxValue);
+        vm.Preview3DTerrainBiomeSize = Math.Clamp(
+            settings.Preview3DTerrainBiomeSize,
+            PreviewStageConstants.TerrainMinBiomeSize,
+            PreviewStageConstants.TerrainMaxBiomeSize);
+        vm.Preview3DTerrainAmplification = Math.Clamp(
+            settings.Preview3DTerrainAmplification,
+            PreviewStageConstants.TerrainMinAmplification,
+            PreviewStageConstants.TerrainMaxAmplification);
+        vm.Preview3DTerrainErosionStrength = Math.Clamp(
+            settings.Preview3DTerrainErosionStrength,
+            PreviewStageConstants.TerrainMinErosionStrength,
+            PreviewStageConstants.TerrainMaxErosionStrength);
+        vm.Preview3DTerrainContinentalness = Math.Clamp(
+            settings.Preview3DTerrainContinentalness,
+            PreviewStageConstants.TerrainMinContinentalness,
+            PreviewStageConstants.TerrainMaxContinentalness);
         vm.Preview3DGrassColormapTemperature = Math.Clamp(
             settings.Preview3DGrassColormapTemperature ?? PreviewStageConstants.DefaultGrassColormapTemperature,
             0.0,
@@ -63,7 +84,9 @@ internal static class UserSettingsSynchronizer
         vm.Preview3DShowAxes = settings.Preview3DShowAxes;
         vm.Preview3DShowFpsCounter = settings.Preview3DShowFpsCounter;
         vm.Preview3DLogGpuPassTimings = settings.Preview3DLogGpuPassTimings;
+        vm.Preview3DLogVerbosePreviewDiagnostics = settings.Preview3DLogVerbosePreviewDiagnostics;
         vm.Preview3DShowExpandedGpuTimingHud = settings.Preview3DShowExpandedGpuTimingHud;
+        vm.Preview3DOcclusionDebugMode = Math.Clamp(settings.Preview3DOcclusionDebugMode, 0, 2);
         vm.Preview3DVSyncEnabled = settings.Preview3DVSyncEnabled ?? settings.Preview3DCapFpsAt60;
         vm.Preview3DEnableParallax = settings.Preview3DEnableParallax;
         vm.Preview3DEnableNormalMap = settings.Preview3DEnableNormalMap;
@@ -390,14 +413,34 @@ internal static class UserSettingsSynchronizer
         settings.Preview3DEnableLegacyEntityWobble = vm.Preview3DEnableLegacyEntityWobble;
         settings.Preview3DPauseEntityIdleAnimation = vm.Preview3DPauseEntityIdleAnimation;
         settings.Preview3DShowGrid = vm.Preview3DShowGrid;
+        settings.Preview3DGridColorArgb = vm.Preview3DGridColor.ToUInt32();
         settings.Preview3DShowGroundMesh = vm.Preview3DShowGroundMesh;
         settings.Preview3DChunkViewDistance = (int)Math.Round(Math.Clamp(vm.Preview3DChunkViewDistance, 2, 24));
+        settings.Preview3DWorldSeed = (int)Math.Clamp(Math.Round(vm.Preview3DWorldSeed), 0, int.MaxValue);
+        settings.Preview3DTerrainBiomeSize = Math.Clamp(
+            vm.Preview3DTerrainBiomeSize,
+            PreviewStageConstants.TerrainMinBiomeSize,
+            PreviewStageConstants.TerrainMaxBiomeSize);
+        settings.Preview3DTerrainAmplification = Math.Clamp(
+            vm.Preview3DTerrainAmplification,
+            PreviewStageConstants.TerrainMinAmplification,
+            PreviewStageConstants.TerrainMaxAmplification);
+        settings.Preview3DTerrainErosionStrength = Math.Clamp(
+            vm.Preview3DTerrainErosionStrength,
+            PreviewStageConstants.TerrainMinErosionStrength,
+            PreviewStageConstants.TerrainMaxErosionStrength);
+        settings.Preview3DTerrainContinentalness = Math.Clamp(
+            vm.Preview3DTerrainContinentalness,
+            PreviewStageConstants.TerrainMinContinentalness,
+            PreviewStageConstants.TerrainMaxContinentalness);
         settings.Preview3DGrassColormapTemperature = Math.Clamp(vm.Preview3DGrassColormapTemperature, 0.0, 1.0);
         settings.Preview3DGrassColormapDownfall = Math.Clamp(vm.Preview3DGrassColormapDownfall, 0.0, 1.0);
         settings.Preview3DShowAxes = vm.Preview3DShowAxes;
         settings.Preview3DShowFpsCounter = vm.Preview3DShowFpsCounter;
         settings.Preview3DLogGpuPassTimings = vm.Preview3DLogGpuPassTimings;
+        settings.Preview3DLogVerbosePreviewDiagnostics = vm.Preview3DLogVerbosePreviewDiagnostics;
         settings.Preview3DShowExpandedGpuTimingHud = vm.Preview3DShowExpandedGpuTimingHud;
+        settings.Preview3DOcclusionDebugMode = Math.Clamp(vm.Preview3DOcclusionDebugMode, 0, 2);
         settings.Preview3DVSyncEnabled = vm.Preview3DVSyncEnabled;
         settings.Preview3DCapFpsAt60 = false;
         settings.Preview3DEnableParallax = vm.Preview3DEnableParallax;

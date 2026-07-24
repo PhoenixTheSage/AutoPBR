@@ -198,4 +198,16 @@ public sealed class PreviewShadowFrustumTests
         corners[6] = new Vector3(min.X, max.Y, max.Z);
         corners[7] = new Vector3(max.X, max.Y, max.Z);
     }
+
+    [Fact]
+    public void ResolveShadowCasterInclusionPadding_stays_small_and_grows_with_low_sun()
+    {
+        var highSun = Vector3.Normalize(new Vector3(0.1f, -0.95f, 0.1f));
+        var lowSun = Vector3.Normalize(new Vector3(0.7f, -0.15f, 0.2f));
+        var highPad = OpenGlPreviewBackend.ResolveShadowCasterInclusionPadding(highSun, 8f, 48f);
+        var lowPad = OpenGlPreviewBackend.ResolveShadowCasterInclusionPadding(lowSun, 8f, 48f);
+        Assert.True(lowPad >= highPad);
+        Assert.True(highPad >= 0f);
+        Assert.True(lowPad <= 6f);
+    }
 }

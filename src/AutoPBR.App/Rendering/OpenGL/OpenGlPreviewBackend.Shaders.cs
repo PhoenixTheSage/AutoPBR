@@ -115,6 +115,14 @@ public sealed partial class OpenGlPreviewBackend
         }
     }
 
+    private void SetVec4Loc(int loc, Vector4 v)
+    {
+        if (loc >= 0)
+        {
+            _gl!.Uniform4(loc, v.X, v.Y, v.Z, v.W);
+        }
+    }
+
     private void SetFloatLoc(int loc, float v)
     {
         if (loc >= 0)

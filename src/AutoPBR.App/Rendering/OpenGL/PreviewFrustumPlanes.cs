@@ -33,6 +33,13 @@ internal static class PreviewFrustumPlanes
         destination[5] = Normalize(r4 - r3); // far
     }
 
+    /// <summary>Extract into a frame-owned plane buffer.</summary>
+    public static void Extract(Matrix4x4 viewProjection, ref PreviewFrustumPlaneBuffer destination)
+    {
+        Span<Vector4> planes = destination;
+        Extract(viewProjection, planes);
+    }
+
     /// <summary>True when the sphere is not completely outside any frustum plane.</summary>
     public static bool SphereIntersects(ReadOnlySpan<Vector4> planes, Vector3 center, float radius)
     {

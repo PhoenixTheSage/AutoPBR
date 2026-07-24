@@ -785,9 +785,12 @@ public sealed partial class OpenGlPreviewBackend
                     : "[3D preview] Froxel god rays inject or integrate pass failed; using screen-space fallback.");
             }
 
-            if (!TryRunShadowAwareGodRays(ref frame))
+            using (BeginPassTimerScope(GlGpuTimerScope.GodRayResolve))
             {
-                TryRunScreenSpaceGodRays(ref frame);
+                if (!TryRunShadowAwareGodRays(ref frame))
+                {
+                    TryRunScreenSpaceGodRays(ref frame);
+                }
             }
 
             gl.DepthMask(priorDepthMask);
@@ -819,44 +822,47 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         // Full-res bilateral upsample + temporal reprojection.
-        _godRayResolveTarget!.BindDraw();
-        gl.Clear(ClearBufferMask.ColorBufferBit);
-        _godRayUpsampleProgram!.Use();
-        var upu = _godRayUpsampleUniformLocs;
-        gl.ActiveTexture(TextureUnit.Texture0);
-        gl.BindTexture(TextureTarget.Texture2D, _godRayHalfResTarget!.ColorTextureHandle);
-        SetIntOnProgramLoc(_godRayUpsampleProgram!, upu.HalfResRays, 0);
-        gl.ActiveTexture(TextureUnit.Texture1);
-        gl.BindTexture(TextureTarget.Texture2D, _sceneCapture!.DepthTextureHandle);
-        SetIntOnProgramLoc(_godRayUpsampleProgram!, upu.SceneDepth, 1);
-        gl.ActiveTexture(TextureUnit.Texture2);
-        gl.BindTexture(TextureTarget.Texture2D, _godRayHistoryTarget!.ColorTextureHandle);
-        SetIntOnProgramLoc(_godRayUpsampleProgram!, upu.History, 2);
-        SetMatrixOnProgramLoc(_godRayUpsampleProgram!, upu.InvViewProj, invViewProj);
-        SetMatrixOnProgramLoc(_godRayUpsampleProgram!, upu.PrevViewProj, _godRayPrevViewProj);
-        SetVec2OnProgramLoc(_godRayUpsampleProgram!, upu.HalfResTexelSize, new Vector2(1f / halfW, 1f / halfH));
-        var upsampleTemporal = frame.Settings.GodRayStabilizeDebug
-            ? 0f
-            : PreviewVolumetricQuality.EffectivePassTemporalWeight(
-                quality.UpsampleTemporalWeight, frame.Settings);
-        SetFloatOnProgramLoc(_godRayUpsampleProgram!, upu.TemporalWeight, upsampleTemporal);
-        SetIntOnProgramLoc(_godRayUpsampleProgram!, upu.HasHistory,
-            !frame.Settings.GodRayStabilizeDebug &&
-            _godRayHistoryValid && upsampleTemporal > 0f ? 1 : 0);
-        gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
-
-        if (!frame.Settings.GodRayStabilizeDebug)
+        using (BeginPassTimerScope(GlGpuTimerScope.GodRayResolve))
         {
-            _godRayHistoryTarget.CopyColorFrom(_godRayResolveTarget);
-            _godRayPrevViewProj = viewProj;
-            _godRayHistoryValid = true;
-        }
+            _godRayResolveTarget!.BindDraw();
+            gl.Clear(ClearBufferMask.ColorBufferBit);
+            _godRayUpsampleProgram!.Use();
+            var upu = _godRayUpsampleUniformLocs;
+            gl.ActiveTexture(TextureUnit.Texture0);
+            gl.BindTexture(TextureTarget.Texture2D, _godRayHalfResTarget!.ColorTextureHandle);
+            SetIntOnProgramLoc(_godRayUpsampleProgram!, upu.HalfResRays, 0);
+            gl.ActiveTexture(TextureUnit.Texture1);
+            gl.BindTexture(TextureTarget.Texture2D, _sceneCapture!.DepthTextureHandle);
+            SetIntOnProgramLoc(_godRayUpsampleProgram!, upu.SceneDepth, 1);
+            gl.ActiveTexture(TextureUnit.Texture2);
+            gl.BindTexture(TextureTarget.Texture2D, _godRayHistoryTarget!.ColorTextureHandle);
+            SetIntOnProgramLoc(_godRayUpsampleProgram!, upu.History, 2);
+            SetMatrixOnProgramLoc(_godRayUpsampleProgram!, upu.InvViewProj, invViewProj);
+            SetMatrixOnProgramLoc(_godRayUpsampleProgram!, upu.PrevViewProj, _godRayPrevViewProj);
+            SetVec2OnProgramLoc(_godRayUpsampleProgram!, upu.HalfResTexelSize, new Vector2(1f / halfW, 1f / halfH));
+            var upsampleTemporal = frame.Settings.GodRayStabilizeDebug
+                ? 0f
+                : PreviewVolumetricQuality.EffectivePassTemporalWeight(
+                    quality.UpsampleTemporalWeight, frame.Settings);
+            SetFloatOnProgramLoc(_godRayUpsampleProgram!, upu.TemporalWeight, upsampleTemporal);
+            SetIntOnProgramLoc(_godRayUpsampleProgram!, upu.HasHistory,
+                !frame.Settings.GodRayStabilizeDebug &&
+                _godRayHistoryValid && upsampleTemporal > 0f ? 1 : 0);
+            gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
 
-        // Detailed cloud opacity/depth has already attenuated samples behind the cloud in
-        // the integrate shader. Defer additive composition until after the cloud color pass
-        // so foreground shaft radiance is not attenuated a second time.
-        _pendingGodRayCompositeTexture = _godRayResolveTarget.ColorTextureHandle;
-        gl.BindVertexArray(0);
+            if (!frame.Settings.GodRayStabilizeDebug)
+            {
+                _godRayHistoryTarget.CopyColorFrom(_godRayResolveTarget);
+                _godRayPrevViewProj = viewProj;
+                _godRayHistoryValid = true;
+            }
+
+            // Detailed cloud opacity/depth has already attenuated samples behind the cloud in
+            // the integrate shader. Defer additive composition until after the cloud color pass
+            // so foreground shaft radiance is not attenuated a second time.
+            _pendingGodRayCompositeTexture = _godRayResolveTarget.ColorTextureHandle;
+            gl.BindVertexArray(0);
+        }
 
         gl.DepthMask(priorDepthMask);
         if (priorDepthTest)

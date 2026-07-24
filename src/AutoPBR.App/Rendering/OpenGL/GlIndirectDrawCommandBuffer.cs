@@ -127,6 +127,52 @@ internal sealed class GlIndirectDrawCommandBuffer : IDisposable
         destination[4] = baseInstance;
     }
 
+    public bool UploadCommands(ReadOnlySpan<uint> commandDwords, int commandCount)
+    {
+        if (_disposed || commandCount <= 0 || commandDwords.Length < commandCount * CommandDwords)
+        {
+            CommandCount = 0;
+            return false;
+        }
+
+        var dwordCount = commandCount * CommandDwords;
+        _buffer = _buffer == 0 ? _gl.GenBuffer() : _buffer;
+        _gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, _buffer);
+        var byteCount = dwordCount * sizeof(uint);
+        var span = commandDwords[..dwordCount];
+        if (byteCount <= _byteCapacity)
+        {
+            _gl.BufferSubData<uint>(BufferTargetARB.DrawIndirectBuffer, 0, span);
+        }
+        else
+        {
+            _gl.BufferData<uint>(BufferTargetARB.DrawIndirectBuffer, span, BufferUsageARB.DynamicDraw);
+            _byteCapacity = byteCount;
+        }
+
+        _gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, 0);
+        CommandCount = commandCount;
+        return true;
+    }
+
+    public static void WriteCommandDwords(
+        Span<uint> destination,
+        uint indexCount,
+        uint firstIndex,
+        uint baseInstance)
+    {
+        if (destination.Length < CommandDwords)
+        {
+            throw new ArgumentException("Draw command destination must hold five uints.", nameof(destination));
+        }
+
+        destination[0] = indexCount;
+        destination[1] = indexCount > 0 ? 1u : 0u;
+        destination[2] = firstIndex;
+        destination[3] = 0u;
+        destination[4] = baseInstance;
+    }
+
     public void Dispose()
     {
         if (_disposed)

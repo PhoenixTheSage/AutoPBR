@@ -1651,10 +1651,13 @@
     <value>Limite la distance qu'une trace de parallaxe peut parcourir dans l'espace UV. Soulevez pour un soulagement plus profond ; plus bas pour réduire l’étirement de l’angle rasant.</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacement" xml:space="preserve">
-    <value>Saillie pavée</value>
+    <value>Tessellation</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacementTooltip" xml:space="preserve">
     <value>Utilisez la tessellation OpenGL de bureau pour ajouter une véritable géométrie extérieure à partir de régions de carte de haute hauteur. POM gère toujours les détails encastrés.</value>
+  </data>
+  <data name="Preview3DTessellationSection" xml:space="preserve">
+    <value>Tessellation</value>
   </data>
   <data name="Preview3DTessellationLevel" xml:space="preserve">
     <value>Niveau de pavage</value>

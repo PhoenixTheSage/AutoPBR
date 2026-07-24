@@ -1,7 +1,6 @@
 #version 430 core
 
-// GPU-side indirect command compaction. Later P5 culling passes can replace the
-// visibility flags with frustum/LOD tests while keeping this output ABI.
+// GPU-side indirect command compaction with frustum / LOD / optional Hi-Z occlusion.
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
@@ -40,6 +39,7 @@ layout(std430, binding = 3) buffer OutputCounter
     uint uVisibilityFlagCulledCommands;
     uint uOverflowCommands;
     uint uMaximumIndexCount;
+    uint uOcclusionCulledCommands;
 };
 
 struct BatchCullRecord
@@ -63,8 +63,100 @@ uniform int uCollectDiagnostics;
 uniform int uPreserveOrder;
 uniform vec3 uCameraPos;
 uniform vec4 uFrustumPlanes[6];
+uniform int uUseHiZ;
+uniform sampler2D uHiZ;
+uniform mat4 uViewProj;
+uniform ivec2 uHiZSize;
+uniform int uHiZMaxLevel;
+uniform float uDepthEpsilon;
+uniform int uUseVoxelOcclusion;
+uniform sampler2D uVoxelHeightAtlas;
+uniform ivec2 uVoxelAtlasOrigin;
+uniform ivec2 uVoxelAtlasSize;
+uniform float uVoxelGroundPlaneY;
+uniform int uVoxelMaxSteps;
 
-// 0 = visible, 1 = frustum culled, 2 = distance culled.
+//!include "common/voxel_dda.glsl"
+
+bool projectSphere(
+    vec3 center,
+    float radius,
+    out vec2 minUv,
+    out vec2 maxUv,
+    out float nearestDepth)
+{
+    float minU = 1e20;
+    float maxU = -1e20;
+    float minV = 1e20;
+    float maxV = -1e20;
+    nearestDepth = 1e20;
+
+    for (int i = 0; i < 8; i++)
+    {
+        vec3 corner = center + vec3(
+            ((i & 1) != 0) ? radius : -radius,
+            ((i & 2) != 0) ? radius : -radius,
+            ((i & 4) != 0) ? radius : -radius);
+        vec4 clip = uViewProj * vec4(corner, 1.0);
+        if (clip.w <= 1e-6)
+        {
+            return false;
+        }
+
+        float invW = 1.0 / clip.w;
+        vec3 ndc = clip.xyz * invW;
+        vec2 uv = ndc.xy * 0.5 + 0.5;
+        float depth = ndc.z * 0.5 + 0.5;
+        minU = min(minU, uv.x);
+        maxU = max(maxU, uv.x);
+        minV = min(minV, uv.y);
+        maxV = max(maxV, uv.y);
+        nearestDepth = min(nearestDepth, depth);
+    }
+
+    minUv = clamp(vec2(minU, minV), vec2(0.0), vec2(1.0));
+    maxUv = clamp(vec2(maxU, maxV), vec2(0.0), vec2(1.0));
+    nearestDepth = clamp(nearestDepth, 0.0, 1.0);
+    return maxUv.x >= minUv.x && maxUv.y >= minUv.y;
+}
+
+int selectMip(vec2 minUv, vec2 maxUv)
+{
+    float pixelW = max(1.0, (maxUv.x - minUv.x) * float(uHiZSize.x));
+    float pixelH = max(1.0, (maxUv.y - minUv.y) * float(uHiZSize.y));
+    float size = max(pixelW, pixelH);
+    // Bias toward finer mips so sky/clear holes (depth ~1) keep the region max high and
+    // prevent flat-ground false occlusion of batches whose coarse AABB sits on the plane.
+    int level = size <= 1.0 ? 0 : int(ceil(log2(size))) - 2;
+    return clamp(level, 0, uHiZMaxLevel);
+}
+
+float sampleHiZMax(vec2 minUv, vec2 maxUv, int level)
+{
+    int mipW = max(1, uHiZSize.x >> level);
+    int mipH = max(1, uHiZSize.y >> level);
+    ivec2 minTex = ivec2(clamp(minUv * vec2(mipW, mipH), vec2(0.0), vec2(mipW - 1, mipH - 1)));
+    ivec2 maxTex = ivec2(clamp(maxUv * vec2(mipW, mipH), vec2(0.0), vec2(mipW - 1, mipH - 1)));
+    float regionMax = texelFetch(uHiZ, minTex, level).r;
+    regionMax = max(regionMax, texelFetch(uHiZ, ivec2(maxTex.x, minTex.y), level).r);
+    regionMax = max(regionMax, texelFetch(uHiZ, ivec2(minTex.x, maxTex.y), level).r);
+    regionMax = max(regionMax, texelFetch(uHiZ, maxTex, level).r);
+    // 3x3 grid over the AABB so a single sky/clear texel can veto occlusion.
+    ivec2 span = max(maxTex - minTex, ivec2(1));
+    for (int dy = 0; dy < 3; dy++)
+    {
+        for (int dx = 0; dx < 3; dx++)
+        {
+            ivec2 t = minTex + (span * ivec2(dx, dy)) / 2;
+            t = clamp(t, ivec2(0), ivec2(mipW - 1, mipH - 1));
+            regionMax = max(regionMax, texelFetch(uHiZ, t, level).r);
+        }
+    }
+
+    return regionMax;
+}
+
+// 0 = visible, 1 = frustum, 2 = distance, 3 = occlusion.
 uint batchCullReason(uint index)
 {
     BatchCullRecord record = uBatchCullRecords[index];
@@ -94,7 +186,75 @@ uint batchCullReason(uint index)
         }
     }
 
+    if (uUseVoxelOcclusion != 0)
+    {
+        if (voxelSphereOccluded(uCameraPos, center, radius))
+        {
+            return 3u;
+        }
+    }
+    else if (uUseHiZ != 0)
+    {
+        // Slightly shrink the sphere for occlusion only so oversized batch bounds do not
+        // project onto foreground ground and false-cull meshes that sit above it.
+        float hizRadius = radius * 0.85;
+        vec2 minUv;
+        vec2 maxUv;
+        float nearestDepth;
+        if (projectSphere(center, hizRadius, minUv, maxUv, nearestDepth))
+        {
+            int level = selectMip(minUv, maxUv);
+            float regionMax = sampleHiZMax(minUv, maxUv, level);
+            if (nearestDepth > regionMax + uDepthEpsilon)
+            {
+                return 3u;
+            }
+        }
+    }
+
     return 0u;
+}
+
+void recordCullDiagnostic(uint cullReason)
+{
+    if (uCollectDiagnostics == 0)
+    {
+        return;
+    }
+
+    if (cullReason == 1u)
+    {
+        atomicAdd(uFrustumCulledCommands, 1u);
+    }
+    else if (cullReason == 2u)
+    {
+        atomicAdd(uDistanceCulledCommands, 1u);
+    }
+    else if (cullReason == 3u)
+    {
+        atomicAdd(uOcclusionCulledCommands, 1u);
+    }
+}
+
+void recordCullDiagnosticOrdered(uint cullReason)
+{
+    if (uCollectDiagnostics == 0)
+    {
+        return;
+    }
+
+    if (cullReason == 1u)
+    {
+        uFrustumCulledCommands++;
+    }
+    else if (cullReason == 2u)
+    {
+        uDistanceCulledCommands++;
+    }
+    else if (cullReason == 3u)
+    {
+        uOcclusionCulledCommands++;
+    }
 }
 
 void main()
@@ -130,11 +290,7 @@ void main()
             uint orderedCullReason = uUseGpuCulling != 0 ? batchCullReason(orderedIndex) : 0u;
             if (orderedCullReason != 0u)
             {
-                if (uCollectDiagnostics != 0)
-                {
-                    if (orderedCullReason == 1u) uFrustumCulledCommands++;
-                    else uDistanceCulledCommands++;
-                }
+                recordCullDiagnosticOrdered(orderedCullReason);
                 continue;
             }
 
@@ -196,17 +352,7 @@ void main()
     uint cullReason = uUseGpuCulling != 0 ? batchCullReason(index) : 0u;
     if (cullReason != 0u)
     {
-        if (uCollectDiagnostics != 0)
-        {
-            if (cullReason == 1u)
-            {
-                atomicAdd(uFrustumCulledCommands, 1u);
-            }
-            else
-            {
-                atomicAdd(uDistanceCulledCommands, 1u);
-            }
-        }
+        recordCullDiagnostic(cullReason);
         return;
     }
 

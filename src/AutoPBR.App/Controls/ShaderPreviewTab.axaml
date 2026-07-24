@@ -49,6 +49,10 @@
                                                                   ToolTip.Tip="{Binding Strings.Preview3DEnableParallaxTooltip}">
                                                             <TextBlock Text="{Binding Strings.Preview3DEnableParallax}" TextWrapping="Wrap" />
                                                         </CheckBox>
+                                                        <CheckBox IsChecked="{Binding Preview3DEnableTessellationDisplacement, Mode=TwoWay}"
+                                                                  ToolTip.Tip="{Binding Strings.Preview3DEnableTessellationDisplacementTooltip}">
+                                                            <TextBlock Text="{Binding Strings.Preview3DEnableTessellationDisplacement}" TextWrapping="Wrap" />
+                                                        </CheckBox>
                                                     </StackPanel>
                                                 </ctrls:FlyoutSection>
                                                 <ctrls:FlyoutSection Header="{Binding Strings.Preview3DTaaSection}" FlyoutMaxWidth="720">
@@ -135,6 +139,18 @@
                                                 </ctrls:FlyoutSection>
                                             </StackPanel>
                                             <StackPanel Spacing="8" MinWidth="0">
+                                                <ctrls:FlyoutSection Header="{Binding Strings.Preview3DTessellationSection}" FlyoutMaxWidth="720">
+                                                    <StackPanel Spacing="8">
+                                                        <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
+                                                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DTessellationLevel}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DTessellationLevelTooltip}" />
+                                                            <ctrls:OverlaySlider Grid.Column="1" Minimum="1" Maximum="16" SmallChange="1" LargeChange="2" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Preview3DTessellationLevel, Mode=TwoWay}" Increment="1" FormatString="0" ToolTip.Tip="{Binding Strings.Preview3DTessellationLevelTooltip}" IsEnabled="{Binding Preview3DEnableTessellationDisplacement}" HorizontalAlignment="Left" />
+                                                        </Grid>
+                                                        <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
+                                                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DTessellationDisplacementStrength}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DTessellationDisplacementStrengthTooltip}" />
+                                                            <ctrls:OverlaySlider Grid.Column="1" Minimum="0.00" Maximum="0.20" SmallChange="0.002" LargeChange="0.01" TickFrequency="0.02" Value="{Binding Preview3DTessellationDisplacementStrength, Mode=TwoWay}" Increment="0.002" FormatString="F3" ToolTip.Tip="{Binding Strings.Preview3DTessellationDisplacementStrengthTooltip}" IsEnabled="{Binding Preview3DEnableTessellationDisplacement}" HorizontalAlignment="Left" />
+                                                        </Grid>
+                                                    </StackPanel>
+                                                </ctrls:FlyoutSection>
                                                 <ctrls:FlyoutSection Header="{Binding Strings.Preview3DAnimationSection}" FlyoutMaxWidth="720">
                                                     <StackPanel Spacing="8">
                                                         <CheckBox Content="{Binding Strings.Preview3DAutoRotate}"
@@ -216,18 +232,6 @@
                                                             <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DParallaxMaxUvShift}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DParallaxMaxUvShiftTooltip}" />
                                                             <ctrls:OverlaySlider Grid.Column="1" Minimum="0.05" Maximum="0.75" SmallChange="0.01" LargeChange="0.05" TickFrequency="0.10" Value="{Binding Preview3DParallaxMaxUvShift, Mode=TwoWay}" Increment="0.01" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DParallaxMaxUvShiftTooltip}" IsEnabled="{Binding Preview3DEnableParallax}" HorizontalAlignment="Left" />
                                                         </Grid>
-                                                        <CheckBox IsChecked="{Binding Preview3DEnableTessellationDisplacement, Mode=TwoWay}"
-                                                                  ToolTip.Tip="{Binding Strings.Preview3DEnableTessellationDisplacementTooltip}">
-                                                            <TextBlock Text="{Binding Strings.Preview3DEnableTessellationDisplacement}" TextWrapping="Wrap" />
-                                                        </CheckBox>
-                                                        <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
-                                                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DTessellationLevel}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DTessellationLevelTooltip}" />
-                                                            <ctrls:OverlaySlider Grid.Column="1" Minimum="1" Maximum="16" SmallChange="1" LargeChange="2" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Preview3DTessellationLevel, Mode=TwoWay}" Increment="1" FormatString="0" ToolTip.Tip="{Binding Strings.Preview3DTessellationLevelTooltip}" IsEnabled="{Binding Preview3DEnableTessellationDisplacement}" HorizontalAlignment="Left" />
-                                                        </Grid>
-                                                        <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
-                                                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DTessellationDisplacementStrength}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DTessellationDisplacementStrengthTooltip}" />
-                                                            <ctrls:OverlaySlider Grid.Column="1" Minimum="0.00" Maximum="0.20" SmallChange="0.002" LargeChange="0.01" TickFrequency="0.02" Value="{Binding Preview3DTessellationDisplacementStrength, Mode=TwoWay}" Increment="0.002" FormatString="F3" ToolTip.Tip="{Binding Strings.Preview3DTessellationDisplacementStrengthTooltip}" IsEnabled="{Binding Preview3DEnableTessellationDisplacement}" HorizontalAlignment="Left" />
-                                                        </Grid>
                                                         <CheckBox IsChecked="{Binding Preview3DEnableParallaxShadow, Mode=TwoWay}"
                                                                   ToolTip.Tip="{Binding Strings.Preview3DEnableParallaxShadowTooltip}">
                                                             <TextBlock Text="{Binding Strings.Preview3DEnableParallaxShadow}" TextWrapping="Wrap" />
@@ -252,30 +256,122 @@
                                                 </ctrls:FlyoutSection>
                                                 <ctrls:FlyoutSection Header="{Binding Strings.Preview3DWorldSection}" FlyoutMaxWidth="720">
                                                     <StackPanel Spacing="8">
-                                                        <CheckBox IsChecked="{Binding Preview3DShowGrid, Mode=TwoWay}"
-                                                                  ToolTip.Tip="{Binding Strings.Preview3DShowGridTooltip}">
-                                                            <TextBlock Text="{Binding Strings.Preview3DShowGrid}" TextWrapping="Wrap" />
-                                                        </CheckBox>
+                                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                                            <CheckBox IsChecked="{Binding Preview3DShowGrid, Mode=TwoWay}"
+                                                                      ToolTip.Tip="{Binding Strings.Preview3DShowGridTooltip}"
+                                                                      VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding Strings.Preview3DShowGrid}" TextWrapping="Wrap" />
+                                                            </CheckBox>
+                                                            <ColorPicker Classes="checkbox-swatch"
+                                                                         Color="{Binding Preview3DGridColor, Mode=TwoWay}"
+                                                                         IsEnabled="{Binding Preview3DShowGrid}"
+                                                                         IsAlphaEnabled="True"
+                                                                         IsColorSpectrumVisible="True"
+                                                                         IsColorPaletteVisible="True"
+                                                                         IsComponentSliderVisible="True"
+                                                                         IsColorModelVisible="True"
+                                                                         ToolTip.Tip="{Binding Strings.Preview3DGridColorTooltip}" />
+                                                        </StackPanel>
                                                         <CheckBox IsChecked="{Binding Preview3DShowGroundMesh, Mode=TwoWay}"
                                                                   ToolTip.Tip="{Binding Strings.Preview3DShowGroundMeshTooltip}">
                                                             <TextBlock Text="{Binding Strings.Preview3DShowGroundMesh}" TextWrapping="Wrap" />
                                                         </CheckBox>
-                                                        <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0"
-                                                              IsEnabled="{Binding Preview3DShowGroundMesh}">
-                                                            <TextBlock Grid.Column="0" VerticalAlignment="Center"
-                                                                       Text="{Binding Strings.Preview3DChunkViewDistance}"
-                                                                       TextWrapping="Wrap"
-                                                                       ToolTip.Tip="{Binding Strings.Preview3DChunkViewDistanceTooltip}" />
-                                                            <ctrls:OverlaySlider Grid.Column="1"
-                                                                                Minimum="2" Maximum="24"
-                                                                                SmallChange="1" LargeChange="2"
-                                                                                TickFrequency="1"
-                                                                                IsSnapToTickEnabled="True"
-                                                                                Value="{Binding Preview3DChunkViewDistance, Mode=TwoWay}"
-                                                                                Increment="1" FormatString="F0"
-                                                                                ToolTip.Tip="{Binding Strings.Preview3DChunkViewDistanceTooltip}"
-                                                                                HorizontalAlignment="Left" />
-                                                        </Grid>
+                                                        <StackPanel Spacing="8" IsEnabled="{Binding Preview3DShowGroundMesh}">
+                                                            <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                                                           Text="{Binding Strings.Preview3DChunkViewDistance}"
+                                                                           TextWrapping="Wrap"
+                                                                           ToolTip.Tip="{Binding Strings.Preview3DChunkViewDistanceTooltip}" />
+                                                                <ctrls:OverlaySlider Grid.Column="1"
+                                                                                    Minimum="2" Maximum="24"
+                                                                                    SmallChange="1" LargeChange="2"
+                                                                                    TickFrequency="1"
+                                                                                    IsSnapToTickEnabled="True"
+                                                                                    Value="{Binding Preview3DChunkViewDistance, Mode=TwoWay}"
+                                                                                    Increment="1" FormatString="F0"
+                                                                                    ToolTip.Tip="{Binding Strings.Preview3DChunkViewDistanceTooltip}"
+                                                                                    HorizontalAlignment="Left" />
+                                                            </Grid>
+                                                            <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                                                           Text="{Binding Strings.Preview3DWorldSeed}"
+                                                                           TextWrapping="Wrap"
+                                                                           ToolTip.Tip="{Binding Strings.Preview3DWorldSeedTooltip}" />
+                                                                <NumericUpDown Grid.Column="1"
+                                                                               Classes="overlay-slider-box"
+                                                                               ShowButtonSpinner="False"
+                                                                               Minimum="0"
+                                                                               Maximum="2147483647"
+                                                                               Increment="1"
+                                                                               FormatString="0"
+                                                                               Value="{Binding Preview3DWorldSeed, Mode=TwoWay}"
+                                                                               ToolTip.Tip="{Binding Strings.Preview3DWorldSeedTooltip}"
+                                                                               Width="148"
+                                                                               HorizontalAlignment="Left"
+                                                                               VerticalAlignment="Center" />
+                                                                <Button Grid.Column="2"
+                                                                        Content="{Binding Strings.Preview3DWorldSeedRandomize}"
+                                                                        Command="{Binding RandomizePreview3DWorldSeedCommand}"
+                                                                        ToolTip.Tip="{Binding Strings.Preview3DWorldSeedRandomizeTooltip}"
+                                                                        VerticalAlignment="Center" />
+                                                            </Grid>
+                                                            <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                                                           Text="{Binding Strings.Preview3DTerrainBiomeSize}"
+                                                                           TextWrapping="Wrap"
+                                                                           ToolTip.Tip="{Binding Strings.Preview3DTerrainBiomeSizeTooltip}" />
+                                                                <ctrls:OverlaySlider Grid.Column="1"
+                                                                                    Minimum="0.4" Maximum="3.0"
+                                                                                    SmallChange="0.05" LargeChange="0.25"
+                                                                                    TickFrequency="0.5"
+                                                                                    Value="{Binding Preview3DTerrainBiomeSize, Mode=TwoWay}"
+                                                                                    Increment="0.05" FormatString="F2"
+                                                                                    ToolTip.Tip="{Binding Strings.Preview3DTerrainBiomeSizeTooltip}"
+                                                                                    HorizontalAlignment="Left" />
+                                                            </Grid>
+                                                            <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                                                           Text="{Binding Strings.Preview3DTerrainAmplification}"
+                                                                           TextWrapping="Wrap"
+                                                                           ToolTip.Tip="{Binding Strings.Preview3DTerrainAmplificationTooltip}" />
+                                                                <ctrls:OverlaySlider Grid.Column="1"
+                                                                                    Minimum="0.25" Maximum="2.5"
+                                                                                    SmallChange="0.05" LargeChange="0.25"
+                                                                                    TickFrequency="0.5"
+                                                                                    Value="{Binding Preview3DTerrainAmplification, Mode=TwoWay}"
+                                                                                    Increment="0.05" FormatString="F2"
+                                                                                    ToolTip.Tip="{Binding Strings.Preview3DTerrainAmplificationTooltip}"
+                                                                                    HorizontalAlignment="Left" />
+                                                            </Grid>
+                                                            <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                                                           Text="{Binding Strings.Preview3DTerrainErosionStrength}"
+                                                                           TextWrapping="Wrap"
+                                                                           ToolTip.Tip="{Binding Strings.Preview3DTerrainErosionStrengthTooltip}" />
+                                                                <ctrls:OverlaySlider Grid.Column="1"
+                                                                                    Minimum="0.0" Maximum="1.5"
+                                                                                    SmallChange="0.05" LargeChange="0.25"
+                                                                                    TickFrequency="0.5"
+                                                                                    Value="{Binding Preview3DTerrainErosionStrength, Mode=TwoWay}"
+                                                                                    Increment="0.05" FormatString="F2"
+                                                                                    ToolTip.Tip="{Binding Strings.Preview3DTerrainErosionStrengthTooltip}"
+                                                                                    HorizontalAlignment="Left" />
+                                                            </Grid>
+                                                            <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                                                           Text="{Binding Strings.Preview3DTerrainContinentalness}"
+                                                                           TextWrapping="Wrap"
+                                                                           ToolTip.Tip="{Binding Strings.Preview3DTerrainContinentalnessTooltip}" />
+                                                                <ctrls:OverlaySlider Grid.Column="1"
+                                                                                    Minimum="0.5" Maximum="1.75"
+                                                                                    SmallChange="0.05" LargeChange="0.25"
+                                                                                    TickFrequency="0.25"
+                                                                                    Value="{Binding Preview3DTerrainContinentalness, Mode=TwoWay}"
+                                                                                    Increment="0.05" FormatString="F2"
+                                                                                    ToolTip.Tip="{Binding Strings.Preview3DTerrainContinentalnessTooltip}"
+                                                                                    HorizontalAlignment="Left" />
+                                                            </Grid>
+                                                        </StackPanel>
                                                     </StackPanel>
                                                 </ctrls:FlyoutSection>
                                                 <ctrls:FlyoutSection Header="{Binding Strings.Preview3DCameraExpanderSection}" FlyoutMaxWidth="720">

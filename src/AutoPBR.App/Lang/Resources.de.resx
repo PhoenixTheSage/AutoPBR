@@ -1819,10 +1819,13 @@
     <value>Begrenzt, wie weit eine Parallaxenspur im UV-Raum wandern kann. Erhöhen Sie sich für tiefere Erleichterung; niedriger, um die Streckung des Streifwinkels zu reduzieren.</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacement" xml:space="preserve">
-    <value>Mosaikförmiger Vorsprung</value>
+    <value>Tessellation</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacementTooltip" xml:space="preserve">
     <value>Verwenden Sie die Desktop-OpenGL-Tessellation, um echte Außengeometrie aus Kartenregionen mit großer Höhe hinzuzufügen. POM kümmert sich immer noch um vertiefte Details.</value>
+  </data>
+  <data name="Preview3DTessellationSection" xml:space="preserve">
+    <value>Tessellation</value>
   </data>
   <data name="Preview3DTessellationLevel" xml:space="preserve">
     <value>Tessellationsebene</value>

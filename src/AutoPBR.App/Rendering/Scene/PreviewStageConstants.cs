@@ -6,6 +6,15 @@ public static class PreviewStageConstants
     public const float GridHalfExtent = 14f;
     public const float GridStep = 0.5f;
 
+    /// <summary>Half-width of ground-grid ribbons in world units (thick quads, not GL lines).</summary>
+    public const float GridLineHalfWidth = 0.03f;
+
+    /// <summary>Lift grid slightly above the turf to avoid z-fighting with ground mesh.</summary>
+    public const float GridYBias = 0.02f;
+
+    /// <summary>Default ground-grid color (ARGB).</summary>
+    public const uint DefaultGridColorArgb = 0xE8F2F2F8;
+
     /// <summary>XZ plane where background grid lines sit.</summary>
     public const float GridWorldY = -0.56f;
 
@@ -47,14 +56,52 @@ public static class PreviewStageConstants
     /// </summary>
     public const int TerrainCliffDeltaBlocks = 2;
 
-    /// <summary>How many solid layers to keep below each column surface (thickness).</summary>
+    /// <summary>
+    /// Half-width in climate space [0,1] for soft biome affinity ramps.
+    /// Borders blend height geometry instead of hard-classifying each column.
+    /// </summary>
+    public const float TerrainBiomeBlendHalfWidth = 0.085f;
+
+    /// <summary>
+    /// Soft minimum column thickness below the surface. Actual solids extend further down to
+    /// <see cref="TerrainSolidFloorRelativeY"/> so multi-block cliffs never open sky holes.
+    /// </summary>
     public const int TerrainFillDepth = 3;
+
+    /// <summary>Debounce for World seed / gen sliders (chunk rebuild is expensive).</summary>
+    public const int TerrainWorldGenDebounceMs = 250;
+
+    public const float TerrainDefaultBiomeSize = 1f;
+    public const float TerrainMinBiomeSize = 0.4f;
+    public const float TerrainMaxBiomeSize = 3f;
+
+    public const float TerrainDefaultAmplification = 1f;
+    public const float TerrainMinAmplification = 0.25f;
+    public const float TerrainMaxAmplification = 2.5f;
+
+    public const float TerrainDefaultErosionStrength = 1f;
+    public const float TerrainMinErosionStrength = 0f;
+    public const float TerrainMaxErosionStrength = 1.5f;
+
+    public const float TerrainDefaultContinentalness = 1f;
+    public const float TerrainMinContinentalness = 0.5f;
+    public const float TerrainMaxContinentalness = 1.75f;
+
+    /// <summary>
+    /// Inclusive relative-Y floor every column is solid from (up to its surface).
+    /// Covers max mountain relief × max amplification so tall shelves cannot float over voids.
+    /// </summary>
+    public const int TerrainSolidFloorRelativeY =
+        -(int)(TerrainMountainMaxReliefBlocks * TerrainMaxAmplification);
 
     /// <summary>Deterministic heightfield seed.</summary>
     public const int TerrainHeightSeed = 0x41504252; // 'APBR'
 
     /// <summary>Salt XOR'd into climate noise sampling (biomes).</summary>
     public const int TerrainClimateSeedSalt = unchecked((int)0xC11A7E00);
+
+    /// <summary>Salt XOR'd into vegetation placement hashes (trees / cactus).</summary>
+    public const int TerrainVegetationSeedSalt = unchecked((int)0x7EEE0001);
 
     /// <summary>Full-detail chunks whose center is within this camera XZ radius keep POM at full strength.</summary>
     public const float TerrainNearPomRadius = 22f;

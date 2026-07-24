@@ -1,0 +1,17 @@
+Mozilla Public License Version 2.0
+==================================
+
+This directory contains Covered Software under the Mozilla Public License
+Version 2.0 (MPL-2.0):
+
+  PreviewTerrainAdvancedErosion.cs
+    — Phacelle noise and advanced erosion filter adapted from
+      Rune Skovbo Johansen (Shadertoy https://www.shadertoy.com/view/wXcfWn),
+      Copyright (c) 2025 Rune Skovbo Johansen.
+
+The full MPL-2.0 license text is available at:
+https://www.mozilla.org/MPL/2.0/
+
+You may redistribute and/or modify the Covered Software under MPL-2.0.
+Distributions of Covered Software must include this notice and the license.
+Modifications to Covered Software files must remain under MPL-2.0.

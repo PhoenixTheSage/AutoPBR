@@ -79,11 +79,11 @@ public sealed partial class OpenGlPreviewBackend
                                 frame.Settings.DrawPreviewSubject;
         // Idle has no material slots — keep a simple 2D-sampler Genesis program so the ground
         // pass (which only binds grass 2D textures) is not stuck with unbound tex-arrays/SSBOs.
+        // Texture arrays compose with tessellation on desktop WGL (TES reads height via draw-record layer).
         var useMaterialDrawRecords =
             frame.Settings.DrawPreviewSubject && ShouldUseMaterialDrawRecordSsbo();
         var useMaterialTextureArrays =
             frame.Settings.DrawPreviewSubject &&
-            !wantsTessellation &&
             ShouldUseMaterialTextureArrays();
         var cacheKey = new GenesisProgramCacheKey(
             mask,

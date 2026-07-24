@@ -1651,10 +1651,13 @@
     <value>Ограничивает расстояние, которое может пройти одна трасса параллакса в УФ-пространстве. Поднимите для более глубокого облегчения; опустите, чтобы уменьшить растяжение угла скольжения.</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacement" xml:space="preserve">
-    <value>Мозаичный выступ</value>
+    <value>Тесселяция</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacementTooltip" xml:space="preserve">
     <value>Используйте тесселяцию OpenGL для настольных компьютеров, чтобы добавить реальную внешнюю геометрию из областей карты с большой высотой. POM по-прежнему обрабатывает утопленные детали.</value>
+  </data>
+  <data name="Preview3DTessellationSection" xml:space="preserve">
+    <value>Тесселяция</value>
   </data>
   <data name="Preview3DTessellationLevel" xml:space="preserve">
     <value>Уровень тесселяции</value>

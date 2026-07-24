@@ -59,8 +59,23 @@ public sealed partial class OpenGlPreviewBackend
             ProgressFraction = fullyReady ? 1.0 : progressFraction,
             ElapsedMs = _gpuInitStopwatch.Elapsed.TotalMilliseconds,
         };
+
+        // EnsureGpuTier raises every frame once Core is up; only notify when readiness/phase/fraction change.
+        // ElapsedMs alone must not fire — subscribers re-push the 3D scene and flood the UI log.
+        var prev = _gpuInitProgress;
+        var changed = prev.ShaderSourcesReady != progress.ShaderSourcesReady ||
+                      prev.CoreReady != progress.CoreReady ||
+                      prev.GodRaysReady != progress.GodRaysReady ||
+                      prev.CloudsReady != progress.CloudsReady ||
+                      prev.PreviewTaaReady != progress.PreviewTaaReady ||
+                      prev.IsFullyReady != progress.IsFullyReady ||
+                      !string.Equals(prev.Phase, progress.Phase, StringComparison.Ordinal) ||
+                      Math.Abs(prev.ProgressFraction - progress.ProgressFraction) > 1e-4;
         _gpuInitProgress = progress;
-        GpuInitProgressChanged?.Invoke(progress);
+        if (changed)
+        {
+            GpuInitProgressChanged?.Invoke(progress);
+        }
     }
 
     private double ComputeTierProgressFraction(PreviewGpuInitTier desired)

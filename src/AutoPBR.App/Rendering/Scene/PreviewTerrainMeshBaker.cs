@@ -57,7 +57,7 @@ public static class PreviewTerrainMeshBaker
             maxH = 0;
         }
 
-        var layerMin = minH - fillDepth + 1;
+        var layerMin = ResolveLayerMin(minH, fillDepth);
         var layerMax = maxH;
         int HeightAt(int x, int z) => PreviewTerrainHeightfield.GetHeight(heightCopy, x, z, halfExtent);
 
@@ -146,7 +146,7 @@ public static class PreviewTerrainMeshBaker
                 Indices = allIndices.ToArray()
             },
             ChunkBatches = batches.ToArray(),
-            MinRelativeHeight = minH,
+            MinRelativeHeight = layerMin,
             MaxRelativeHeight = maxH
         };
     }
@@ -158,6 +158,8 @@ public static class PreviewTerrainMeshBaker
     public static PreviewTerrainChunkMesh? BakeFullChunk(
         TerrainChunkKey key,
         PreviewTerrainGrassBakeSettings grassSettings = default,
+        PreviewTerrainWorldGenSettings worldGen = default,
+        PreviewTerrainVegetationBakePlan? vegetation = null,
         int chunkSize = PreviewStageConstants.TerrainChunkSize,
         int fillDepth = PreviewStageConstants.TerrainFillDepth,
         float metersPerTile = PreviewStageConstants.MetersPerGrassTile,
@@ -167,12 +169,19 @@ public static class PreviewTerrainMeshBaker
         int maxRelief = PreviewStageConstants.TerrainMaxReliefBlocks,
         int seed = PreviewStageConstants.TerrainHeightSeed)
     {
+        // default(grassSettings) looks like BuiltIn for Mode/flags (BuiltInSingleTop == 0).
+        // Preserve an explicit VegetationIdentity so tree bakes are not silently disabled.
         if (grassSettings.Mode == default &&
             !grassSettings.BetterGrassEnabled &&
-            !grassSettings.EmitOverlay)
+            !grassSettings.EmitOverlay &&
+            string.IsNullOrEmpty(grassSettings.VegetationIdentity))
         {
             grassSettings = PreviewTerrainGrassBakeSettings.BuiltIn;
         }
+
+        var gen = worldGen.BiomeSize > 0f || worldGen.Amplification > 0f || worldGen.Seed != 0
+            ? PreviewTerrainWorldGenSettings.Resolve(worldGen)
+            : PreviewTerrainWorldGenSettings.Default with { Seed = seed };
 
         chunkSize = Math.Max(1, chunkSize);
         fillDepth = Math.Max(1, fillDepth);
@@ -199,7 +208,7 @@ public static class PreviewTerrainMeshBaker
             for (var lx = 0; lx < side; lx++)
             {
                 var sample = PreviewTerrainBiomeSampler.Sample(
-                    ox + lx, oz + lz, flatPadHalfExtent, transitionBlocks, seed);
+                    ox + lx, oz + lz, gen, flatPadHalfExtent, transitionBlocks);
                 board[lz * side + lx] = sample;
                 if (lx > 0 && lx < side - 1 && lz > 0 && lz < side - 1)
                 {
@@ -214,7 +223,7 @@ public static class PreviewTerrainMeshBaker
             return null;
         }
 
-        var layerMin = minH - fillDepth + 1;
+        var layerMin = ResolveLayerMin(minH, fillDepth);
         var layerMax = maxH;
         PreviewTerrainColumnSample ColumnAt(int x, int z)
         {
@@ -223,7 +232,7 @@ public static class PreviewTerrainMeshBaker
             if ((uint)lx >= (uint)side || (uint)lz >= (uint)side)
             {
                 return PreviewTerrainBiomeSampler.Sample(
-                    x, z, flatPadHalfExtent, transitionBlocks, seed);
+                    x, z, gen, flatPadHalfExtent, transitionBlocks);
             }
 
             return board[lz * side + lx];
@@ -231,7 +240,9 @@ public static class PreviewTerrainMeshBaker
 
         int HeightAt(int x, int z) => ColumnAt(x, z).Height;
 
-        var buckets = CreateMaterialBuckets();
+        var vegPlan = vegetation is { HasAny: true } ? vegetation : PreviewTerrainVegetationBakePlan.Empty;
+        var slotCount = Math.Max(PreviewTerrainGrassSlots.MaxCount, vegPlan.TotalSlotCount);
+        var buckets = CreateMaterialBuckets(slotCount);
         EmitChunkGreedy(
             HeightAt,
             ColumnAt,
@@ -244,6 +255,19 @@ public static class PreviewTerrainMeshBaker
             grassSettings,
             buckets);
 
+        if (vegPlan.HasAny && grassSettings.EmitVegetation)
+        {
+            var placements = PreviewTerrainTreePlacer.CollectForChunk(
+                cx0, cz0, cx1, cz1, ColumnAt, gen, vegPlan, flatPadHalfExtent);
+            PreviewTerrainTreeMeshEmitter.EmitPlacements(
+                placements,
+                surfaceWorldY,
+                metersPerTile,
+                buckets,
+                ref maxH,
+                vegPlan.ModelTemplates);
+        }
+
         if (!TryConcatMaterialBuckets(buckets, out var verts, out var indices, out var batches) ||
             indices.Length == 0)
         {
@@ -251,7 +275,7 @@ public static class PreviewTerrainMeshBaker
         }
 
         var minY = surfaceWorldY + layerMin - 1;
-        var maxY = surfaceWorldY + layerMax;
+        var maxY = surfaceWorldY + maxH;
         var boundsMin = new Vector3(cx0, minY, cz0);
         var boundsMax = new Vector3(cx1, maxY, cz1);
         var center = (boundsMin + boundsMax) * 0.5f;
@@ -264,14 +288,15 @@ public static class PreviewTerrainMeshBaker
             DrawBatches = batches,
             BoundsCenter = center,
             BoundsRadius = Vector3.Distance(center, boundsMax),
-            MinRelativeHeight = minH,
+            MinRelativeHeight = layerMin,
             MaxRelativeHeight = maxH
         };
     }
 
-    private static List<float>[] CreateMaterialBuckets()
+    private static List<float>[] CreateMaterialBuckets(int slotCount = PreviewTerrainGrassSlots.MaxCount)
     {
-        var buckets = new List<float>[PreviewTerrainGrassSlots.MaxCount];
+        slotCount = Math.Max(PreviewTerrainGrassSlots.MaxCount, slotCount);
+        var buckets = new List<float>[slotCount];
         for (var i = 0; i < buckets.Length; i++)
         {
             buckets[i] = new List<float>(256);
@@ -302,7 +327,7 @@ public static class PreviewTerrainMeshBaker
 
         var vertList = new List<float>(totalFloats);
         var indexList = new List<uint>(totalFloats / PreviewMesh.FloatsPerVertex * 6 / 4);
-        var batchList = new List<PreviewDrawBatch>(PreviewTerrainGrassSlots.MaxCount);
+        var batchList = new List<PreviewDrawBatch>(buckets.Length);
         for (var slot = 0; slot < buckets.Length; slot++)
         {
             var bucket = buckets[slot];
@@ -844,6 +869,24 @@ public static class PreviewTerrainMeshBaker
         AddSolidFace(n, tFallback, wSign, corners, uvs, verts);
     }
 
+    /// <summary>
+    /// Lowest relative Y included in a Full bake. Always reaches the shared solid floor so
+    /// columns with large height deltas cannot leave sky gaps under overhangs.
+    /// </summary>
+    internal static int ResolveLayerMin(int minColumnHeight, int fillDepth) =>
+        Math.Min(
+            minColumnHeight - Math.Max(1, fillDepth) + 1,
+            PreviewStageConstants.TerrainSolidFloorRelativeY);
+
+    /// <summary>
+    /// Inclusive bottom Y of a solid column. Uses the shared world floor so a tall column
+    /// remains solid beside a much shorter neighbor (no floating shelves / holes).
+    /// </summary>
+    internal static int SolidBottomY(int columnHeight, int fillDepth) =>
+        Math.Min(
+            columnHeight - Math.Max(1, fillDepth) + 1,
+            PreviewStageConstants.TerrainSolidFloorRelativeY);
+
     internal static bool IsSolid(
         ReadOnlySpan<int> heights,
         int halfExtent,
@@ -858,7 +901,7 @@ public static class PreviewTerrainMeshBaker
             return false;
         }
 
-        var bottom = h - fillDepth + 1;
+        var bottom = SolidBottomY(h, fillDepth);
         return by >= bottom && by <= h;
     }
 
@@ -870,7 +913,7 @@ public static class PreviewTerrainMeshBaker
             return false;
         }
 
-        var bottom = h - fillDepth + 1;
+        var bottom = SolidBottomY(h, fillDepth);
         return by >= bottom && by <= h;
     }
 

@@ -2,15 +2,27 @@ using System.Numerics;
 
 namespace AutoPBR.App.Rendering.Scene;
 
-/// <summary>Interleaved line vertices: vec3 position, vec4 rgba (for unlit line shader).</summary>
+/// <summary>Interleaved line/quad vertices: vec3 position, vec4 rgba (for unlit line shader).</summary>
 public static class PreviewGridLinesFactory
 {
     public const int FloatsPerVertex = 7;
 
-    /// <summary>XZ grid on a horizontal plane (world Y = <paramref name="y"/>).</summary>
-    public static float[] BuildGrid(float halfExtent, float step, float y, float cr, float cg, float cb, float ca)
+    /// <summary>
+    /// XZ grid on a horizontal plane as thick quads (two triangles per segment).
+    /// Drawn with <c>Triangles</c>; color is typically white and tinted by a shader uniform.
+    /// </summary>
+    public static float[] BuildGrid(
+        float halfExtent,
+        float step,
+        float y,
+        float cr,
+        float cg,
+        float cb,
+        float ca,
+        float lineHalfWidth = PreviewStageConstants.GridLineHalfWidth)
     {
-        var list = new List<float>(512);
+        lineHalfWidth = Math.Max(1e-4f, lineHalfWidth);
+        var list = new List<float>(2048);
         void Vertex(Vector3 p)
         {
             list.Add(p.X);
@@ -22,20 +34,39 @@ public static class PreviewGridLinesFactory
             list.Add(ca);
         }
 
-        void AddLine(Vector3 p0, Vector3 p1)
+        void AddThickLine(Vector3 p0, Vector3 p1)
         {
-            Vertex(p0);
-            Vertex(p1);
+            var delta = p1 - p0;
+            var lenSq = delta.LengthSquared();
+            if (lenSq < 1e-12f)
+            {
+                return;
+            }
+
+            var dir = delta / MathF.Sqrt(lenSq);
+            // Perpendicular in XZ so the ribbon sits on the ground plane.
+            var perp = new Vector3(-dir.Z, 0f, dir.X) * lineHalfWidth;
+            var a = p0 + perp;
+            var b = p0 - perp;
+            var c = p1 + perp;
+            var d = p1 - perp;
+            // Two triangles: a-b-c, b-d-c
+            Vertex(a);
+            Vertex(b);
+            Vertex(c);
+            Vertex(b);
+            Vertex(d);
+            Vertex(c);
         }
 
         for (var z = -halfExtent; z <= halfExtent + 1e-4f; z += step)
         {
-            AddLine(new Vector3(-halfExtent, y, z), new Vector3(halfExtent, y, z));
+            AddThickLine(new Vector3(-halfExtent, y, z), new Vector3(halfExtent, y, z));
         }
 
         for (var x = -halfExtent; x <= halfExtent + 1e-4f; x += step)
         {
-            AddLine(new Vector3(x, y, -halfExtent), new Vector3(x, y, halfExtent));
+            AddThickLine(new Vector3(x, y, -halfExtent), new Vector3(x, y, halfExtent));
         }
 
         return list.ToArray();

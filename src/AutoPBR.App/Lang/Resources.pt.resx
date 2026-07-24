@@ -1651,10 +1651,13 @@
     <value>Limita a distância que um traço de paralaxe pode percorrer no espaço UV. Aumente para um alívio mais profundo; abaixe para reduzir o alongamento do ângulo rasante.</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacement" xml:space="preserve">
-    <value>Protuberância tesselada</value>
+    <value>Tessellation</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacementTooltip" xml:space="preserve">
     <value>Use o mosaico OpenGL de desktop para adicionar geometria externa real de regiões de mapas de alta altura. POM ainda lida com detalhes embutidos.</value>
+  </data>
+  <data name="Preview3DTessellationSection" xml:space="preserve">
+    <value>Tessellation</value>
   </data>
   <data name="Preview3DTessellationLevel" xml:space="preserve">
     <value>Nível de mosaico</value>

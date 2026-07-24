@@ -21,13 +21,24 @@ public interface IRenderPreviewBackend : IDisposable
     void SetGroundMaterial(PreviewMaterial? material);
 
     /// <summary>
-    /// Multi-slot LabPBR ground materials for BlockModel-style terrain (top/side/dirt/overlay).
-    /// Empty or null falls back to <see cref="SetGroundMaterial"/>.
+    /// Multi-slot LabPBR ground materials for BlockModel-style terrain (top/side/dirt/overlay)
+    /// plus optional vegetation slots. Empty or null falls back to <see cref="SetGroundMaterial"/>.
+    /// When <paramref name="cutoutBySlot"/> is provided, per-slot alpha cutout overrides the
+    /// overlay-only default (leaves and cactus sides need cutout; logs typically do not).
     /// </summary>
-    void SetGroundMaterials(PreviewMaterial[]? slotMaterials, bool overlayIsCutout = true);
+    void SetGroundMaterials(
+        PreviewMaterial[]? slotMaterials,
+        bool overlayIsCutout = true,
+        bool[]? cutoutBySlot = null);
 
     /// <summary>CPU bake flags for streamed Full terrain chunks; invalidates resident meshes when changed.</summary>
     void SetTerrainGrassBakeSettings(PreviewTerrainGrassBakeSettings settings);
+
+    /// <summary>
+    /// Vegetation decoration plan for Full chunk bakes. Null/empty skips trees.
+    /// Invalidates resident meshes when the plan identity changes.
+    /// </summary>
+    void SetTerrainVegetationBakePlan(PreviewTerrainVegetationBakePlan? plan);
     void SetBlockModelPreview(PreviewModelSubject? subject, PreviewMaterial[]? slotMaterials);
     void SetRenderSettings(PreviewRenderSettings settings);
     void RenderFrame(TimeSpan elapsed);

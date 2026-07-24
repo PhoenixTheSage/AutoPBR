@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Threading.Tasks;
 
 using AutoPBR.Preview;
 
@@ -18,6 +19,7 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
     private const uint BufferUpdateBarrierBit = 0x00000200;
     private const int LocalSizeX = 64;
     private const int CullRecordFloats = 8;
+    private const int ParallelCullRecordMinCommands = 64;
 
     private readonly GL _gl;
     private readonly GlIndirectDrawCommandBuffer _outputCommands;
@@ -89,6 +91,8 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         SetOutputCapacity(program, outputCapacity);
         SetCollectDiagnostics(program, collectDiagnostics);
         SetPreserveOrder(program, preserveOrder);
+        SetHiZUniforms(program, enabled: false, hiZ: null, viewProj: null, textureUnit: 0);
+        SetVoxelOcclusionUniforms(program, enabled: false, atlas: null, textureUnit: 0);
         _gl.DispatchCompute(preserveOrder ? 1u : (uint)((commandCount + LocalSizeX - 1) / LocalSizeX), 1, 1);
         _gl.MemoryBarrier(ShaderStorageBarrierBit | CommandBarrierBit | BufferUpdateBarrierBit);
 
@@ -120,7 +124,14 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         bool collectDiagnostics = false,
         int outputCapacity = 0,
         bool preserveOrder = false,
-        float boundsPadding = 0f) =>
+        float boundsPadding = 0f,
+        bool enableHiZ = false,
+        GlHierarchicalZPyramid? hiZ = null,
+        Matrix4x4? viewProj = null,
+        int hiZTextureUnit = 0,
+        bool enableVoxelOcclusion = false,
+        GlTerrainOccluderAtlas? voxelAtlas = null,
+        int voxelTextureUnit = 0) =>
         DispatchWithGpuCulling(
             program,
             sourceCommands,
@@ -134,7 +145,14 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
             collectDiagnostics,
             outputCapacity,
             preserveOrder,
-            boundsPadding);
+            boundsPadding,
+            enableHiZ,
+            hiZ,
+            viewProj,
+            hiZTextureUnit,
+            enableVoxelOcclusion,
+            voxelAtlas,
+            voxelTextureUnit);
 
     public bool DispatchWithGpuCulling(
         GlShaderProgram program,
@@ -149,7 +167,14 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         bool collectDiagnostics = false,
         int outputCapacity = 0,
         bool preserveOrder = false,
-        float boundsPadding = 0f)
+        float boundsPadding = 0f,
+        bool enableHiZ = false,
+        GlHierarchicalZPyramid? hiZ = null,
+        Matrix4x4? viewProj = null,
+        int hiZTextureUnit = 0,
+        bool enableVoxelOcclusion = false,
+        GlTerrainOccluderAtlas? voxelAtlas = null,
+        int voxelTextureUnit = 0)
     {
         if (_disposed ||
             program is not { IsValid: true } ||
@@ -165,6 +190,8 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
             return false;
         }
 
+        var useVoxel = enableVoxelOcclusion && voxelAtlas is { IsValid: true };
+        var useHiZ = !useVoxel && enableHiZ && hiZ is { IsValid: true } && viewProj is not null;
         outputCapacity = ResolveOutputCapacity(commandCount, outputCapacity);
         if (!_outputCommands.EnsureCommandCapacity(outputCapacity))
         {
@@ -196,6 +223,8 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         SetPreserveOrder(program, preserveOrder);
         SetCameraPosition(program, cameraPosition);
         SetFrustumPlanes(program, frustumPlanes[..6]);
+        SetHiZUniforms(program, useHiZ, hiZ, viewProj, hiZTextureUnit);
+        SetVoxelOcclusionUniforms(program, useVoxel, voxelAtlas, voxelTextureUnit);
 
         _gl.DispatchCompute(preserveOrder ? 1u : (uint)((commandCount + LocalSizeX - 1) / LocalSizeX), 1, 1);
         _gl.MemoryBarrier(ShaderStorageBarrierBit | CommandBarrierBit | BufferUpdateBarrierBit);
@@ -215,6 +244,18 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         _gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, OutputCommandsBinding, 0);
         _gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, OutputCounterBinding, 0);
         _gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, BatchCullRecordsBinding, 0);
+        if (useHiZ)
+        {
+            _gl.ActiveTexture(TextureUnit.Texture0 + hiZTextureUnit);
+            _gl.BindTexture(TextureTarget.Texture2D, 0);
+        }
+
+        if (useVoxel)
+        {
+            _gl.ActiveTexture(TextureUnit.Texture0 + voxelTextureUnit);
+            _gl.BindTexture(TextureTarget.Texture2D, 0);
+        }
+
         return true;
     }
 
@@ -288,23 +329,42 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
             _cullRecordScratch = new float[Math.Max(floatCount, 128)];
         }
 
-        var records = _cullRecordScratch.AsSpan(0, floatCount);
-        records.Clear();
-        for (var i = 0; i < commandCount; i++)
+        var records = _cullRecordScratch;
+        Array.Clear(records, 0, floatCount);
+        if (commandCount >= ParallelCullRecordMinCommands)
         {
-            WriteCullRecord(records.Slice(i * CullRecordFloats, CullRecordFloats), batches[i], modelMatrix, boundsPadding);
+            Parallel.For(0, commandCount, i =>
+            {
+                WriteCullRecord(
+                    records.AsSpan(i * CullRecordFloats, CullRecordFloats),
+                    batches[i],
+                    modelMatrix,
+                    boundsPadding);
+            });
+        }
+        else
+        {
+            for (var i = 0; i < commandCount; i++)
+            {
+                WriteCullRecord(
+                    records.AsSpan(i * CullRecordFloats, CullRecordFloats),
+                    batches[i],
+                    modelMatrix,
+                    boundsPadding);
+            }
         }
 
         _cullRecordBuffer = _cullRecordBuffer == 0 ? _gl.GenBuffer() : _cullRecordBuffer;
         _gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, _cullRecordBuffer);
         var byteCount = floatCount * sizeof(float);
+        var uploadSpan = records.AsSpan(0, floatCount);
         if (byteCount <= _cullRecordCapacity)
         {
-            _gl.BufferSubData<float>(BufferTargetARB.ShaderStorageBuffer, 0, records);
+            _gl.BufferSubData<float>(BufferTargetARB.ShaderStorageBuffer, 0, uploadSpan);
         }
         else
         {
-            _gl.BufferData<float>(BufferTargetARB.ShaderStorageBuffer, records, BufferUsageARB.DynamicDraw);
+            _gl.BufferData<float>(BufferTargetARB.ShaderStorageBuffer, uploadSpan, BufferUsageARB.DynamicDraw);
             _cullRecordCapacity = byteCount;
         }
 
@@ -416,6 +476,106 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
 
             var p = frustumPlanes[i];
             _gl.Uniform4(loc, p.X, p.Y, p.Z, p.W);
+        }
+    }
+
+    private void SetHiZUniforms(
+        GlShaderProgram program,
+        bool enabled,
+        GlHierarchicalZPyramid? hiZ,
+        Matrix4x4? viewProj,
+        int textureUnit)
+    {
+        var useLoc = program.GetUniformLocation("uUseHiZ");
+        if (useLoc >= 0)
+        {
+            _gl.Uniform1(useLoc, enabled ? 1 : 0);
+        }
+
+        if (!enabled || hiZ is null || viewProj is null)
+        {
+            return;
+        }
+
+        hiZ.Bind(TextureUnit.Texture0 + textureUnit);
+        var samplerLoc = program.GetUniformLocation("uHiZ");
+        if (samplerLoc >= 0)
+        {
+            _gl.Uniform1(samplerLoc, textureUnit);
+        }
+
+        var sizeLoc = program.GetUniformLocation("uHiZSize");
+        if (sizeLoc >= 0)
+        {
+            _gl.Uniform2(sizeLoc, hiZ.Width, hiZ.Height);
+        }
+
+        var maxLevelLoc = program.GetUniformLocation("uHiZMaxLevel");
+        if (maxLevelLoc >= 0)
+        {
+            _gl.Uniform1(maxLevelLoc, hiZ.MaxLevel);
+        }
+
+        var epsilonLoc = program.GetUniformLocation("uDepthEpsilon");
+        if (epsilonLoc >= 0)
+        {
+            _gl.Uniform1(epsilonLoc, PreviewHierarchicalZMath.DepthEpsilon);
+        }
+
+        var vpLoc = program.GetUniformLocation("uViewProj");
+        if (vpLoc >= 0)
+        {
+            var mt = Matrix4x4.Transpose(viewProj.Value);
+            _gl.UniformMatrix4(vpLoc, 1, false, in mt.M11);
+        }
+    }
+
+    private void SetVoxelOcclusionUniforms(
+        GlShaderProgram program,
+        bool enabled,
+        GlTerrainOccluderAtlas? atlas,
+        int textureUnit)
+    {
+        var useLoc = program.GetUniformLocation("uUseVoxelOcclusion");
+        if (useLoc >= 0)
+        {
+            _gl.Uniform1(useLoc, enabled ? 1 : 0);
+        }
+
+        if (!enabled || atlas is null)
+        {
+            return;
+        }
+
+        atlas.Bind(TextureUnit.Texture0 + textureUnit);
+        var samplerLoc = program.GetUniformLocation("uVoxelHeightAtlas");
+        if (samplerLoc >= 0)
+        {
+            _gl.Uniform1(samplerLoc, textureUnit);
+        }
+
+        var originLoc = program.GetUniformLocation("uVoxelAtlasOrigin");
+        if (originLoc >= 0)
+        {
+            _gl.Uniform2(originLoc, atlas.OriginX, atlas.OriginZ);
+        }
+
+        var sizeLoc = program.GetUniformLocation("uVoxelAtlasSize");
+        if (sizeLoc >= 0)
+        {
+            _gl.Uniform2(sizeLoc, atlas.Width, atlas.Height);
+        }
+
+        var groundLoc = program.GetUniformLocation("uVoxelGroundPlaneY");
+        if (groundLoc >= 0)
+        {
+            _gl.Uniform1(groundLoc, atlas.GroundPlaneWorldY);
+        }
+
+        var stepsLoc = program.GetUniformLocation("uVoxelMaxSteps");
+        if (stepsLoc >= 0)
+        {
+            _gl.Uniform1(stepsLoc, PreviewVoxelDdaMath.DefaultMaxSteps);
         }
     }
 

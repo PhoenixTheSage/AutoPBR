@@ -12,8 +12,33 @@ internal enum GlGpuTimerScope
     Post = 3,
     Overlay = 4,
     CloudTrace = 5,
-    GodRays = 6,
-    CloudComposite = 7,
+    CloudTemporal = 6,
+    CloudUpsample = 7,
+    GodRayInject = 8,
+    GodRayIntegrate = 9,
+    GodRayResolve = 10,
+    Taa = 11,
+    DepthPrepass = 12,
+    HiZ = 13,
+
+    // CPU-only detail scopes (nest under a pass scope; not used by GL timer queries).
+    SetupBones = 14,
+    SetupBounds = 15,
+    ShadowTerrainCull = 16,
+    TerrainStream = 17,
+    TerrainDraw = 18,
+    SubjectDraw = 19,
+}
+
+internal static class GlGpuTimerScopes
+{
+    /// <summary>Pass scopes that own GPU <c>GL_TIME_ELAPSED</c> queries.</summary>
+    public const int PassScopeCount = 14;
+
+    /// <summary>Pass scopes plus CPU-only detail buckets.</summary>
+    public const int CpuScopeCount = 20;
+
+    public static bool IsCpuDetail(GlGpuTimerScope scope) => (int)scope >= PassScopeCount;
 }
 
 internal readonly record struct GlGpuTimingSnapshot(
@@ -23,49 +48,121 @@ internal readonly record struct GlGpuTimingSnapshot(
     double PostMs,
     double OverlayMs,
     double CloudTraceMs,
-    double GodRaysMs,
-    double CloudCompositeMs)
+    double CloudTemporalMs,
+    double CloudUpsampleMs,
+    double GodRayInjectMs,
+    double GodRayIntegrateMs,
+    double GodRayResolveMs,
+    double TaaMs,
+    double DepthPrepassMs = 0.0,
+    double HiZMs = 0.0,
+    double SetupBonesMs = 0.0,
+    double SetupBoundsMs = 0.0,
+    double ShadowTerrainCullMs = 0.0,
+    double TerrainStreamMs = 0.0,
+    double TerrainDrawMs = 0.0,
+    double SubjectDrawMs = 0.0)
 {
     public GlGpuTimingSnapshot(double SetupMs, double ShadowMs, double SceneMs, double PostMs, double OverlayMs)
-        : this(SetupMs, ShadowMs, SceneMs, PostMs, OverlayMs, 0.0, 0.0, 0.0)
+        : this(SetupMs, ShadowMs, SceneMs, PostMs, OverlayMs, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     {
     }
 
-    public double PostTotalMs => PostMs + CloudTraceMs + GodRaysMs + CloudCompositeMs;
-    public double TotalMs => SetupMs + ShadowMs + SceneMs + PostTotalMs + OverlayMs;
+    public double GodRaysMs => GodRayInjectMs + GodRayIntegrateMs + GodRayResolveMs;
 
-    public string FormatHudLine(bool expanded = false) =>
-        expanded
-            ? string.Format(
-                CultureInfo.InvariantCulture,
-                "GPU {0:0.0} ms | set {1:0.0} sh {2:0.0} scn {3:0.0} post {4:0.0} " +
-                "(cloud {5:0.0}+{6:0.0}, rays {7:0.0}) ovl {8:0.0}",
-                TotalMs,
-                SetupMs,
-                ShadowMs,
-                SceneMs,
-                PostTotalMs,
-                CloudTraceMs,
-                CloudCompositeMs,
-                GodRaysMs,
-                OverlayMs)
-            : string.Format(
-                CultureInfo.InvariantCulture,
-                "GPU {0:0.0} ms",
-                TotalMs);
+    public double PostTotalMs =>
+        PostMs +
+        CloudTraceMs +
+        CloudTemporalMs +
+        CloudUpsampleMs +
+        GodRaysMs +
+        TaaMs;
+
+    /// <summary>Wall-clock pass totals only; CPU detail scopes are subsets and excluded.</summary>
+    public double TotalMs =>
+        SetupMs + ShadowMs + DepthPrepassMs + HiZMs + SceneMs + PostTotalMs + OverlayMs;
+
+    public string FormatHudLine(bool expanded = false) => FormatHudLine("GPU", expanded);
+
+    public string FormatHudLine(
+        string label,
+        bool expanded = false,
+        GlGpuTimingHudLinger? linger = null,
+        double nowSeconds = 0.0)
+    {
+        if (!expanded)
+        {
+            return string.Format(CultureInfo.InvariantCulture, "{0} {1:0.0} ms", label, TotalMs);
+        }
+
+        // Expanded HUD: vertical list of full pass names, omitting scopes that round to 0.0 ms
+        // (or briefly lingering after they drop below the display threshold).
+        // CPU detail lines nest under their parent pass when non-zero (GPU leaves them at 0).
+        var lines = new List<string>(24)
+        {
+            string.Format(CultureInfo.InvariantCulture, "{0} {1:0.0} ms", label, TotalMs),
+        };
+        AppendHudPass(lines, "Setup", SetupMs, (int)GlGpuTimerScope.Setup, linger, nowSeconds);
+        AppendHudPass(lines, "  Bones", SetupBonesMs, (int)GlGpuTimerScope.SetupBones, linger, nowSeconds);
+        AppendHudPass(lines, "  Bounds", SetupBoundsMs, (int)GlGpuTimerScope.SetupBounds, linger, nowSeconds);
+        AppendHudPass(lines, "Shadow", ShadowMs, (int)GlGpuTimerScope.Shadow, linger, nowSeconds);
+        AppendHudPass(lines, "  Terrain Cull", ShadowTerrainCullMs, (int)GlGpuTimerScope.ShadowTerrainCull, linger, nowSeconds);
+        AppendHudPass(lines, "Depth Prepass", DepthPrepassMs, (int)GlGpuTimerScope.DepthPrepass, linger, nowSeconds);
+        AppendHudPass(lines, "Hi-Z", HiZMs, (int)GlGpuTimerScope.HiZ, linger, nowSeconds);
+        AppendHudPass(lines, "Scene", SceneMs, (int)GlGpuTimerScope.Scene, linger, nowSeconds);
+        AppendHudPass(lines, "  Terrain Stream", TerrainStreamMs, (int)GlGpuTimerScope.TerrainStream, linger, nowSeconds);
+        AppendHudPass(lines, "  Terrain Draw", TerrainDrawMs, (int)GlGpuTimerScope.TerrainDraw, linger, nowSeconds);
+        AppendHudPass(lines, "  Subject", SubjectDrawMs, (int)GlGpuTimerScope.SubjectDraw, linger, nowSeconds);
+        AppendHudPass(lines, "Cloud Trace", CloudTraceMs, (int)GlGpuTimerScope.CloudTrace, linger, nowSeconds);
+        AppendHudPass(lines, "Cloud Temporal", CloudTemporalMs, (int)GlGpuTimerScope.CloudTemporal, linger, nowSeconds);
+        AppendHudPass(lines, "God Ray Inject", GodRayInjectMs, (int)GlGpuTimerScope.GodRayInject, linger, nowSeconds);
+        AppendHudPass(lines, "God Ray Integrate", GodRayIntegrateMs, (int)GlGpuTimerScope.GodRayIntegrate, linger, nowSeconds);
+        AppendHudPass(lines, "God Ray Resolve", GodRayResolveMs, (int)GlGpuTimerScope.GodRayResolve, linger, nowSeconds);
+        AppendHudPass(lines, "Cloud Upsample", CloudUpsampleMs, (int)GlGpuTimerScope.CloudUpsample, linger, nowSeconds);
+        AppendHudPass(lines, "TAA", TaaMs, (int)GlGpuTimerScope.Taa, linger, nowSeconds);
+        AppendHudPass(lines, "Post", PostMs, (int)GlGpuTimerScope.Post, linger, nowSeconds);
+        AppendHudPass(lines, "Overlay", OverlayMs, (int)GlGpuTimerScope.Overlay, linger, nowSeconds);
+        return string.Join('\n', lines);
+    }
+
+    private static void AppendHudPass(
+        List<string> lines,
+        string name,
+        double ms,
+        int passId,
+        GlGpuTimingHudLinger? linger,
+        double nowSeconds)
+    {
+        var show = linger is null
+            ? ms >= GlGpuTimingHudLinger.MinDisplayMs
+            : linger.ShouldShow(passId, ms, nowSeconds);
+        if (!show)
+        {
+            return;
+        }
+
+        lines.Add(string.Format(CultureInfo.InvariantCulture, "{0} {1:0.0} ms", name, ms));
+    }
 
     public string FormatDiagnostic() =>
         string.Format(
             CultureInfo.InvariantCulture,
-            "setup={0:0.###}ms, shadow={1:0.###}ms, scene={2:0.###}ms, " +
-            "cloudTrace={3:0.###}ms, cloudComposite={4:0.###}ms, godRays={5:0.###}ms, " +
-            "post={7:0.###}ms, postOther={6:0.###}ms, overlay={8:0.###}ms, total={9:0.###}ms",
+            "setup={0:0.###}ms, shadow={1:0.###}ms, depthPrepass={2:0.###}ms, hiZ={3:0.###}ms, scene={4:0.###}ms, " +
+            "cloudTrace={5:0.###}ms, cloudTemporal={6:0.###}ms, cloudUpsample={7:0.###}ms, " +
+            "godRayInject={8:0.###}ms, godRayIntegrate={9:0.###}ms, godRayResolve={10:0.###}ms, " +
+            "taa={11:0.###}ms, post={13:0.###}ms, postOther={12:0.###}ms, overlay={14:0.###}ms, total={15:0.###}ms",
             SetupMs,
             ShadowMs,
+            DepthPrepassMs,
+            HiZMs,
             SceneMs,
             CloudTraceMs,
-            CloudCompositeMs,
-            GodRaysMs,
+            CloudTemporalMs,
+            CloudUpsampleMs,
+            GodRayInjectMs,
+            GodRayIntegrateMs,
+            GodRayResolveMs,
+            TaaMs,
             PostMs,
             PostTotalMs,
             OverlayMs,
@@ -74,7 +171,7 @@ internal readonly record struct GlGpuTimingSnapshot(
 
 internal sealed class GlGpuTimerProfiler : IDisposable
 {
-    private const int ScopeCount = 8;
+    private const int ScopeCount = GlGpuTimerScopes.PassScopeCount;
     private const int FrameSlots = 5;
     private const uint TimeElapsed = 0x88BF;
     private const uint QueryResult = 0x8866;
@@ -124,7 +221,10 @@ internal sealed class GlGpuTimerProfiler : IDisposable
 
     public bool TryBeginScope(GlGpuTimerScope scope)
     {
-        if (_disposed || _activeFrameSlot < 0 || _activeScope >= 0)
+        if (_disposed ||
+            _activeFrameSlot < 0 ||
+            _activeScope >= 0 ||
+            GlGpuTimerScopes.IsCpuDetail(scope))
         {
             return false;
         }
@@ -268,8 +368,14 @@ internal sealed class GlGpuTimerProfiler : IDisposable
                 elapsed[(int)GlGpuTimerScope.Post] * NanosecondsToMilliseconds,
                 elapsed[(int)GlGpuTimerScope.Overlay] * NanosecondsToMilliseconds,
                 elapsed[(int)GlGpuTimerScope.CloudTrace] * NanosecondsToMilliseconds,
-                elapsed[(int)GlGpuTimerScope.GodRays] * NanosecondsToMilliseconds,
-                elapsed[(int)GlGpuTimerScope.CloudComposite] * NanosecondsToMilliseconds);
+                elapsed[(int)GlGpuTimerScope.CloudTemporal] * NanosecondsToMilliseconds,
+                elapsed[(int)GlGpuTimerScope.CloudUpsample] * NanosecondsToMilliseconds,
+                elapsed[(int)GlGpuTimerScope.GodRayInject] * NanosecondsToMilliseconds,
+                elapsed[(int)GlGpuTimerScope.GodRayIntegrate] * NanosecondsToMilliseconds,
+                elapsed[(int)GlGpuTimerScope.GodRayResolve] * NanosecondsToMilliseconds,
+                elapsed[(int)GlGpuTimerScope.Taa] * NanosecondsToMilliseconds,
+                elapsed[(int)GlGpuTimerScope.DepthPrepass] * NanosecondsToMilliseconds,
+                elapsed[(int)GlGpuTimerScope.HiZ] * NanosecondsToMilliseconds);
         }
     }
 

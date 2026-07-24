@@ -35,8 +35,8 @@ public sealed partial class OpenGlPreviewBackend
 
         frame.GodRayCaptureActive = TryBeginGodRaySceneRender(ref frame);
 
-        // Restore main-pass framebuffer + viewport (BeginShadowPass snapshots & EndShadowPass restores
-        // the GL viewport, but binding our actual default FBO again is cheap and explicit).
+        // Restore main-pass framebuffer + viewport (shadow EndShadowPass restores explicit state;
+        // binding our actual default FBO again is cheap and explicit).
         if (!frame.GodRayCaptureActive)
         {
             if (frame.DefaultFbo != 0)
@@ -70,71 +70,24 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         // Camera must exist before sky / sun projection / froxel placement.
-        var cam = frame.Scene.Camera;
-        if (frame.FlyCamActive)
-        {
-            ComposeFlyEye(frame.FlyPosition, frame.FlyYaw, frame.FlyPitch, out frame.Eye, out frame.LookTarget);
-        }
-        else
-        {
-            ComposeOrbitEye(frame.OrbitBaseTarget, frame.OrbitPan, frame.OrbitYaw, frame.OrbitPitch, frame.OrbitDistance,
-                out frame.Eye, out frame.LookTarget);
-        }
-        var aspect = frame.Vw / (float)Math.Max(frame.Vh, 1);
-        var nearPlane = cam.NearPlane;
-        var farPlane = cam.FarPlane;
-        if (frame.Scene.SceneKind != PreviewSceneKind.ItemPlane)
-        {
-            // Idle / empty-subject: still frame depth around the stage so terrain is not clipped.
-            var hasSubject = TryGetSubjectBoundsLocked(out var subjectMin, out var subjectMax);
-            if (!hasSubject)
-            {
-                subjectMin = new Vector3(-0.5f, PreviewStageConstants.GridWorldY, -0.5f);
-                subjectMax = new Vector3(0.5f, PreviewStageConstants.GridWorldY + 1f, 0.5f);
-            }
-
-            var envHalf = frame.Settings is { ShowBackgroundGrid: false, ShowGroundMesh: false }
-                ? 0f
-                : frame.Settings.ShowGroundMesh
-                    ? TerrainEnvironmentHalfExtent
-                    : PreviewStageConstants.GridHalfExtent;
-            var envFloor = frame.Settings.ShowGroundMesh
-                ? _terrainEnvFloorY
-                : PreviewStageConstants.GridWorldY;
-            var envCeiling = frame.Settings.ShowGroundMesh
-                ? _terrainEnvCeilingY
-                : PreviewStageConstants.GridWorldY + 0.05f;
-            (nearPlane, farPlane) = PreviewCameraDepthRange.ForOrbitPreview(
-                subjectMin,
-                subjectMax,
-                frame.OrbitDistance,
-                frame.Eye,
-                environmentHalfExtent: envHalf,
-                environmentFloorY: envFloor,
-                environmentCeilingY: envCeiling);
-        }
-
-        frame.Proj = PreviewGlMatrices.CreatePerspectiveFieldOfViewOpenGl(
-            cam.FieldOfViewDegrees * (MathF.PI / 180f),
-            aspect,
-            nearPlane,
-            farPlane);
-        frame.UnjitteredProj = frame.Proj;
-        frame.PreviewTaaJitterNdc = Vector2.Zero;
+        PopulateCameraMatricesAndFrustum(ref frame);
         SyncPreviewTaaToggleState(frame.Settings);
+        frame.PreviewTaaJitterNdc = Vector2.Zero;
         if (IsPreviewTaaActive(frame.Settings))
         {
             var jitterW = frame.GodRayCaptureActive && frame.SceneCaptureW > 0 ? frame.SceneCaptureW : frame.Vw;
             var jitterH = frame.GodRayCaptureActive && frame.SceneCaptureH > 0 ? frame.SceneCaptureH : frame.Vh;
             frame.PreviewTaaJitterNdc = CurrentPreviewTaaJitter(jitterW, jitterH, frame.Settings);
             frame.Proj = PreviewGlMatrices.ApplyProjectionJitter(
-                frame.Proj,
+                frame.UnjitteredProj,
                 frame.PreviewTaaJitterNdc);
         }
 
-        frame.View = PreviewGlMatrices.CreateLookAtRhOpenGlRowStorage(frame.Eye, frame.LookTarget, Vector3.UnitY);
-        frame.NearPlane = nearPlane;
-        frame.FarPlane = farPlane;
+        // Keep depth prepass / Hi-Z / early-Z blit in lockstep with shaded rasterization (jittered when TAA is on).
+        frame.RasterViewProj = frame.Proj * frame.View;
+
+        var nearPlane = frame.NearPlane;
+        var farPlane = frame.FarPlane;
 
         if (frame.WorldLightDir.LengthSquared() < 1e-8f)
         {
@@ -168,6 +121,17 @@ public sealed partial class OpenGlPreviewBackend
             frame.Gl.Clear(ClearBufferMask.DepthBufferBit);
         }
 
+        // Opaque depth prepass + Hi-Z (desktop). Must run after sky clears depth and before shaded geometry.
+        // Voxel DDA atlas is updated first so Hi-Z can be skipped when DDA is primary.
+        BeginOcclusionDebugFrame();
+        TickTerrainOccluderAtlas(ref frame);
+        var restoreDrawFbo = frame.GodRayCaptureActive && _sceneCapture is { IsValid: true }
+            ? (int)_sceneCapture.FramebufferHandle
+            : frame.DefaultFbo;
+        TryRunDepthPrepassAndHiZ(ref frame, sceneVpX, sceneVpY, sceneVpW, sceneVpH, restoreDrawFbo);
+
+        using (BeginPassTimerScope(GlGpuTimerScope.Scene))
+        {
         // Sun disc + aureole are rendered by the sky shader (skySunDiscAureole); only the moon
         // remains a billboard, drawn before opaque geometry so depth testing hides it.
         frame.Gl.Enable(EnableCap.DepthTest);
@@ -221,12 +185,17 @@ public sealed partial class OpenGlPreviewBackend
         if (frame.Settings.ShowGroundMesh &&
             _grassGroundReady && _grassGroundAlbedo is not null)
         {
-            TickTerrainStreaming(ref frame);
+            using (BeginCpuTimerScope(GlGpuTimerScope.TerrainStream))
+            {
+                TickTerrainStreaming(ref frame);
+            }
         }
 
         if (frame.Settings.ShowGroundMesh &&
             _grassGroundReady && _grassGroundAlbedo is not null && HasTerrainChunksToDraw)
         {
+            using (BeginCpuTimerScope(GlGpuTimerScope.TerrainDraw))
+            {
             var restoreCull = frame.Gl.IsEnabled(EnableCap.CullFace);
             frame.Gl.Enable(EnableCap.CullFace);
             frame.Gl.CullFace(TriangleFace.Back);
@@ -264,13 +233,23 @@ public sealed partial class OpenGlPreviewBackend
             SetIntLoc(u.Normal, 1);
             SetIntLoc(u.Specular, 2);
             SetIntLoc(u.Height, 3);
-            // Idle/non-array draws still need complete sampler2DArray units when the active
-            // Genesis program was compiled with GENESIS_MATERIAL_TEXTURE_ARRAYS.
-            BindFallbackMaterialTextureArraysIfPresent(u);
+            TryEnsureGroundTextureArrays(frame.Gl);
+            if (_groundTextureArraysReady && _activeGenesisProgramKey.MaterialTextureArrays)
+            {
+                SetIntLoc(u.GenesisUseMaterialTextureArray, 1);
+                SetIntLoc(u.GenesisUseMaterialDrawRecord, 1);
+                BindGroundMaterialTextureArrays();
+            }
+            else
+            {
+                // Idle/non-array draws still need complete sampler2DArray units when the active
+                // Genesis program was compiled with GENESIS_MATERIAL_TEXTURE_ARRAYS.
+                BindFallbackMaterialTextureArraysIfPresent(u);
+            }
             var viewProjection = frame.UnjitteredProj * frame.View;
             var enableParallaxAo = frame.Settings.EnableParallaxAo;
             var enableParallaxShadow = frame.Settings.EnableParallaxShadow;
-            // Tessellation programs require patch primitives even when displacement is disabled.
+            // Tessellation programs require patch primitives; PatchParameter is set once inside the draw path.
             DrawGroundTerrainChunks(
                 frame.Gl,
                 viewProjection,
@@ -288,12 +267,13 @@ public sealed partial class OpenGlPreviewBackend
             {
                 frame.Gl.Disable(EnableCap.CullFace);
             }
+            }
         }
 
         if (frame.Settings.ShowBackgroundGrid && _lineProgram?.IsValid == true &&
             _gridVertexCount > 0)
         {
-            DrawBackgroundGrid(frame.Gl, frame.Proj, frame.View);
+            DrawBackgroundGrid(frame.Gl, frame.Proj, frame.View, frame.Settings);
             // DrawBackgroundGrid binds the line program; restore main frame.Material program before mesh uniforms.
             _program.Use();
             BindAndPinMainPassGlobalTextures(ref frame, u);
@@ -325,7 +305,11 @@ public sealed partial class OpenGlPreviewBackend
                 _loggedZeroIndex = true;
             }
         }
-        else if (frame.BlockModel is not null && frame.BlockSlots is { Length: > 0 })
+        else
+        {
+        using (BeginCpuTimerScope(GlGpuTimerScope.SubjectDraw))
+        {
+        if (frame.BlockModel is not null && frame.BlockSlots is { Length: > 0 })
         {
             if (!_loggedMeshReady)
             {
@@ -343,10 +327,10 @@ public sealed partial class OpenGlPreviewBackend
             var entityBoneUniformsApplied = false;
             var blockModel = frame.BlockModel;
             var blockSlots = frame.BlockSlots;
-            var useMaterialDrawRecords = TryUploadGenesisMaterialDrawRecords(ref frame);
-            var useIndirectDrawCommands = TryUploadGenesisIndirectDrawCommands(blockModel);
-            var useMaterialTextureArrays =
-                TryEnsureMaterialTextureArrays(ref frame, useMaterialDrawRecords, out _);
+            EnsureFrameSubjectGpuUploads(ref frame);
+            var useMaterialDrawRecords = _frameSubjectUseMaterialDrawRecords;
+            var useIndirectDrawCommands = _frameSubjectUseIndirectDrawCommands;
+            var useMaterialTextureArrays = _frameSubjectUseMaterialTextureArrays;
             if (useMaterialDrawRecords)
             {
                 BindGenesisMaterialDrawRecordBuffer();
@@ -357,12 +341,34 @@ public sealed partial class OpenGlPreviewBackend
             if (useMaterialTextureArrays)
             {
                 BindMainPassMaterialTextureArrays(u);
+                // Array programs still declare sampler2D materials. Keep units 0–3 complete even when
+                // the fragment path samples arrays — otherwise subject/terrain draws can be dropped
+                // when the ground pass did not run this frame (no chunks / ground not ready).
+                var primary = Math.Clamp(blockModel.PrimaryMaterialIndex, 0, blockSlots.Length - 1);
+                UploadMaterial(frame.Gl, blockSlots[primary], nearest: true);
+                BindSubjectMaterialTextures();
+                PinMainPassMaterialSamplerUniforms(u);
+                uploadedMaterialIndex = primary;
             }
             if (frame.EntityBonePaletteUploaded)
             {
                 BindEntityBoneSkinningUboBlocks();
             }
 
+            ReadOnlySpan<Vector4> cameraFrustum = frame.CameraFrustumPlanes;
+            var subjectBoundsPadding = _mainProgramUsesTessellation
+                ? Math.Clamp(frame.Settings.TessellationDisplacementStrength, 0f, 0.20f)
+                : 0f;
+            var subjectFullyCulled = frame.CameraFrustumValid &&
+                PreviewDrawBatchFrustumCull.IsSubjectFullyCulled(
+                    blockModel.DrawBatches,
+                    cameraFrustum,
+                    frame.Eye,
+                    frame.ModelMatrix,
+                    subjectBoundsPadding);
+
+            if (!subjectFullyCulled)
+            {
             _mesh.BindVertexArray();
             for (var batchIndex = 0; batchIndex < blockModel.DrawBatches.Length; batchIndex++)
             {
@@ -474,25 +480,29 @@ public sealed partial class OpenGlPreviewBackend
                             blockModel,
                             batchIndex,
                             batchGroupCount,
-                            frame.UnjitteredProj * frame.View,
+                            frame.CameraViewProj,
                             frame.Eye,
                             frame.ModelMatrix,
                             _program!,
                             batchBlend ? "main-alpha" : "main",
                             patches: _mainProgramUsesTessellation,
                             preserveOrder: batchBlend,
-                            boundsPadding: _mainProgramUsesTessellation
-                                ? Math.Clamp(frame.Settings.TessellationDisplacementStrength, 0f, 0.20f)
-                                : 0f);
+                            boundsPadding: subjectBoundsPadding,
+                            enableHiZ: frame.HiZReady && !batchBlend,
+                            hiZViewProj: frame.RasterViewProj,
+                            enableVoxelOcclusion: _voxelDdaReadyThisFrame && !batchBlend);
                     if (!gpuCulledDrawn)
                     {
-                        DrawPreviewBatchRange(
-                            batch,
+                        DrawCpuFrustumCulledBatchGroup(
+                            blockModel,
                             batchIndex,
-                            _mainProgramUsesTessellation,
+                            batchGroupCount,
+                            cameraFrustum,
+                            frame.Eye,
+                            frame.ModelMatrix,
+                            patches: _mainProgramUsesTessellation,
                             useIndirectDrawCommands,
-                            useMultiDrawGroups: batchGroupCount > 1,
-                            groupCount: batchGroupCount);
+                            boundsPadding: subjectBoundsPadding);
                     }
                 }
 
@@ -500,10 +510,6 @@ public sealed partial class OpenGlPreviewBackend
             }
 
             _mesh.UnbindVertexArray();
-
-            if (useMaterialDrawRecords)
-            {
-                MarkGenesisMaterialDrawRecordsSubmitted();
             }
 
             if (frame.EntityBonePaletteUploaded)
@@ -561,7 +567,12 @@ public sealed partial class OpenGlPreviewBackend
             ApplyEntitySkinningUniforms(_program, 0, 0, 0f);
             _mesh.Draw(_mainProgramUsesTessellation);
         }
+        }
+        }
 
+        } // Scene timer scope
+
+        FinishOcclusionDebugFrame(frame.Settings);
         FinishGodRaySceneRender(ref frame);
     }
 
@@ -756,5 +767,71 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         return Math.Clamp(scale, 0.18f, 1f);
+    }
+
+    /// <summary>
+    /// Compose eye/look, near/far, unjittered projection, view, and camera frustum planes.
+    /// Call before shadow and scene so both passes share the same cull volume.
+    /// </summary>
+    private void PopulateCameraMatricesAndFrustum(ref GlRenderFrame frame)
+    {
+        var cam = frame.Scene.Camera;
+        if (frame.FlyCamActive)
+        {
+            ComposeFlyEye(frame.FlyPosition, frame.FlyYaw, frame.FlyPitch, out frame.Eye, out frame.LookTarget);
+        }
+        else
+        {
+            ComposeOrbitEye(frame.OrbitBaseTarget, frame.OrbitPan, frame.OrbitYaw, frame.OrbitPitch, frame.OrbitDistance,
+                out frame.Eye, out frame.LookTarget);
+        }
+
+        var aspect = frame.Vw / (float)Math.Max(frame.Vh, 1);
+        var nearPlane = cam.NearPlane;
+        var farPlane = cam.FarPlane;
+        if (frame.Scene.SceneKind != PreviewSceneKind.ItemPlane)
+        {
+            // Idle / empty-subject: still frame depth around the stage so terrain is not clipped.
+            var hasSubject = TryGetSubjectBoundsLocked(out var subjectMin, out var subjectMax);
+            if (!hasSubject)
+            {
+                subjectMin = new Vector3(-0.5f, PreviewStageConstants.GridWorldY, -0.5f);
+                subjectMax = new Vector3(0.5f, PreviewStageConstants.GridWorldY + 1f, 0.5f);
+            }
+
+            var envHalf = frame.Settings is { ShowBackgroundGrid: false, ShowGroundMesh: false }
+                ? 0f
+                : frame.Settings.ShowGroundMesh
+                    ? TerrainEnvironmentHalfExtent
+                    : PreviewStageConstants.GridHalfExtent;
+            var envFloor = frame.Settings.ShowGroundMesh
+                ? _terrainEnvFloorY
+                : PreviewStageConstants.GridWorldY;
+            var envCeiling = frame.Settings.ShowGroundMesh
+                ? _terrainEnvCeilingY
+                : PreviewStageConstants.GridWorldY + 0.05f;
+            (nearPlane, farPlane) = PreviewCameraDepthRange.ForOrbitPreview(
+                subjectMin,
+                subjectMax,
+                frame.OrbitDistance,
+                frame.Eye,
+                environmentHalfExtent: envHalf,
+                environmentFloorY: envFloor,
+                environmentCeilingY: envCeiling);
+        }
+
+        frame.UnjitteredProj = PreviewGlMatrices.CreatePerspectiveFieldOfViewOpenGl(
+            cam.FieldOfViewDegrees * (MathF.PI / 180f),
+            aspect,
+            nearPlane,
+            farPlane);
+        frame.Proj = frame.UnjitteredProj;
+        frame.View = PreviewGlMatrices.CreateLookAtRhOpenGlRowStorage(frame.Eye, frame.LookTarget, Vector3.UnitY);
+        frame.NearPlane = nearPlane;
+        frame.FarPlane = farPlane;
+        frame.CameraViewProj = frame.UnjitteredProj * frame.View;
+        frame.RasterViewProj = frame.CameraViewProj;
+        PreviewFrustumPlanes.Extract(frame.CameraViewProj, ref frame.CameraFrustumPlanes);
+        frame.CameraFrustumValid = true;
     }
 }

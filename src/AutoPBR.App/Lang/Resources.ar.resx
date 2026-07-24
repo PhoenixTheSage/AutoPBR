@@ -1651,10 +1651,13 @@
     <value>يوضح المدى الذي يمكن أن ينتقل به أثر اختلاف المنظر في الفضاء فوق البنفسجي. رفع للحصول على راحة أعمق. أقل لتقليل تمدد زاوية الرعي.</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacement" xml:space="preserve">
-    <value>نتوء مبلط</value>
+    <value>التغطية بالفسيفساء</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacementTooltip" xml:space="preserve">
     <value>استخدم فسيفساء OpenGL لسطح المكتب لإضافة هندسة خارجية حقيقية من مناطق الخريطة ذات الارتفاع العالي. لا يزال POM يتعامل مع التفاصيل الغائرة.</value>
+  </data>
+  <data name="Preview3DTessellationSection" xml:space="preserve">
+    <value>التغطية بالفسيفساء</value>
   </data>
   <data name="Preview3DTessellationLevel" xml:space="preserve">
     <value>مستوى التغطية بالفسيفساء</value>

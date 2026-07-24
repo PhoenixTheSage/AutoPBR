@@ -61,14 +61,13 @@ float grShadowGateCascaded(vec3 worldPos, vec3 cameraPos,
     if (nearMidT <= 0.0)
     {
         float nearVis = grShadowGate(worldPos, lightViewProjNear, shadowNear, texelSizeNear, shadowMinBias, enableShadowMap);
-        float midVis = grShadowGate(worldPos, lightViewProjMid, shadowMid, texelSizeMid, shadowMinBias, enableShadowMap);
-        vis = min(min(nearVis, midVis), farVis);
+        vis = min(nearVis, farVis);
     }
     else if (nearMidT < 1.0)
     {
         float nearVis = grShadowGate(worldPos, lightViewProjNear, shadowNear, texelSizeNear, shadowMinBias, enableShadowMap);
         float midVis = grShadowGate(worldPos, lightViewProjMid, shadowMid, texelSizeMid, shadowMinBias, enableShadowMap);
-        vis = min(min(mix(nearVis, midVis, nearMidT), midVis), farVis);
+        vis = min(mix(nearVis, midVis, nearMidT), farVis);
     }
     else if (midFarT <= 0.0)
     {

@@ -78,6 +78,8 @@ public sealed partial class OpenGlPreviewBackend
         _groundMesh = null;
         _groundChunkBatches = [];
         DisposeTerrainGpuChunks();
+        DisposeTerrainMeshPool();
+        DisposeGroundTextureArrays();
         _terrainStreamer?.Dispose();
         _terrainStreamer = null;
         DisposeGroundGpuResources();
@@ -199,6 +201,36 @@ public sealed partial class OpenGlPreviewBackend
                     bootUseMaterialDrawRecordSsbo,
                     bootUseMaterialTextureArrays,
                     bootUseDrawRecordBaseInstance);
+                if (_mainProgramUsesTessellation && _program is { IsValid: true })
+                {
+                    // Upgrade the boot tessellation program to the full desktop feature set
+                    // (arrays + base-instance compose with TCS/TES on WGL).
+                    var tessWithFeatures = CreatePreviewProgram(
+                        "genesis.vert",
+                        "genesis.tcs",
+                        "genesis.tes",
+                        "genesis.frag",
+                        out err,
+                        $"genesis+tess+{(byte)bootMask:X2}",
+                        bootDefines);
+                    if (tessWithFeatures.IsValid)
+                    {
+                        _program.Dispose();
+                        _program = tessWithFeatures;
+                    }
+                    else
+                    {
+                        tessWithFeatures.Dispose();
+                        // Keep the working tessellation program; frame selection can still
+                        // promote arrays on a later non-tess or tess+array cache entry.
+                        bootUseMaterialTextureArrays = false;
+                        bootUseDrawRecordBaseInstance = false;
+                        EmitDiagnostic(
+                            "[3D preview] Genesis tessellation+texture-array boot upgrade deferred. " +
+                            (err ?? "link failed"));
+                    }
+                }
+
                 _program ??= CreatePreviewProgram("genesis.vert", "genesis.frag", out err, defines: bootDefines);
                 if (_program is { IsValid: false } && bootUseDrawRecordBaseInstance)
                 {
@@ -277,8 +309,8 @@ public sealed partial class OpenGlPreviewBackend
                     _mainProgramUsesTessellation,
                     bootUseEntitySkinningSsbo,
                     bootUseMaterialDrawRecordSsbo,
-                    !_mainProgramUsesTessellation && bootUseMaterialTextureArrays,
-                    !_mainProgramUsesTessellation && bootUseDrawRecordBaseInstance);
+                    bootUseMaterialTextureArrays,
+                    bootUseMaterialDrawRecordSsbo && bootUseDrawRecordBaseInstance);
                 _genesisPrograms[_activeGenesisProgramKey] = _program;
                 _genesisProgramLru.AddFirst(_activeGenesisProgramKey);
                 return true;

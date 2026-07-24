@@ -1,0 +1,165 @@
+#version 430 core
+
+// Cull resident terrain chunks into near/mid/far shadow MultiDrawIndirect command lists.
+// Writes DrawElementsIndirectCommand entries + atomic counters for MultiDrawIndirectCount
+// (no CPU readback of index lists).
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+struct ChunkCullRecord
+{
+    // xyz: world center, w: radius
+    vec4 centerRadius;
+    // x: lod (0 = Full, else Lod), y: candidate index, zw: unused
+    vec4 meta;
+};
+
+struct DrawElementsIndirectCommand
+{
+    uint count;
+    uint instanceCount;
+    uint firstIndex;
+    uint baseVertex;
+    uint baseInstance;
+};
+
+layout(std430, binding = 0) readonly buffer ChunkRecords
+{
+    ChunkCullRecord uChunkRecords[];
+};
+
+layout(std430, binding = 1) readonly buffer SourceCommands
+{
+    DrawElementsIndirectCommand uSourceCommands[];
+};
+
+layout(std430, binding = 2) buffer NearCommands
+{
+    DrawElementsIndirectCommand uNearCommands[];
+};
+
+layout(std430, binding = 3) buffer MidCommands
+{
+    DrawElementsIndirectCommand uMidCommands[];
+};
+
+layout(std430, binding = 4) buffer FarCommands
+{
+    DrawElementsIndirectCommand uFarCommands[];
+};
+
+layout(std430, binding = 5) buffer OutputCounters
+{
+    uint uNearCount;
+    uint uMidCount;
+    uint uFarCount;
+};
+
+uniform uint uChunkCount;
+uniform uint uOutputCapacity;
+uniform int uCascadesActive;
+uniform vec3 uCameraPos;
+uniform float uNearMaxDist;
+uniform float uMidMaxDist;
+uniform float uFarMaxDist;
+uniform float uInclusionPad;
+uniform vec4 uNearPlanes[6];
+uniform vec4 uMidPlanes[6];
+uniform vec4 uFarPlanes[6];
+
+bool sphereIntersects(vec4 planes[6], vec3 center, float radius)
+{
+    for (int i = 0; i < 6; i++)
+    {
+        if (dot(planes[i].xyz, center) + planes[i].w < -radius)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool withinCasterDistance(vec3 center, float radius, vec3 cameraPos, float maxDist)
+{
+    if (maxDist > 1e19)
+    {
+        return true;
+    }
+
+    vec2 d = center.xz - cameraPos.xz;
+    float dist = length(d);
+    return dist - radius <= maxDist;
+}
+
+void tryAppend(uint cascade, DrawElementsIndirectCommand cmd)
+{
+    if (cmd.count == 0u || cmd.instanceCount == 0u)
+    {
+        return;
+    }
+
+    if (cascade == 0u)
+    {
+        uint slot = atomicAdd(uNearCount, 1u);
+        if (slot < uOutputCapacity)
+        {
+            uNearCommands[slot] = cmd;
+        }
+    }
+    else if (cascade == 1u)
+    {
+        uint slot = atomicAdd(uMidCount, 1u);
+        if (slot < uOutputCapacity)
+        {
+            uMidCommands[slot] = cmd;
+        }
+    }
+    else
+    {
+        uint slot = atomicAdd(uFarCount, 1u);
+        if (slot < uOutputCapacity)
+        {
+            uFarCommands[slot] = cmd;
+        }
+    }
+}
+
+void main()
+{
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= uChunkCount)
+    {
+        return;
+    }
+
+    ChunkCullRecord rec = uChunkRecords[idx];
+    vec3 center = rec.centerRadius.xyz;
+    float radius = rec.centerRadius.w + max(uInclusionPad, 0.0);
+    bool fullOnlyNear = int(rec.meta.x + 0.5) == 0;
+    DrawElementsIndirectCommand cmd = uSourceCommands[idx];
+
+    if (withinCasterDistance(center, radius, uCameraPos, uFarMaxDist) &&
+        sphereIntersects(uFarPlanes, center, radius))
+    {
+        tryAppend(2u, cmd);
+    }
+
+    if (uCascadesActive < 1)
+    {
+        return;
+    }
+
+    if (withinCasterDistance(center, radius, uCameraPos, uMidMaxDist) &&
+        sphereIntersects(uMidPlanes, center, radius))
+    {
+        tryAppend(1u, cmd);
+    }
+
+    if (fullOnlyNear &&
+        withinCasterDistance(center, radius, uCameraPos, uNearMaxDist) &&
+        sphereIntersects(uNearPlanes, center, radius))
+    {
+        tryAppend(0u, cmd);
+    }
+}

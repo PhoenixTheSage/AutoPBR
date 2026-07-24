@@ -48,6 +48,16 @@ internal sealed record PreviewGlCapabilities(
     public bool CanUseGpuCompactedDrawSubmission =>
         CanUseGpuBatchCulling && IndirectParameters && ShaderDrawParameters;
 
+    public bool CanUseHierarchicalZOcclusion =>
+        CanUseGpuCompactedDrawSubmission && ImageLoadStore;
+
+    /// <summary>
+    /// GPU terrain shadow cull writes MultiDrawIndirect commands + counters for
+    /// <c>MultiDrawIndirectCount</c> (no index-list readback). Requires the same desktop stack as
+    /// compacted subject draws.
+    /// </summary>
+    public bool CanUseGpuTerrainShadowCull => CanUseGpuCompactedDrawSubmission;
+
     public bool CanUseGpuReductionDiagnostics => CanUseGpuCommandCompaction;
 
     public bool CanUseImageHistogram =>
@@ -79,6 +89,9 @@ internal sealed record PreviewGlCapabilities(
                $"gpuCommandCompaction={(CanUseGpuCommandCompaction ? "on" : "off")}, " +
                $"gpuBatchCulling={(CanUseGpuBatchCulling ? "on" : "off")}, " +
                $"gpuCompactedDraws={(CanUseGpuCompactedDrawSubmission ? "on" : "off")}, " +
+               $"hiZOcclusion={(CanUseHierarchicalZOcclusion ? "on" : "off")}, " +
+               $"voxelDdaOcclusion={(CanUseGpuCompactedDrawSubmission ? "on" : "off")}, " +
+               $"gpuTerrainShadowCull={(CanUseGpuTerrainShadowCull ? "on" : "off")}, " +
                $"gpuReductions={(CanUseGpuReductionDiagnostics ? "on" : "off")}, " +
                $"imageHistogram={(CanUseImageHistogram ? "on" : "off")}, " +
                $"materialTextureArrays={(CanUseMaterialTextureArrays ? "on" : "off")}, " +

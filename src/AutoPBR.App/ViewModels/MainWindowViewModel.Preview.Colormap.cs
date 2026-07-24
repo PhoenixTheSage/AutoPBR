@@ -14,6 +14,7 @@ namespace AutoPBR.App.ViewModels;
 public partial class MainWindowViewModel
 {
     private PreviewColormapImage? _previewGrassColormap;
+    private PreviewColormapImage? _previewFoliageColormap;
     private CancellationTokenSource? _previewGrassColormapDebounceCts;
 
     [ObservableProperty] private double _preview3DGrassColormapTemperature = PreviewStageConstants.DefaultGrassColormapTemperature;
@@ -38,7 +39,7 @@ public partial class MainWindowViewModel
                PreviewGroundNeedsGrassColormapTint();
     }
 
-    /// <summary>Load grass colormap from the scanned pack, install path, or native catalogs and refresh ground tint.</summary>
+    /// <summary>Load grass/foliage colormaps from the scanned pack, install path, or native catalogs and refresh ground tint.</summary>
     private void RefreshPreviewGrassColormapState()
     {
         var diskPack = TryResolveGrassColormapPackZipPath();
@@ -49,14 +50,25 @@ public partial class MainWindowViewModel
             Preview3DGrassColormapImage = null;
             Preview3DGrassColormapSampleText = null;
             OnPropertyChanged(nameof(IsPreview3DGrassColormapVisible));
-            PushPreviewGroundMaterialToGpu();
-            return;
+        }
+        else
+        {
+            _previewGrassColormap = image;
+            Preview3DGrassColormapImage = TryBuildColormapBitmap(image);
+            UpdateGrassColormapSampleText();
+            OnPropertyChanged(nameof(IsPreview3DGrassColormapVisible));
         }
 
-        _previewGrassColormap = image;
-        Preview3DGrassColormapImage = TryBuildColormapBitmap(image);
-        UpdateGrassColormapSampleText();
-        OnPropertyChanged(nameof(IsPreview3DGrassColormapVisible));
+        if (!PreviewColormapLoader.TryLoadFoliageColormap(diskPack, MinecraftAssetsDirectory, null, out var foliage) ||
+            foliage is null)
+        {
+            _previewFoliageColormap = null;
+        }
+        else
+        {
+            _previewFoliageColormap = foliage;
+        }
+
         PushPreviewGroundMaterialToGpu();
     }
 
@@ -95,6 +107,23 @@ public partial class MainWindowViewModel
         _previewGrassColormap = image;
     }
 
+    private void EnsurePreviewFoliageColormapLoaded()
+    {
+        if (_previewFoliageColormap is not null)
+        {
+            return;
+        }
+
+        var diskPack = TryResolveGrassColormapPackZipPath();
+        if (!PreviewColormapLoader.TryLoadFoliageColormap(diskPack, MinecraftAssetsDirectory, null, out var image) ||
+            image is null)
+        {
+            return;
+        }
+
+        _previewFoliageColormap = image;
+    }
+
     private void UpdateGrassColormapSampleText()
     {
         if (_previewGrassColormap is null)
@@ -113,6 +142,14 @@ public partial class MainWindowViewModel
             ? new Rgba32(91, 139, 54, 255)
             : PreviewGrassColormapTint.SampleGrassTint(
                 _previewGrassColormap,
+                Preview3DGrassColormapTemperature,
+                Preview3DGrassColormapDownfall);
+
+    private Rgba32 SamplePreviewFoliageTint() =>
+        _previewFoliageColormap is null
+            ? new Rgba32(71, 132, 36, 255)
+            : PreviewFoliageColormapTint.SampleFoliageTint(
+                _previewFoliageColormap,
                 Preview3DGrassColormapTemperature,
                 Preview3DGrassColormapDownfall);
 
@@ -135,6 +172,27 @@ public partial class MainWindowViewModel
         }
 
         return PreviewGrassColormapTint.WithGrassTint(maps, archivePath, SamplePreviewGrassTint());
+    }
+
+    private PreviewTextureMaps ApplyFoliageColormapTintIfNeeded(PreviewTextureMaps maps, string? archivePath)
+    {
+        if (!PreviewFoliageColormapTint.NeedsFoliageColormapTint(archivePath))
+        {
+            return maps;
+        }
+
+        EnsurePreviewFoliageColormapLoaded();
+        if (_previewFoliageColormap is not null)
+        {
+            return PreviewFoliageColormapTint.WithFoliageTint(
+                maps,
+                archivePath,
+                _previewFoliageColormap,
+                Preview3DGrassColormapTemperature,
+                Preview3DGrassColormapDownfall);
+        }
+
+        return PreviewFoliageColormapTint.WithFoliageTint(maps, archivePath, SamplePreviewFoliageTint());
     }
 
     private static Bitmap? TryBuildColormapBitmap(PreviewColormapImage image)

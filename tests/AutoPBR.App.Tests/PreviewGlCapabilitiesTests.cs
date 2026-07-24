@@ -34,6 +34,8 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.False(caps.CanUseGpuCommandCompaction);
         Assert.False(caps.CanUseGpuBatchCulling);
         Assert.False(caps.CanUseGpuCompactedDrawSubmission);
+        Assert.False(caps.CanUseHierarchicalZOcclusion);
+        Assert.False(caps.CanUseGpuTerrainShadowCull);
         Assert.False(caps.CanUseGpuReductionDiagnostics);
         Assert.False(caps.CanUseImageHistogram);
         Assert.False(caps.CanUseMaterialTextureArrays);
@@ -48,6 +50,9 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.Contains("gpuCommandCompaction=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("gpuBatchCulling=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("gpuCompactedDraws=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
+        Assert.Contains("hiZOcclusion=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
+        Assert.Contains("voxelDdaOcclusion=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
+        Assert.Contains("gpuTerrainShadowCull=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("gpuReductions=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("imageHistogram=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("materialTextureArrays=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
@@ -153,6 +158,8 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.True(caps.CanUseGpuBatchCulling);
         Assert.True(caps.IndirectParameters);
         Assert.True(caps.CanUseGpuCompactedDrawSubmission);
+        Assert.True(caps.CanUseHierarchicalZOcclusion);
+        Assert.True(caps.CanUseGpuTerrainShadowCull);
         Assert.True(caps.CanUseGpuReductionDiagnostics);
         Assert.True(caps.CanUseImageHistogram);
         Assert.True(caps.TimerQuery);
@@ -172,6 +179,9 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.Contains("gpuCommandCompaction=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("gpuBatchCulling=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("gpuCompactedDraws=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
+        Assert.Contains("hiZOcclusion=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
+        Assert.Contains("voxelDdaOcclusion=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
+        Assert.Contains("gpuTerrainShadowCull=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("gpuReductions=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("imageHistogram=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("materialTextureArrays=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
@@ -244,5 +254,6 @@ public sealed class PreviewGlCapabilitiesTests
 
         Assert.True(caps.IndirectParameters);
         Assert.True(caps.CanUseGpuCompactedDrawSubmission);
+        Assert.True(caps.CanUseGpuTerrainShadowCull);
     }
 }

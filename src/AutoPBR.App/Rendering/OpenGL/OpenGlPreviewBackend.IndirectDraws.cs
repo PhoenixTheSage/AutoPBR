@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Threading.Tasks;
 
 using AutoPBR.Preview;
 
@@ -7,6 +8,10 @@ namespace AutoPBR.App.Rendering.OpenGL;
 public sealed partial class OpenGlPreviewBackend
 {
     private const int MinGpuCullingGroupSize = 4;
+    private const int CpuFrustumCullParallelMinCommands = 64;
+
+    private byte[] _cpuCullVisibilityScratch = [];
+    private Vector4[] _cpuCullFrustumPlaneScratch = new Vector4[PreviewFrustumPlanes.PlaneCount];
 
     private bool TryUploadGenesisIndirectDrawCommands(PreviewModelSubject? model)
     {
@@ -79,7 +84,10 @@ public sealed partial class OpenGlPreviewBackend
         string passLabel,
         bool patches = false,
         bool preserveOrder = false,
-        float boundsPadding = 0f)
+        float boundsPadding = 0f,
+        bool enableHiZ = false,
+        Matrix4x4? hiZViewProj = null,
+        bool enableVoxelOcclusion = false)
     {
         if (commandCount < MinGpuCullingGroupSize ||
             _gpuDrawCommandCompactionCompileDisabled ||
@@ -96,8 +104,21 @@ public sealed partial class OpenGlPreviewBackend
             return false;
         }
 
+        var useVoxel = enableVoxelOcclusion &&
+                       _voxelDdaReadyThisFrame &&
+                       _terrainOccluderAtlas is { IsValid: true } &&
+                       passLabel is "main";
+        var useHiZ = !useVoxel &&
+                     enableHiZ &&
+                     _hiZReadyThisFrame &&
+                     _hierarchicalZ is { IsValid: true } &&
+                     passLabel is "main";
+        // One sync readback per sample window (see BeginOcclusionDebugFrame) — never per group.
+        var collectDiagnostics = _occlusionDebugSampleThisFrame && !_occlusionDebugReadThisFrame;
         Span<Vector4> frustumPlanes = stackalloc Vector4[PreviewFrustumPlanes.PlaneCount];
+        // Frustum stays unjittered (viewProjection); Hi-Z projects with the raster/jittered matrix.
         PreviewFrustumPlanes.Extract(viewProjection, frustumPlanes);
+        var occlusionViewProj = hiZViewProj ?? viewProjection;
         if (!_gpuDrawCommandCompactor!.DispatchWithGpuCulling(
                 _gpuDrawCommandCompactionProgram!,
                 sourceCommands,
@@ -107,10 +128,24 @@ public sealed partial class OpenGlPreviewBackend
                 modelMatrix,
                 firstCommand,
                 commandCount,
+                collectDiagnostics: collectDiagnostics,
                 preserveOrder: preserveOrder,
-                boundsPadding: boundsPadding))
+                boundsPadding: boundsPadding,
+                enableHiZ: useHiZ,
+                hiZ: useHiZ ? _hierarchicalZ : null,
+                viewProj: useHiZ ? occlusionViewProj : null,
+                hiZTextureUnit: HiZSamplerUnit,
+                enableVoxelOcclusion: useVoxel,
+                voxelAtlas: useVoxel ? _terrainOccluderAtlas : null,
+                voxelTextureUnit: VoxelOccluderSamplerUnit))
         {
             return false;
+        }
+
+        if (collectDiagnostics)
+        {
+            AccumulateOcclusionDebug(_gpuDrawCommandCompactor.ReadReductionDiagnostics());
+            _occlusionDebugReadThisFrame = true;
         }
 
         drawProgram.Use();
@@ -120,6 +155,7 @@ public sealed partial class OpenGlPreviewBackend
             commandCount,
             patches,
             keepBound: true);
+        var occlusionLabel = useVoxel ? "/DDA" : (useHiZ ? "/Hi-Z" : "");
         if (drawn && !_loggedGpuCompactedDrawSubmission)
         {
             _gpuCompactedSubmissionGroups++;
@@ -128,7 +164,8 @@ public sealed partial class OpenGlPreviewBackend
             EmitDiagnostic(
                 $"[3D preview] GPU-compacted draw submission enabled: pass={passLabel}, " +
                 $"sourceCommands={commandCount}, apiCalls=1, order={(preserveOrder ? "stable" : "parallel")}; " +
-                "frustum/LOD culling feeds indirect-count draws without CPU readback.");
+                "frustum/LOD" + occlusionLabel +
+                " culling feeds indirect-count draws without CPU readback.");
         }
         else if (drawn)
         {
@@ -137,6 +174,111 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         return drawn;
+    }
+
+    /// <summary>
+    /// Per-batch draw with CPU frustum/LOD tests when GPU compaction is unavailable.
+    /// Skips culled batches while preserving source order for alpha groups.
+    /// </summary>
+    private void DrawCpuFrustumCulledBatchGroup(
+        PreviewModelSubject model,
+        int firstCommand,
+        int commandCount,
+        ReadOnlySpan<Vector4> frustumPlanes,
+        Vector3 cameraPosition,
+        Matrix4x4 modelMatrix,
+        bool patches,
+        bool useIndirectDrawCommands,
+        float boundsPadding = 0f)
+    {
+        if (commandCount >= CpuFrustumCullParallelMinCommands)
+        {
+            DrawCpuFrustumCulledBatchGroupParallel(
+                model,
+                firstCommand,
+                commandCount,
+                frustumPlanes,
+                cameraPosition,
+                modelMatrix,
+                patches,
+                useIndirectDrawCommands,
+                boundsPadding);
+            return;
+        }
+
+        for (var i = 0; i < commandCount; i++)
+        {
+            var batchIndex = firstCommand + i;
+            var batch = model.DrawBatches[batchIndex];
+            if (!PreviewDrawBatchFrustumCull.IsBatchVisible(
+                    batch,
+                    frustumPlanes,
+                    cameraPosition,
+                    modelMatrix,
+                    boundsPadding))
+            {
+                continue;
+            }
+
+            DrawPreviewBatchRange(
+                batch,
+                batchIndex,
+                patches,
+                useIndirectDrawCommands,
+                useMultiDrawGroups: false,
+                groupCount: 1);
+        }
+    }
+
+    private void DrawCpuFrustumCulledBatchGroupParallel(
+        PreviewModelSubject model,
+        int firstCommand,
+        int commandCount,
+        ReadOnlySpan<Vector4> frustumPlanes,
+        Vector3 cameraPosition,
+        Matrix4x4 modelMatrix,
+        bool patches,
+        bool useIndirectDrawCommands,
+        float boundsPadding)
+    {
+        if (_cpuCullVisibilityScratch.Length < commandCount)
+        {
+            _cpuCullVisibilityScratch = new byte[Math.Max(commandCount, CpuFrustumCullParallelMinCommands)];
+        }
+
+        frustumPlanes.CopyTo(_cpuCullFrustumPlaneScratch);
+        var planes = _cpuCullFrustumPlaneScratch;
+        var visibility = _cpuCullVisibilityScratch;
+        var batches = model.DrawBatches;
+        Parallel.For(0, commandCount, i =>
+        {
+            var batch = batches[firstCommand + i];
+            visibility[i] = PreviewDrawBatchFrustumCull.IsBatchVisible(
+                batch,
+                planes,
+                cameraPosition,
+                modelMatrix,
+                boundsPadding)
+                ? (byte)1
+                : (byte)0;
+        });
+
+        for (var i = 0; i < commandCount; i++)
+        {
+            if (visibility[i] == 0)
+            {
+                continue;
+            }
+
+            var batchIndex = firstCommand + i;
+            DrawPreviewBatchRange(
+                batches[batchIndex],
+                batchIndex,
+                patches,
+                useIndirectDrawCommands,
+                useMultiDrawGroups: false,
+                groupCount: 1);
+        }
     }
 
     private bool TryEnsureGpuDrawCommandCompactor()
@@ -262,6 +404,7 @@ public sealed partial class OpenGlPreviewBackend
 
     private void DisposeGenesisIndirectDrawCommands()
     {
+        DisposeTerrainShadowCuller();
         _gpuDrawCommandCompactor?.Dispose();
         _gpuDrawCommandCompactor = null;
         _gpuDrawCommandCompactionProgram?.Dispose();
@@ -271,21 +414,27 @@ public sealed partial class OpenGlPreviewBackend
         _loggedIndirectDrawCommandBuffer = false;
         _loggedMultiDrawIndirectGroups = false;
         _loggedGpuCompactedDrawSubmission = false;
+        _loggedTerrainShadowGpuCull = false;
         _gpuCompactedSubmissionGroups = 0;
         _gpuCompactedSubmissionSourceCommands = 0;
         _gpuDrawCommandCompactionCompileDisabled = false;
+        _terrainShadowCullCompileDisabled = false;
     }
 
     private void AbandonGenesisIndirectDrawCommands()
     {
+        _terrainShadowCuller = null;
+        _terrainShadowCullProgram = null;
         _gpuDrawCommandCompactor = null;
         _gpuDrawCommandCompactionProgram = null;
         _genesisIndirectDrawCommands = null;
         _loggedIndirectDrawCommandBuffer = false;
         _loggedMultiDrawIndirectGroups = false;
         _loggedGpuCompactedDrawSubmission = false;
+        _loggedTerrainShadowGpuCull = false;
         _gpuCompactedSubmissionGroups = 0;
         _gpuCompactedSubmissionSourceCommands = 0;
         _gpuDrawCommandCompactionCompileDisabled = false;
+        _terrainShadowCullCompileDisabled = false;
     }
 }

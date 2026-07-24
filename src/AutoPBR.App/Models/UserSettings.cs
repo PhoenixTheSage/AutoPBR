@@ -212,11 +212,29 @@ public sealed class UserSettings
     /// <summary>Draw a ground grid in 3D preview.</summary>
     public bool Preview3DShowGrid { get; set; } = true;
 
+    /// <summary>Ground-grid color as packed ARGB (default light cool white).</summary>
+    public uint Preview3DGridColorArgb { get; set; } = 0xE8F2F2F8;
+
     /// <summary>Draw the textured grass ground plane in 3D preview.</summary>
     public bool Preview3DShowGroundMesh { get; set; } = true;
 
     /// <summary>Hard Full-detail terrain chunk radius (Chebyshev).</summary>
     public int Preview3DChunkViewDistance { get; set; } = 8;
+
+    /// <summary>Deterministic seed for streamed preview terrain.</summary>
+    public int Preview3DWorldSeed { get; set; } = unchecked((int)0x41504252);
+
+    /// <summary>Biome region scale (1 = default; larger = bigger biomes).</summary>
+    public double Preview3DTerrainBiomeSize { get; set; } = 1.0;
+
+    /// <summary>Terrain height amplification (1 = default).</summary>
+    public double Preview3DTerrainAmplification { get; set; } = 1.0;
+
+    /// <summary>Mountain erosion strength (1 = default).</summary>
+    public double Preview3DTerrainErosionStrength { get; set; } = 1.0;
+
+    /// <summary>Continental climate stretch (1 = default).</summary>
+    public double Preview3DTerrainContinentalness { get; set; } = 1.0;
 
     /// <summary>Grass colormap temperature slider (0–1) for 3D preview biome tint.</summary>
     public double? Preview3DGrassColormapTemperature { get; set; }
@@ -233,8 +251,14 @@ public sealed class UserSettings
     /// <summary>When true, write periodic P8 GPU pass timings to the preview log (Debug tab).</summary>
     public bool Preview3DLogGpuPassTimings { get; set; }
 
+    /// <summary>When true, write periodic fingerprint / volumetric / TAA diagnostic lines to the preview log (Debug tab).</summary>
+    public bool Preview3DLogVerbosePreviewDiagnostics { get; set; }
+
     /// <summary>When true, FPS overlay shows per-pass GPU timings instead of total GPU ms only.</summary>
     public bool Preview3DShowExpandedGpuTimingHud { get; set; }
+
+    /// <summary>Occlusion debug: 0 = off, 1 = stats, 2 = tint/keep Hi-Z (Debug tab).</summary>
+    public int Preview3DOcclusionDebugMode { get; set; }
 
     /// <summary>Synchronize native WGL preview presentation to the current display refresh rate.</summary>
     public bool? Preview3DVSyncEnabled { get; set; }
@@ -270,7 +294,7 @@ public sealed class UserSettings
     public double Preview3DParallaxMaxUvShift { get; set; } = 0.45;
 
     /// <summary>Genesis high-end preview: tessellate triangles and displace height-map protrusions outward.</summary>
-    public bool Preview3DEnableTessellationDisplacement { get; set; } = true;
+    public bool Preview3DEnableTessellationDisplacement { get; set; }
 
     /// <summary>Genesis tessellation: fixed triangle tessellation level (1..16).</summary>
     public double Preview3DTessellationLevel { get; set; } = 8;

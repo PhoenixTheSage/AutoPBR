@@ -110,17 +110,25 @@ public sealed class MinecraftPreviewVersionGateTests
     }
 
     [Fact]
-    public void NativeIrVersionLabels_does_not_cross_fallback_between_legacy_and_modern()
+    public void NativeIrVersionLabels_falls_back_to_catalogued_modern_for_any_nonexact_label()
     {
         var legacy = new MinecraftNativeProfile("1.21.11", "unused", new Version(1, 21, 11));
         var labels = NativeIrVersionLabels.ForProfile(legacy).ToList();
-        Assert.Single(labels);
+        Assert.Equal(2, labels.Count);
         Assert.Equal("1.21.11", labels[0]);
+        Assert.Equal("26.1.2", labels[1]);
 
         var modern = new MinecraftNativeProfile("26.1.2", "unused", new Version(26, 1, 2));
         labels = NativeIrVersionLabels.ForProfile(modern).ToList();
         Assert.Single(labels);
         Assert.Equal("26.1.2", labels[0]);
+
+        var game26_2 = new MinecraftNativeProfile("26.2", "unused", new Version(26, 2));
+        labels = NativeIrVersionLabels.ForProfile(game26_2).ToList();
+        Assert.Equal(2, labels.Count);
+        Assert.Equal("26.2", labels[0]);
+        Assert.Equal("26.1.2", labels[1]);
+        Assert.Equal(labels, NativeIrVersionLabels.ForGeometryIrShardLookup(game26_2).ToList());
     }
 
     [Fact]
@@ -152,6 +160,36 @@ public sealed class MinecraftPreviewVersionGateTests
         var labels = NativeIrVersionLabels.ForGeometryIrShardLookup(legacy).ToList();
         Assert.Equal(2, labels.Count);
         Assert.Equal("1.21.11", labels[0]);
+        Assert.Equal("26.1.2", labels[1]);
+    }
+
+    [Fact]
+    public void ForGeometryIrShardLookup_nonexact_modern_falls_back_to_catalogued_26_1_2()
+    {
+        var nearby = new MinecraftNativeProfile("26.1.0", "unused", new Version(26, 1, 0));
+        var labels = NativeIrVersionLabels.ForGeometryIrShardLookup(nearby).ToList();
+        Assert.Equal(2, labels.Count);
+        Assert.Equal("26.1.0", labels[0]);
+        Assert.Equal("26.1.2", labels[1]);
+
+        var exact = new MinecraftNativeProfile("26.1.2", "unused", new Version(26, 1, 2));
+        labels = NativeIrVersionLabels.ForGeometryIrShardLookup(exact).ToList();
+        Assert.Single(labels);
+        Assert.Equal("26.1.2", labels[0]);
+    }
+
+    [Fact]
+    public void ForProfile_26_2_falls_back_to_catalogued_26_1_2()
+    {
+        Assert.True(MinecraftPreviewVersionDetection.TryDetectFromPath(
+            @"C:\Users\me\AppData\Roaming\.minecraft\versions\26.2\26.2.jar",
+            out var detected));
+        Assert.Equal(new Version(26, 2, 0), detected);
+
+        var profile = new MinecraftNativeProfile("26.2", "unused", detected);
+        var labels = NativeIrVersionLabels.ForProfile(profile).ToList();
+        Assert.Equal(2, labels.Count);
+        Assert.Equal("26.2", labels[0]);
         Assert.Equal("26.1.2", labels[1]);
     }
 

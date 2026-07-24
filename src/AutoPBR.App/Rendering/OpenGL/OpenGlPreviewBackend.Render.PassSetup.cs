@@ -408,7 +408,7 @@ public sealed partial class OpenGlPreviewBackend
                     gpuSkinned.InterleavedVertices,
                     gpuSkinned.Indices,
                     gpuSkinned.VertexStrideFloats);
-                EmitDiagnostic(
+                EmitMeshUploadDiagnostic(
                     $"[3D preview] Mesh upload: frame.Scene={frame.Scene.SceneKind}, sourceCount={frame.Scene.Meshes.Count}, verts={gpuSkinned.InterleavedVertices.Length / gpuSkinned.VertexStrideFloats}, indices={gpuSkinned.Indices.Length}, strideFloats={gpuSkinned.VertexStrideFloats} (GPU-skinned subject).");
             }
             else if (frame.EntityEmulatedPreview && frame.EntityRebakeCtx is not null)
@@ -433,7 +433,7 @@ public sealed partial class OpenGlPreviewBackend
                      && cpuPlaced.InterleavedVertices.Length % PreviewMesh.FloatsPerVertex == 0)
             {
                 UploadPreviewMesh(cpuPlaced.InterleavedVertices, cpuPlaced.Indices);
-                EmitDiagnostic(
+                EmitMeshUploadDiagnostic(
                     $"[3D preview] Mesh upload: pack-converter CPU subject, verts={cpuPlaced.InterleavedVertices.Length / PreviewMesh.FloatsPerVertex}, indices={cpuPlaced.Indices.Length}.");
             }
             else if (frame.Scene.SceneKind == PreviewSceneKind.ItemPlane)
@@ -446,7 +446,7 @@ public sealed partial class OpenGlPreviewBackend
                     : uploadMesh.Name == "sprite_voxels"
                         ? uploadMesh.VertexCount / 24
                         : 0;
-                EmitDiagnostic(
+                EmitMeshUploadDiagnostic(
                     voxelCount > 0
                         ? $"[3D preview] Mesh upload: {meshKind} (itemFlat={(frame.Settings.ItemFlatSpritePreview ? 1 : 0)}, thickness={frame.Settings.SpriteThickness:0.###}, voxels={voxelCount}), verts={uploadMesh.VertexCount}, indices={uploadMesh.Indices.Length}."
                         : $"[3D preview] Mesh upload: {meshKind} (itemFlat={(frame.Settings.ItemFlatSpritePreview ? 1 : 0)}, planes={frame.Settings.SpritePlaneCount}, thickness={frame.Settings.SpriteThickness:0.###}), verts={uploadMesh.VertexCount}, indices={uploadMesh.Indices.Length}.");
@@ -460,7 +460,7 @@ public sealed partial class OpenGlPreviewBackend
             {
                 var uploadMesh = frame.Scene.Meshes[0];
                 UploadPreviewMesh(uploadMesh.InterleavedVertices, uploadMesh.Indices);
-                EmitDiagnostic(
+                EmitMeshUploadDiagnostic(
                     $"[3D preview] Mesh upload: frame.Scene={frame.Scene.SceneKind}, sourceCount={frame.Scene.Meshes.Count}, verts={uploadMesh.VertexCount}, indices={uploadMesh.Indices.Length}.");
             }
             else
@@ -470,7 +470,7 @@ public sealed partial class OpenGlPreviewBackend
                 var uploadMesh = frame.Scene.SceneKind == PreviewSceneKind.ItemPlane
                     ? ItemPreviewSceneFactory.CreateMesh(frame.Settings, frame.Material)
                     : PreviewMeshFactory.CreateUnitCube();
-                EmitDiagnostic($"[3D preview] Fallback mesh upload used ({frame.Scene.SceneKind}).");
+                EmitMeshUploadDiagnostic($"[3D preview] Fallback mesh upload used ({frame.Scene.SceneKind}).");
                 UploadPreviewMesh(uploadMesh.InterleavedVertices, uploadMesh.Indices);
             }
 
@@ -499,20 +499,30 @@ public sealed partial class OpenGlPreviewBackend
         bool groundMaterialDirty;
         PreviewMaterial[]? groundSlots;
         bool groundOverlayCutout;
+        bool[]? groundSlotCutout;
         bool terrainGrassBakeDirty;
         PreviewTerrainGrassBakeSettings terrainGrassBake;
+        bool terrainVegetationDirty;
+        PreviewTerrainVegetationBakePlan? terrainVegetation;
+        bool terrainWorldGenDirty;
+        PreviewTerrainWorldGenSettings terrainWorldGen;
         lock (_sync)
         {
             groundMaterialDirty = _grassGroundMaterialDirty;
             groundSlots = _grassGroundSlotMaterials;
             groundOverlayCutout = _grassGroundOverlayCutout;
+            groundSlotCutout = _grassGroundSlotCutout;
             terrainGrassBakeDirty = _terrainGrassBakeSettingsDirty;
             terrainGrassBake = _terrainGrassBakeSettings;
+            terrainVegetationDirty = _terrainVegetationBakePlanDirty;
+            terrainVegetation = _terrainVegetationBakePlan;
+            terrainWorldGenDirty = _terrainWorldGenSettingsDirty;
+            terrainWorldGen = _terrainWorldGenSettings;
         }
 
         if (groundMaterialDirty)
         {
-            UploadGroundMaterials(frame.Gl, groundSlots, groundOverlayCutout, nearest: true);
+            UploadGroundMaterials(frame.Gl, groundSlots, groundOverlayCutout, nearest: true, groundSlotCutout);
             lock (_sync)
             {
                 _grassGroundMaterialDirty = false;
@@ -528,12 +538,32 @@ public sealed partial class OpenGlPreviewBackend
             }
         }
 
+        if (terrainVegetationDirty)
+        {
+            ApplyTerrainVegetationBakePlan(terrainVegetation);
+            lock (_sync)
+            {
+                _terrainVegetationBakePlanDirty = false;
+            }
+        }
+
+        if (terrainWorldGenDirty)
+        {
+            ApplyTerrainWorldGenSettings(terrainWorldGen);
+            lock (_sync)
+            {
+                _terrainWorldGenSettingsDirty = false;
+            }
+        }
+
         frame.EntityBoneSnapshotValid = false;
         frame.EntityBoneSnapshotCount = 0;
         frame.EntityBonePaletteUploaded = false;
         _lastEntityBoneSnapshotCount = 0;
         string? boneFillHint = null;
         var boneFillOk = false;
+        using (BeginCpuTimerScope(GlGpuTimerScope.SetupBones))
+        {
         if (frame.BlockModel is { GpuEntityBoneSkinning: true, EmulatedRebake: { } ebBone })
         {
             if (setupAnimMotion)
@@ -609,8 +639,12 @@ public sealed partial class OpenGlPreviewBackend
                 _blockModelSubject = frame.BlockModel;
             }
         }
+        }
 
-        UpdateEntityGpuSkinnedBounds(ref frame);
+        using (BeginCpuTimerScope(GlGpuTimerScope.SetupBounds))
+        {
+            UpdateEntityGpuSkinnedBounds(ref frame);
+        }
 
         var bonePaletteUploaded = false;
         if (frame.BlockModel is { GpuEntityBoneSkinning: true } blockModel && _entityBoneUbo != 0)
@@ -735,6 +769,18 @@ public sealed partial class OpenGlPreviewBackend
     private string? _parityCatalogCpuBindDiagKey;
     private string? _parityCatalogCpuBindFailDiagKey;
     private string? _entityMeshUploadDeferredDiagKey;
+    private string? _lastMeshUploadDiagKey;
+
+    private void EmitMeshUploadDiagnostic(string message)
+    {
+        if (string.Equals(message, _lastMeshUploadDiagKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastMeshUploadDiagKey = message;
+        EmitDiagnostic(message);
+    }
 
     private bool TryCommitParityCatalogCpuBindPoseMesh(
         ref GlRenderFrame frame,

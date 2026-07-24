@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Numerics;
 
 using Avalonia.Input;
+using Avalonia.Media;
 using Avalonia.Threading;
 
 using AutoPBR.App.Controls;
@@ -26,6 +27,8 @@ public partial class MainWindowViewModel
     private PreviewMeshProvenance? _lastPreviewMeshProvenance;
     private PreviewMeshProvenance? _lastLoggedPreviewMeshProvenance;
     private string? _lastPreview3DLoggedError;
+    private bool _lastPreviewGpuCoreReady;
+    private bool _lastPreviewGpuFullyReady;
     private DispatcherTimer? _preview3DCameraPoseTimer;
     private CancellationTokenSource? _preview3DSpriteThicknessDebounceCts;
     private CancellationTokenSource? _preview3DTaaGpuDebounceCts;
@@ -53,12 +56,14 @@ public partial class MainWindowViewModel
     [ObservableProperty] private bool _preview3DEnableEntityLabPbrShading = true;
     [ObservableProperty] private bool _preview3DEnableEntityParallax;
     [ObservableProperty] private bool _preview3DShowGrid = true;
+    [ObservableProperty] private Color _preview3DGridColor = Color.FromUInt32(PreviewStageConstants.DefaultGridColorArgb);
     [ObservableProperty] private bool _preview3DShowGroundMesh = true;
     [ObservableProperty] private double _preview3DChunkViewDistance = PreviewStageConstants.TerrainDefaultChunkViewDistance;
     [ObservableProperty] private bool _preview3DShowAxes = true;
     [ObservableProperty] private bool _preview3DShowFpsCounter;
     [ObservableProperty] private bool _preview3DVSyncEnabled;
     [ObservableProperty] private string? _preview3DFpsCounterText;
+    [ObservableProperty] private string? _preview3DCpuTimingHudText;
     [ObservableProperty] private bool _preview3DEnableParallax = true;
     [ObservableProperty] private bool _preview3DEnableNormalMap = true;
     [ObservableProperty] private bool _preview3DEnableSpecularMap = true;
@@ -68,7 +73,7 @@ public partial class MainWindowViewModel
     [ObservableProperty] private double _preview3DParallaxShadowSamples = 24;
     [ObservableProperty] private double _preview3DParallaxShadowSoftness = 1.25;
     [ObservableProperty] private double _preview3DParallaxMaxUvShift = 0.45;
-    [ObservableProperty] private bool _preview3DEnableTessellationDisplacement = true;
+    [ObservableProperty] private bool _preview3DEnableTessellationDisplacement;
     [ObservableProperty] private double _preview3DTessellationLevel = 8.0;
     [ObservableProperty] private double _preview3DTessellationDisplacementStrength = 0.06;
     [ObservableProperty] private bool _preview3DEnableSss = true;
@@ -93,7 +98,9 @@ public partial class MainWindowViewModel
     [ObservableProperty] private double _preview3DHorizonFogStrength = 1.0;
     [ObservableProperty] private bool _preview3DShowCelestialDebug;
     [ObservableProperty] private bool _preview3DLogGpuPassTimings;
+    [ObservableProperty] private bool _preview3DLogVerbosePreviewDiagnostics;
     [ObservableProperty] private bool _preview3DShowExpandedGpuTimingHud;
+    [ObservableProperty] private int _preview3DOcclusionDebugMode;
     [ObservableProperty] private double _preview3DTimeOfDayHours = 12.0;
     [ObservableProperty] private bool _preview3DAnimateTimeOfDay;
     [ObservableProperty] private double _preview3DTimeOfDaySpeed = 1.0;
@@ -213,6 +220,9 @@ public partial class MainWindowViewModel
     public bool IsPreviewSpriteTarget => _lastPreviewTextureMaps?.Sprite2DFoliageTarget ?? false;
     public bool IsPreview3DFpsCounterVisible => Preview3DShowFpsCounter && IsPreview3D;
 
+    public bool IsPreview3DCpuTimingHudVisible =>
+        IsPreview3DFpsCounterVisible && !string.IsNullOrWhiteSpace(Preview3DCpuTimingHudText);
+
     internal void RegisterGlPreview(GlPbrPreviewControl glPreview)
     {
         _glPreview = glPreview;
@@ -255,8 +265,13 @@ public partial class MainWindowViewModel
             ApplyPreviewGpuInitOverlay(progress);
             UpdatePreviewOpenGlActiveContextFromBackend();
             // Bootstrap finishes after the first Apply3DPreviewIfNeeded; re-push idle/subject
-            // so terrain/sky actually draw once the ground mesh and Genesis program exist.
-            if ((progress.CoreReady || progress.IsFullyReady) && IsPreview3D)
+            // once when Core/FullyReady becomes true so terrain/sky draw. Do not re-push on every
+            // subsequent Ready notification — that dirties mesh each frame and floods the log UI.
+            var coreBecameReady = progress.CoreReady && !_lastPreviewGpuCoreReady;
+            var fullyBecameReady = progress.IsFullyReady && !_lastPreviewGpuFullyReady;
+            _lastPreviewGpuCoreReady = progress.CoreReady;
+            _lastPreviewGpuFullyReady = progress.IsFullyReady;
+            if ((coreBecameReady || fullyBecameReady) && IsPreview3D)
             {
                 Apply3DPreviewIfNeeded();
             }
@@ -301,6 +316,7 @@ public partial class MainWindowViewModel
         OnPropertyChanged(nameof(IsPreview3DGrassColormapVisible));
         OnPropertyChanged(nameof(IsPreviewSpriteTarget));
         OnPropertyChanged(nameof(IsPreview3DFpsCounterVisible));
+        OnPropertyChanged(nameof(IsPreview3DCpuTimingHudVisible));
         if (!_loadingSettings)
         {
             SaveSettings();
@@ -345,13 +361,16 @@ public partial class MainWindowViewModel
     partial void OnPreview3DEnableEntityLabPbrShadingChanged(bool value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DEnableEntityParallaxChanged(bool value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DShowGridChanged(bool value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DGridColorChanged(Color value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DShowGroundMeshChanged(bool value) => OnPreview3DGpuSettingChanged(value);
-    partial void OnPreview3DChunkViewDistanceChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    // Chunk view distance shares World-gen debounce/clamp with seed + terrain modifiers
+    // (see MainWindowViewModel.Preview.WorldGen.cs).
     partial void OnPreview3DShowAxesChanged(bool value) => OnPreview3DGpuSettingChanged(value);
 
     partial void OnPreview3DShowFpsCounterChanged(bool value)
     {
         OnPropertyChanged(nameof(IsPreview3DFpsCounterVisible));
+        OnPropertyChanged(nameof(IsPreview3DCpuTimingHudVisible));
         if (_loadingSettings)
         {
             return;
@@ -361,6 +380,7 @@ public partial class MainWindowViewModel
         if (!value)
         {
             Preview3DFpsCounterText = null;
+            Preview3DCpuTimingHudText = null;
         }
     }
 
@@ -410,7 +430,9 @@ public partial class MainWindowViewModel
     partial void OnPreview3DHorizonFogStrengthChanged(double value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DShowCelestialDebugChanged(bool value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DLogGpuPassTimingsChanged(bool value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DLogVerbosePreviewDiagnosticsChanged(bool value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DShowExpandedGpuTimingHudChanged(bool value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DOcclusionDebugModeChanged(int value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DTimeOfDayHoursChanged(double value) => OnPreview3DTimeOfDayChanged(value);
     partial void OnPreview3DAnimateTimeOfDayChanged(bool value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DTimeOfDaySpeedChanged(double value) => OnPreview3DGpuSettingChanged(value);
@@ -654,6 +676,7 @@ public partial class MainWindowViewModel
     private PreviewRenderSettings BuildPreview3DRenderSettings()
     {
         var isItemFlatSprite = _lastPreviewTextureMaps is { Sprite2DFoliageTarget: true, IsItemTexturePath: true };
+        var worldGen = BuildTerrainWorldGenSettings();
         return new()
         {
             NormalStrength = (float)NormalIntensity,
@@ -676,11 +699,20 @@ public partial class MainWindowViewModel
                 PreviewStageConstants.SpriteThicknessMax),
             ItemFlatSpritePreview = isItemFlatSprite,
             ShowBackgroundGrid = Preview3DShowGrid,
+            GridColorR = Preview3DGridColor.R / 255f,
+            GridColorG = Preview3DGridColor.G / 255f,
+            GridColorB = Preview3DGridColor.B / 255f,
+            GridColorA = Preview3DGridColor.A / 255f,
             ShowGroundMesh = Preview3DShowGroundMesh,
             ChunkViewDistance = (int)Math.Round(Math.Clamp(
                 Preview3DChunkViewDistance,
                 PreviewStageConstants.TerrainMinChunkViewDistance,
                 PreviewStageConstants.TerrainMaxChunkViewDistance)),
+            TerrainWorldSeed = worldGen.Seed,
+            TerrainBiomeSize = worldGen.BiomeSize,
+            TerrainAmplification = worldGen.Amplification,
+            TerrainErosionStrength = worldGen.ErosionStrength,
+            TerrainContinentalness = worldGen.Continentalness,
             ShowCornerAxes = Preview3DShowAxes,
             DrawPreviewSubject = _lastPreviewTextureMaps is not null,
             EnableSss = Preview3DEnableSss,
@@ -714,7 +746,7 @@ public partial class MainWindowViewModel
             TimeOfDayHours = (float)Preview3DTimeOfDayHours,
             AnimateTimeOfDay = Preview3DAnimateTimeOfDay,
             TimeOfDaySpeed = (float)Preview3DTimeOfDaySpeed,
-            CapturePreviewFingerprint = DebugMode,
+            CapturePreviewFingerprint = Preview3DLogVerbosePreviewDiagnostics,
             EnableShadows = Preview3DEnableShadows,
             EnableShadowCascades = Preview3DEnableShadowCascades,
             ShadowDistance = (float)Math.Clamp(Preview3DShadowDistance, 32.0, 256.0),
@@ -757,10 +789,11 @@ public partial class MainWindowViewModel
             PreviewTaaFxaaLumaThreshold = (float)Math.Clamp(Preview3DTaaFxaaLumaThreshold, 0.001, 0.12),
             PreviewTaaForceFxaa = Preview3DTaaForceFxaa,
             CloudQuality = PreviewVolumetricQuality.Resolve(Math.Clamp(Preview3DVolumetricQuality, 0, 2)).CloudQuality,
-            LogVolumetricTiming = DebugMode,
-            LogPreviewTaaDiagnostics = DebugMode,
+            LogVolumetricTiming = Preview3DLogVerbosePreviewDiagnostics,
+            LogPreviewTaaDiagnostics = Preview3DLogVerbosePreviewDiagnostics,
             LogGpuPassTimings = Preview3DLogGpuPassTimings,
             ShowExpandedGpuTimingHud = Preview3DShowExpandedGpuTimingHud,
+            OcclusionDebugMode = Math.Clamp(Preview3DOcclusionDebugMode, 0, 2),
             ShowSunProjectionDebug = Preview3DShowCelestialDebug,
             HdrPresentActive = PreviewHdrPresentActive,
             HdrPaperWhiteNits = PreviewHdrPresentPolicy.ClampPaperWhiteNits((float)PreviewHdrPaperWhiteNits),
@@ -960,6 +993,11 @@ public partial class MainWindowViewModel
                 Preview3DFpsCounterText = null;
             }
 
+            if (Preview3DCpuTimingHudText is not null)
+            {
+                Preview3DCpuTimingHudText = null;
+            }
+
             return;
         }
 
@@ -974,7 +1012,16 @@ public partial class MainWindowViewModel
         {
             Preview3DFpsCounterText = text;
         }
+
+        var cpuText = _glPreview.LatestCpuTimingHudText;
+        if (cpuText != Preview3DCpuTimingHudText)
+        {
+            Preview3DCpuTimingHudText = cpuText;
+        }
     }
+
+    partial void OnPreview3DCpuTimingHudTextChanged(string? value) =>
+        OnPropertyChanged(nameof(IsPreview3DCpuTimingHudVisible));
 
     private void DisposePreviewResources()
     {

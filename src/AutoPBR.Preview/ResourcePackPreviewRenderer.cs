@@ -225,7 +225,13 @@ public static class ResourcePackPreviewRenderer
                         var anchorOffset = Vector3.Zero;
                         var placementApplied = false;
                         var isParityCatalogEntity = EntityTextureParityCatalog.IsCatalogued(normSel);
-                        if (isEmulatedEntityModel)
+                        // Error placeholders are static "!" geometry — not animatable entity rigs. Keeping
+                        // EmulatedRebake would defer GPU upload and enter bone-skinning paths that cannot
+                        // resolve uncatalogued textures, which also stalls terrain streaming frames.
+                        var useEmulatedEntityPipeline =
+                            isEmulatedEntityModel &&
+                            meshProvenance.Kind != PreviewMeshDriverKind.ErrorPlaceholder;
+                        if (useEmulatedEntityPipeline)
                         {
                             var prof = ResolvePreviewMeshNativeProfile(previewNativeProfile);
                             var idlePh = ComputeDeterministicIdlePhase(archivePath, prof.Name);
@@ -270,6 +276,16 @@ public static class ResourcePackPreviewRenderer
                                     verts,
                                     MinecraftModelBaker.FloatsPerVertex);
                         }
+                        else if (meshProvenance.Kind == PreviewMeshDriverKind.ErrorPlaceholder)
+                        {
+                            // Feet-on-pad placement without the emulated rebake/GPU-skin pipeline.
+                            var placement = EntityPreviewPlacement.ApplyToPreviewVertices(
+                                verts,
+                                MinecraftModelBaker.FloatsPerVertex,
+                                elementPartIds: null);
+                            anchorOffset = placement.AnchorOffset;
+                            placementApplied = true;
+                        }
 
                         var subject = new PreviewModelSubject
                         {
@@ -284,8 +300,8 @@ public static class ResourcePackPreviewRenderer
                             MaterialArchivePaths = orderedModelTextures.ToArray(),
                             PrimaryMaterialIndex = primIdx,
                             Sprite2DFoliageTarget = sprite,
-                            EnableRenderTimeAnimation = isEmulatedEntityModel && !isParityCatalogEntity,
-                            AnimationPreset = isEmulatedEntityModel ? "entity_emulated" : null,
+                            EnableRenderTimeAnimation = useEmulatedEntityPipeline && !isParityCatalogEntity,
+                            AnimationPreset = useEmulatedEntityPipeline ? "entity_emulated" : null,
                             EmulatedRebake = emulatedRebake,
                             MeshProvenance = meshProvenance,
                             EntityPreviewAnchorOffset = anchorOffset,

@@ -3,14 +3,57 @@ using Silk.NET.OpenGL;
 namespace AutoPBR.App.Rendering.OpenGL;
 
 /// <summary>
+/// Explicit GL state restored after a shadow depth pass. Callers must supply this instead of
+/// querying the driver (<c>glGet*</c>) so cascade slices stay zero-sync.
+/// </summary>
+internal readonly struct GlShadowPassRestoreState
+{
+    public readonly int DrawFbo;
+    public readonly int ViewportX;
+    public readonly int ViewportY;
+    public readonly int ViewportWidth;
+    public readonly int ViewportHeight;
+    public readonly bool ColorWriteR;
+    public readonly bool ColorWriteG;
+    public readonly bool ColorWriteB;
+    public readonly bool ColorWriteA;
+
+    public GlShadowPassRestoreState(
+        int drawFbo,
+        int viewportX,
+        int viewportY,
+        int viewportWidth,
+        int viewportHeight,
+        bool colorWriteR = true,
+        bool colorWriteG = true,
+        bool colorWriteB = true,
+        bool colorWriteA = true)
+    {
+        DrawFbo = Math.Max(0, drawFbo);
+        ViewportX = viewportX;
+        ViewportY = viewportY;
+        ViewportWidth = Math.Max(1, viewportWidth);
+        ViewportHeight = Math.Max(1, viewportHeight);
+        ColorWriteR = colorWriteR;
+        ColorWriteG = colorWriteG;
+        ColorWriteB = colorWriteB;
+        ColorWriteA = colorWriteA;
+    }
+
+    public static GlShadowPassRestoreState FromFrame(in GlRenderFrame frame) =>
+        new(
+            frame.DefaultFbo,
+            frame.VpX,
+            frame.VpY,
+            frame.Vw,
+            frame.Vh);
+}
+
+/// <summary>
 /// Single directional shadow map (Genesis Shadows Phase 2).
 /// FBO + depth-only Texture2D configured for hardware comparison sampling
 /// (sampler2DShadow / GL_TEXTURE_COMPARE_MODE = GL_COMPARE_REF_TO_TEXTURE).
-///
-/// Phase 3 (CSM) extension point: this type holds a single map; cascades will introduce
-/// either an array texture or per-cascade GlShadowMapTarget instances + a cascade selection
-/// step in <see cref="OpenGlPreviewBackend"/>. Keeping the resolution/bias surface area minimal
-/// here so cascade plumbing is additive.
+/// Cascades use separate <see cref="GlShadowMapTarget"/> instances at LOD resolutions.
 /// </summary>
 internal sealed class GlShadowMapTarget : IDisposable
 {
@@ -21,18 +64,8 @@ internal sealed class GlShadowMapTarget : IDisposable
     private readonly int _resolution;
     private bool _disposed;
 
-    /// <summary>Saved viewport restored by <see cref="EndShadowPass"/>.</summary>
-    private int _savedVpX;
-    private int _savedVpY;
-    private int _savedVpW;
-    private int _savedVpH;
-    private int _savedDrawFbo;
-
-    /// <summary>Saved color mask (sRGB-state agnostic) so the main pass can write color again.</summary>
-    private bool _savedColorWriteR;
-    private bool _savedColorWriteG;
-    private bool _savedColorWriteB;
-    private bool _savedColorWriteA;
+    private GlShadowPassRestoreState _restore;
+    private bool _passActive;
 
     public GlShadowMapTarget(GL gl, int resolution, bool useOpenGlEs)
     {
@@ -107,25 +140,16 @@ internal sealed class GlShadowMapTarget : IDisposable
     public uint DepthTextureHandle => _depthTexture;
     public int Resolution => _resolution;
 
-    public void BeginShadowPass(float polygonOffsetFactor = 1.25f, float polygonOffsetUnits = 2.5f)
+    /// <summary>
+    /// Binds this depth FBO and clears. Caller supplies restore state — no <c>glGet*</c>.
+    /// </summary>
+    public void BeginShadowPass(
+        in GlShadowPassRestoreState restore,
+        float polygonOffsetFactor = 1.25f,
+        float polygonOffsetUnits = 2.5f)
     {
-        _savedDrawFbo = _gl.GetInteger(GetPName.DrawFramebufferBinding);
-
-        // Snapshot main viewport so EndShadowPass restores cleanly.
-        var vp = new int[4];
-        _gl.GetInteger(GetPName.Viewport, vp);
-        _savedVpX = vp[0];
-        _savedVpY = vp[1];
-        _savedVpW = vp[2];
-        _savedVpH = vp[3];
-
-        // Snapshot color mask so EndShadowPass restores it (the main pass may not reset all four channels).
-        var cm = new bool[4];
-        _gl.GetBoolean(GetPName.ColorWritemask, cm);
-        _savedColorWriteR = cm[0];
-        _savedColorWriteG = cm[1];
-        _savedColorWriteB = cm[2];
-        _savedColorWriteA = cm[3];
+        _restore = restore;
+        _passActive = true;
 
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
         ConfigureNoColorAttachments();
@@ -142,10 +166,24 @@ internal sealed class GlShadowMapTarget : IDisposable
 
     public void EndShadowPass()
     {
+        if (!_passActive)
+        {
+            return;
+        }
+
+        _passActive = false;
         _gl.Disable(EnableCap.PolygonOffsetFill);
-        _gl.ColorMask(_savedColorWriteR, _savedColorWriteG, _savedColorWriteB, _savedColorWriteA);
-        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, (uint)Math.Max(0, _savedDrawFbo));
-        _gl.Viewport(_savedVpX, _savedVpY, (uint)_savedVpW, (uint)_savedVpH);
+        _gl.ColorMask(
+            _restore.ColorWriteR,
+            _restore.ColorWriteG,
+            _restore.ColorWriteB,
+            _restore.ColorWriteA);
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, (uint)_restore.DrawFbo);
+        _gl.Viewport(
+            _restore.ViewportX,
+            _restore.ViewportY,
+            (uint)_restore.ViewportWidth,
+            (uint)_restore.ViewportHeight);
     }
 
     private static int ClampResolution(int requested)

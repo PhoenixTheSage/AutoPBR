@@ -50,17 +50,15 @@ internal sealed partial class ExploreTreeController
                     await Dispatcher.UIThread.InvokeAsync(() =>
                     {
                         FindNodeByFullPath(archivePath)?.RefreshDisplayTags();
-                        if (string.IsNullOrWhiteSpace(_exploreFilter) && string.IsNullOrEmpty(_exploreTagFilterId))
+                        // Text-only filters ignore tags; re-running the full filter here would rebuild the
+                        // Explore list on every ML completion and starve clicks until the filter is cleared.
+                        if (string.IsNullOrEmpty(_exploreTagFilterId))
                         {
                             return;
                         }
 
-                        if (!string.IsNullOrEmpty(_exploreTagFilterId))
-                        {
-                            RefreshExploreTagFilterCacheEntry(archivePath);
-                        }
-
-                        ApplyExploreFilterInternal();
+                        RefreshExploreTagFilterCacheEntry(archivePath);
+                        ScheduleExploreTagFilterRefresh();
                     }, DispatcherPriority.Background);
                     PersistEffectiveTagCache();
                 }
@@ -142,15 +140,14 @@ internal sealed partial class ExploreTreeController
                     await Dispatcher.UIThread.InvokeAsync(() =>
                     {
                         FindNodeByFullPath(archivePath)?.RefreshDisplayTags();
-                        if (!string.IsNullOrEmpty(_exploreTagFilterId))
+                        // Text-only filters ignore tags; avoid list rebuild thrash while ML tags stream in.
+                        if (string.IsNullOrEmpty(_exploreTagFilterId))
                         {
-                            RefreshExploreTagFilterCacheEntry(archivePath);
+                            return;
                         }
 
-                        if (!string.IsNullOrWhiteSpace(_exploreFilter) || !string.IsNullOrEmpty(_exploreTagFilterId))
-                        {
-                            ApplyExploreFilterInternal();
-                        }
+                        RefreshExploreTagFilterCacheEntry(archivePath);
+                        ScheduleExploreTagFilterRefresh();
                     }, DispatcherPriority.Background);
                 }
                 catch

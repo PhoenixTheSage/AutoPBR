@@ -5,7 +5,6 @@ internal static class GenesisMaterialTextureArrayEligibility
     public static bool TryResolve(
         bool capabilityEnabled,
         bool materialDrawRecordsUploaded,
-        bool tessellationDisplacementActive,
         bool hasBlockModel,
         bool hasSlots,
         out string reason)
@@ -22,6 +21,10 @@ internal static class GenesisMaterialTextureArrayEligibility
             reason = "material draw records are unavailable";
             return false;
         }
+
+        // Tessellation and texture arrays compose on desktop WGL (TES samples height arrays via
+        // draw-record layer). Do not gate arrays on tessellation — that forced a fragile 2D-only
+        // path when tessellation was on and an incomplete array path when it was off.
 
         if (!hasBlockModel)
         {

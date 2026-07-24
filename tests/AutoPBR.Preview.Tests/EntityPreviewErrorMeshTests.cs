@@ -47,4 +47,5 @@ public sealed class EntityPreviewErrorMeshTests
     Assert.Equal(PreviewMeshDriverKind.ErrorPlaceholder, provenance.Kind);
     Assert.NotEmpty(mesh.Elements);
   }
+
 }

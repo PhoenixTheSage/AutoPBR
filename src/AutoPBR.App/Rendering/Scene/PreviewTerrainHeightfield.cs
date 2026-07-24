@@ -16,12 +16,27 @@ public static class PreviewTerrainHeightfield
         int flatPadHalfExtent = PreviewStageConstants.TerrainFlatPadHalfExtent,
         int transitionBlocks = PreviewStageConstants.TerrainTransitionBlocks,
         int maxRelief = PreviewStageConstants.TerrainMaxReliefBlocks,
-        int seed = PreviewStageConstants.TerrainHeightSeed)
+        int seed = PreviewStageConstants.TerrainHeightSeed) =>
+        SampleColumn(
+            x,
+            z,
+            PreviewTerrainWorldGenSettings.Default with { Seed = seed },
+            flatPadHalfExtent,
+            transitionBlocks,
+            maxRelief);
+
+    public static int SampleColumn(
+        int x,
+        int z,
+        in PreviewTerrainWorldGenSettings worldGen,
+        int flatPadHalfExtent = PreviewStageConstants.TerrainFlatPadHalfExtent,
+        int transitionBlocks = PreviewStageConstants.TerrainTransitionBlocks,
+        int maxRelief = PreviewStageConstants.TerrainMaxReliefBlocks)
     {
         // Biome-aware height (pad/transition handled inside sampler). maxRelief is ignored —
         // biomes supply their own relief caps. Parameter retained for call-site compatibility.
         _ = maxRelief;
-        return PreviewTerrainBiomeSampler.SampleHeight(x, z, flatPadHalfExtent, transitionBlocks, seed);
+        return PreviewTerrainBiomeSampler.SampleHeight(x, z, worldGen, flatPadHalfExtent, transitionBlocks);
     }
 
     /// <summary>

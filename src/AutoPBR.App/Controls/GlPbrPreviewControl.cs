@@ -36,6 +36,9 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
     public static readonly StyledProperty<string?> OverlayFpsTextProperty =
         AvaloniaProperty.Register<GlPbrPreviewControl, string?>(nameof(OverlayFpsText));
 
+    public static readonly StyledProperty<string?> OverlayCpuTextProperty =
+        AvaloniaProperty.Register<GlPbrPreviewControl, string?>(nameof(OverlayCpuText));
+
     public static readonly StyledProperty<bool> OverlayFpsVisibleProperty =
         AvaloniaProperty.Register<GlPbrPreviewControl, bool>(nameof(OverlayFpsVisible));
 
@@ -115,6 +118,12 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         set => SetValue(OverlayFpsTextProperty, value);
     }
 
+    public string? OverlayCpuText
+    {
+        get => GetValue(OverlayCpuTextProperty);
+        set => SetValue(OverlayCpuTextProperty, value);
+    }
+
     public bool OverlayFpsVisible
     {
         get => GetValue(OverlayFpsVisibleProperty);
@@ -175,6 +184,8 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
     public double SmoothedPreviewFps => Volatile.Read(ref _smoothedFps);
 
     public string? LatestGpuTimingHudText => _backend.LatestGpuTimingHudText;
+
+    public string? LatestCpuTimingHudText => _backend.LatestCpuTimingHudText;
 
     public bool TryGetPreviewViewportInfo(out int pixelWidth, out int pixelHeight,
         out double logicalWidth, out double logicalHeight, out double renderScale)
@@ -342,11 +353,14 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
     }
 
     /// <summary>Updates multi-slot LabPBR ground materials (BlockModel-style terrain).</summary>
-    public void SetGroundMaterials(PreviewMaterial[]? slotMaterials, bool overlayIsCutout = true)
+    public void SetGroundMaterials(
+        PreviewMaterial[]? slotMaterials,
+        bool overlayIsCutout = true,
+        bool[]? cutoutBySlot = null)
     {
         void Core()
         {
-            _backend.SetGroundMaterials(slotMaterials, overlayIsCutout);
+            _backend.SetGroundMaterials(slotMaterials, overlayIsCutout, cutoutBySlot);
             RecoverPreviewFrame();
         }
 
@@ -366,6 +380,25 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         void Core()
         {
             _backend.SetTerrainGrassBakeSettings(settings);
+            RecoverPreviewFrame();
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            Core();
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(Core);
+        }
+    }
+
+    /// <summary>Updates vegetation decoration bake plan and invalidates resident meshes.</summary>
+    public void SetTerrainVegetationBakePlan(PreviewTerrainVegetationBakePlan? plan)
+    {
+        void Core()
+        {
+            _backend.SetTerrainVegetationBakePlan(plan);
             RecoverPreviewFrame();
         }
 
@@ -554,7 +587,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
     {
         _nativeWglPresenter?.Dispose();
         _nativeWglPresenter = null;
-        _backend.SetNativeWglOverlay(null, null, 0);
+        _backend.SetNativeWglOverlay(null, null, null, 0);
         _nativeHost.IsVisible = false;
         _angleSurface.IsVisible = true;
         if (_angleGlInterface is { } gl)
@@ -721,6 +754,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         base.OnPropertyChanged(change);
         if (change.Property == OverlayDebugTextProperty ||
             change.Property == OverlayFpsTextProperty ||
+            change.Property == OverlayCpuTextProperty ||
             change.Property == OverlayFpsVisibleProperty)
         {
             UpdateNativeWglOverlayBitmaps();
@@ -1288,7 +1322,8 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
 
         var debug = RenderDebugOverlayBitmap(OverlayDebugText, scale);
         var fps = OverlayFpsVisible ? RenderFpsOverlayBitmap(OverlayFpsText, scale) : null;
-        _backend.SetNativeWglOverlay(debug, fps, Math.Max(1, (int)Math.Round(8.0 * scale)));
+        var cpu = OverlayFpsVisible ? RenderFpsOverlayBitmap(OverlayCpuText, scale) : null;
+        _backend.SetNativeWglOverlay(debug, fps, cpu, Math.Max(1, (int)Math.Round(8.0 * scale)));
         // Continuous native frames already pick up the new overlay; avoid a UI→frame storm.
         if (!_backend.NeedsContinuousRendering)
         {

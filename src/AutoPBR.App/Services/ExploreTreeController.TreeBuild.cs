@@ -15,6 +15,9 @@ internal sealed partial class ExploreTreeController
         _tagRefreshCts?.Cancel();
         _refreshDisplayTagsDebounceCts?.Cancel();
         _refreshDisplayTagsDebounceCts = null;
+        _exploreFilterRefreshDebounceCts?.Cancel();
+        _exploreFilterRefreshDebounceCts?.Dispose();
+        _exploreFilterRefreshDebounceCts = null;
         Interlocked.Increment(ref _effectiveTagEpoch);
         ClearBatchPackIconCache();
         Data = data;
@@ -57,6 +60,9 @@ internal sealed partial class ExploreTreeController
         _tagRefreshCts?.Cancel();
         _refreshDisplayTagsDebounceCts?.Cancel();
         _refreshDisplayTagsDebounceCts = null;
+        _exploreFilterRefreshDebounceCts?.Cancel();
+        _exploreFilterRefreshDebounceCts?.Dispose();
+        _exploreFilterRefreshDebounceCts = null;
         Interlocked.Increment(ref _effectiveTagEpoch);
         ClearBatchPackIconCache();
         Root = null;
@@ -153,7 +159,12 @@ internal sealed partial class ExploreTreeController
             node.Children.Add(child);
         }
 
-        ApplyExploreFilterIfNeeded();
+        // Filter walks call EnsureChildrenLoaded for every folder; nested filter/notify would
+        // re-enter O(n) times and thrash the virtualized Explore list (clicks/selection fail).
+        if (!_isApplyingExploreFilter)
+        {
+            ApplyExploreFilterIfNeeded();
+        }
 
         if (deferredTagRefresh.Count > 0)
         {
@@ -180,7 +191,10 @@ internal sealed partial class ExploreTreeController
             PostChunk(0);
         }
 
-        ((IArchiveNodeHost)this).NotifyExploreStructureChanged();
+        if (!_isApplyingExploreFilter)
+        {
+            ((IArchiveNodeHost)this).NotifyExploreStructureChanged();
+        }
     }
 
     public bool? GetEffectiveOverrideForPath(string fullPath)

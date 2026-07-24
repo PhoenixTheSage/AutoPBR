@@ -7,12 +7,14 @@ public sealed partial class OpenGlPreviewBackend
     internal void SetNativeWglOverlay(
         PreviewNativeWglOverlayBitmap? debug,
         PreviewNativeWglOverlayBitmap? fps,
+        PreviewNativeWglOverlayBitmap? cpu,
         int marginPixels)
     {
         lock (_sync)
         {
             _nativeOverlayDebug = debug;
             _nativeOverlayFps = fps;
+            _nativeOverlayCpu = cpu;
             _nativeOverlayMarginPixels = Math.Max(0, marginPixels);
         }
     }
@@ -21,6 +23,7 @@ public sealed partial class OpenGlPreviewBackend
     {
         PreviewNativeWglOverlayBitmap? debug;
         PreviewNativeWglOverlayBitmap? fps;
+        PreviewNativeWglOverlayBitmap? cpu;
         int marginPixels;
         lock (_sync)
         {
@@ -31,10 +34,11 @@ public sealed partial class OpenGlPreviewBackend
 
             debug = _nativeOverlayDebug;
             fps = _nativeOverlayFps;
+            cpu = _nativeOverlayCpu;
             marginPixels = _nativeOverlayMarginPixels;
         }
 
-        if (debug is null && fps is null)
+        if (debug is null && fps is null && cpu is null)
         {
             return;
         }
@@ -92,7 +96,7 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         gl.Viewport(0, 0, (uint)Math.Max(1, viewportWidth), (uint)Math.Max(1, viewportHeight));
-        _nativeOverlayRenderer.Draw(viewportWidth, viewportHeight, marginPixels, debug, fps, hdrScale);
+        _nativeOverlayRenderer.Draw(viewportWidth, viewportHeight, marginPixels, debug, fps, cpu, hdrScale);
     }
 
     private void DestroyNativeWglOverlay()

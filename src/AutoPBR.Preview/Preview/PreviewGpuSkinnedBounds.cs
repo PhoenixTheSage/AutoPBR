@@ -1,4 +1,6 @@
 using System.Numerics;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace AutoPBR.Preview;
 
@@ -8,6 +10,8 @@ namespace AutoPBR.Preview;
 /// </summary>
 public sealed class PreviewGpuSkinnedBounds
 {
+    private const int ParallelUpdateMinBatches = 32;
+
     private readonly BoneBounds[][] _batchBoneBounds;
 
     private PreviewGpuSkinnedBounds(BoneBounds[][] batchBoneBounds) =>
@@ -83,7 +87,7 @@ public sealed class PreviewGpuSkinnedBounds
     }
 
     public bool UpdateDrawBatchBounds(
-        Span<PreviewDrawBatch> batches,
+        PreviewDrawBatch[] batches,
         ReadOnlySpan<Matrix4x4> boneMatrices,
         int boneCount,
         float meshSpaceLiftY)
@@ -97,42 +101,76 @@ public sealed class PreviewGpuSkinnedBounds
         }
 
         boneCount = Math.Min(boneCount, boneMatrices.Length);
+        if (_batchBoneBounds.Length >= ParallelUpdateMinBatches)
+        {
+            // Copy palette for workers — Span cannot be captured by Parallel.For lambdas.
+            var palette = boneMatrices.Slice(0, boneCount).ToArray();
+            var anyBoundsFlag = 0;
+            var batchBoneBounds = _batchBoneBounds;
+            var liftY = meshSpaceLiftY;
+            Parallel.For(0, batchBoneBounds.Length, batchIndex =>
+            {
+                if (UpdateOneBatchBounds(batches, batchBoneBounds, palette, palette.Length, liftY, batchIndex))
+                {
+                    Interlocked.Exchange(ref anyBoundsFlag, 1);
+                }
+            });
+            return anyBoundsFlag != 0;
+        }
+
         var anyBounds = false;
         for (var batchIndex = 0; batchIndex < _batchBoneBounds.Length; batchIndex++)
         {
-            var min = new Vector3(float.PositiveInfinity);
-            var max = new Vector3(float.NegativeInfinity);
-            foreach (var boneBounds in _batchBoneBounds[batchIndex])
-            {
-                var boneIndex = Math.Clamp(boneBounds.BoneIndex, 0, boneCount - 1);
-                ExpandTransformedBounds(
-                    boneBounds,
-                    boneMatrices[boneIndex],
-                    meshSpaceLiftY,
-                    ref min,
-                    ref max);
-            }
-
-            if (!IsFinite(min) || !IsFinite(max))
-            {
-                batches[batchIndex] = batches[batchIndex] with
-                {
-                    BoundsCenter = Vector3.Zero,
-                    BoundsRadius = -1f,
-                };
-                continue;
-            }
-
-            var center = (min + max) * 0.5f;
-            batches[batchIndex] = batches[batchIndex] with
-            {
-                BoundsCenter = center,
-                BoundsRadius = Vector3.Distance(center, max),
-            };
-            anyBounds = true;
+            anyBounds |= UpdateOneBatchBounds(
+                batches,
+                _batchBoneBounds,
+                boneMatrices,
+                boneCount,
+                meshSpaceLiftY,
+                batchIndex);
         }
 
         return anyBounds;
+    }
+
+    private static bool UpdateOneBatchBounds(
+        PreviewDrawBatch[] batches,
+        BoneBounds[][] batchBoneBounds,
+        ReadOnlySpan<Matrix4x4> boneMatrices,
+        int boneCount,
+        float meshSpaceLiftY,
+        int batchIndex)
+    {
+        var min = new Vector3(float.PositiveInfinity);
+        var max = new Vector3(float.NegativeInfinity);
+        foreach (var boneBounds in batchBoneBounds[batchIndex])
+        {
+            var boneIndex = Math.Clamp(boneBounds.BoneIndex, 0, boneCount - 1);
+            ExpandTransformedBounds(
+                boneBounds,
+                boneMatrices[boneIndex],
+                meshSpaceLiftY,
+                ref min,
+                ref max);
+        }
+
+        if (!IsFinite(min) || !IsFinite(max))
+        {
+            batches[batchIndex] = batches[batchIndex] with
+            {
+                BoundsCenter = Vector3.Zero,
+                BoundsRadius = -1f,
+            };
+            return false;
+        }
+
+        var center = (min + max) * 0.5f;
+        batches[batchIndex] = batches[batchIndex] with
+        {
+            BoundsCenter = center,
+            BoundsRadius = Vector3.Distance(center, max),
+        };
+        return true;
     }
 
     public static void ClearDrawBatchBounds(Span<PreviewDrawBatch> batches)

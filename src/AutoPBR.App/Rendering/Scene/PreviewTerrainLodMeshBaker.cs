@@ -13,6 +13,7 @@ public static class PreviewTerrainLodMeshBaker
 {
     public static PreviewTerrainChunkMesh? BakeLodChunk(
         TerrainChunkKey key,
+        PreviewTerrainWorldGenSettings worldGen = default,
         int chunkSize = PreviewStageConstants.TerrainChunkSize,
         float metersPerTile = PreviewStageConstants.MetersPerGrassTile,
         float surfaceWorldY = PreviewStageConstants.GroundPlaneWorldY,
@@ -26,6 +27,10 @@ public static class PreviewTerrainLodMeshBaker
         {
             metersPerTile = PreviewStageConstants.MetersPerGrassTile;
         }
+
+        var gen = worldGen.BiomeSize > 0f || worldGen.Amplification > 0f || worldGen.Seed != 0
+            ? PreviewTerrainWorldGenSettings.Resolve(worldGen)
+            : PreviewTerrainWorldGenSettings.Default with { Seed = seed };
 
         var cx0 = key.OriginX(chunkSize);
         var cz0 = key.OriginZ(chunkSize);
@@ -44,7 +49,7 @@ public static class PreviewTerrainLodMeshBaker
                 var wx = cx0 - 1 + lx;
                 var wz = cz0 - 1 + lz;
                 var h = PreviewTerrainHeightfield.SampleColumn(
-                    wx, wz, flatPadHalfExtent, transitionBlocks, maxRelief, seed);
+                    wx, wz, gen, flatPadHalfExtent, transitionBlocks, maxRelief);
                 heights[lz * side + lx] = h;
                 if (lx > 0 && lx < side - 1 && lz > 0 && lz < side - 1)
                 {
@@ -66,7 +71,7 @@ public static class PreviewTerrainLodMeshBaker
             if ((uint)lx >= (uint)side || (uint)lz >= (uint)side)
             {
                 return PreviewTerrainHeightfield.SampleColumn(
-                    wx, wz, flatPadHalfExtent, transitionBlocks, maxRelief, seed);
+                    wx, wz, gen, flatPadHalfExtent, transitionBlocks, maxRelief);
             }
 
             return heights[lz * side + lx];

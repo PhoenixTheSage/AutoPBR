@@ -1651,10 +1651,13 @@
     <value>1 つの視差トレースが UV 空間内で移動できる距離を制限します。上げるとより深い緩和が得られます。かすめ角の伸びを減らすには、低くします。</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacement" xml:space="preserve">
-    <value>モザイク状の突起</value>
+    <value>テッセレーション</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacementTooltip" xml:space="preserve">
     <value>デスクトップ OpenGL テッセレーションを使用して、高さマップ領域から実際の外側のジオメトリを追加します。 POM は引き続き凹部のディテールを処理します。</value>
+  </data>
+  <data name="Preview3DTessellationSection" xml:space="preserve">
+    <value>テッセレーション</value>
   </data>
   <data name="Preview3DTessellationLevel" xml:space="preserve">
     <value>テッセレーションレベル</value>

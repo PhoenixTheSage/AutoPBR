@@ -231,8 +231,10 @@ public sealed partial class PreviewRenderingTests
     [Fact]
     public void GridLinesFactoryVertexBuffersAreSevenFloatsPerVertex()
     {
-        var grid = PreviewGridLinesFactory.BuildGrid(1f, 0.5f, -0.5f, 1, 1, 1, 1);
+        var grid = PreviewGridLinesFactory.BuildGrid(1f, 0.5f, -0.5f, 1, 1, 1, 1, lineHalfWidth: 0.02f);
         Assert.Equal(0, grid.Length % PreviewGridLinesFactory.FloatsPerVertex);
+        // Thick ribbons: 6 verts per segment × (5 z-lines + 5 x-lines) for halfExtent=1 step=0.5.
+        Assert.True(grid.Length >= 10 * 6 * PreviewGridLinesFactory.FloatsPerVertex);
         var axes = PreviewGridLinesFactory.BuildAxes(1f, 1, 0, 0, 0, 1, 0, 0, 0, 1);
         Assert.Equal(0, axes.Length % PreviewGridLinesFactory.FloatsPerVertex);
         Assert.Equal(6 * PreviewGridLinesFactory.FloatsPerVertex, axes.Length);

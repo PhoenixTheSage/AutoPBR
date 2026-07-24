@@ -1651,10 +1651,13 @@
     <value>限制一条视差轨迹在 UV 空间中可以传播的距离。抬起以获得更深的缓解；降低以减少掠角拉伸。</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacement" xml:space="preserve">
-    <value>棋盘状突起</value>
+    <value>曲面细分</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacementTooltip" xml:space="preserve">
     <value>使用桌面 OpenGL 曲面细分从高高度图区域添加真实的外部几何图形。 POM 仍然可以处理凹陷的细节。</value>
+  </data>
+  <data name="Preview3DTessellationSection" xml:space="preserve">
+    <value>曲面细分</value>
   </data>
   <data name="Preview3DTessellationLevel" xml:space="preserve">
     <value>细分级别</value>

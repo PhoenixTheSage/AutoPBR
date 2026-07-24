@@ -14,6 +14,31 @@ public static class PreviewColormapLoader
         string? packZipPath,
         string? minecraftAssetsDirectory,
         string? nativeRootDirectory,
+        out PreviewColormapImage? image) =>
+        TryLoadColormap(
+            PreviewGrassColormapTint.GrassColormapArchivePath,
+            packZipPath,
+            minecraftAssetsDirectory,
+            nativeRootDirectory,
+            out image);
+
+    public static bool TryLoadFoliageColormap(
+        string? packZipPath,
+        string? minecraftAssetsDirectory,
+        string? nativeRootDirectory,
+        out PreviewColormapImage? image) =>
+        TryLoadColormap(
+            PreviewFoliageColormapTint.FoliageColormapArchivePath,
+            packZipPath,
+            minecraftAssetsDirectory,
+            nativeRootDirectory,
+            out image);
+
+    public static bool TryLoadColormap(
+        string archivePath,
+        string? packZipPath,
+        string? minecraftAssetsDirectory,
+        string? nativeRootDirectory,
         out PreviewColormapImage? image)
     {
         image = null;
@@ -56,8 +81,7 @@ public static class PreviewColormapLoader
             }
 
             var composite = sources.Count == 1 ? sources[0] : new CompositeAssetSource(sources.ToArray());
-            if (!composite.TryReadBytes(PreviewGrassColormapTint.GrassColormapArchivePath, out var bytes) ||
-                bytes.Length == 0)
+            if (!composite.TryReadBytes(archivePath, out var bytes) || bytes.Length == 0)
             {
                 return false;
             }

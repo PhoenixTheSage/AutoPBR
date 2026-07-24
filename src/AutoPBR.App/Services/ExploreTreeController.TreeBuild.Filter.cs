@@ -40,19 +40,72 @@ internal sealed partial class ExploreTreeController
 
     private void ApplyExploreFilterInternal()
     {
-        if (Root is null)
+        if (Root is null || _isApplyingExploreFilter)
         {
             return;
         }
 
-        var f = _exploreFilter.Trim();
-        if (!string.IsNullOrEmpty(_exploreTagFilterId))
+        _isApplyingExploreFilter = true;
+        try
         {
-            EnsureExploreTagFilterCache();
+            var f = _exploreFilter.Trim();
+            if (!string.IsNullOrEmpty(_exploreTagFilterId))
+            {
+                EnsureExploreTagFilterCache();
+            }
+
+            ApplyExploreFilterRecursive(Root, f);
+            ((IArchiveNodeHost)this).NotifyExploreStructureChanged();
+        }
+        finally
+        {
+            _isApplyingExploreFilter = false;
+        }
+    }
+
+    /// <summary>
+    /// Coalesce tag-driven filter refreshes so streaming ML completions do not rebuild the Explore list on every path.
+    /// Text-only filters do not need tag-driven refreshes (visibility ignores tags).
+    /// </summary>
+    private void ScheduleExploreTagFilterRefresh()
+    {
+        if (string.IsNullOrEmpty(_exploreTagFilterId))
+        {
+            return;
         }
 
-        ApplyExploreFilterRecursive(Root, f);
-        ((IArchiveNodeHost)this).NotifyExploreStructureChanged();
+        _exploreFilterRefreshDebounceCts?.Cancel();
+        _exploreFilterRefreshDebounceCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _exploreFilterRefreshDebounceCts = cts;
+        _ = RunDebouncedExploreTagFilterRefreshAsync(cts);
+    }
+
+    private async Task RunDebouncedExploreTagFilterRefreshAsync(CancellationTokenSource debounceCts)
+    {
+        try
+        {
+            await Task.Delay(150, debounceCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (!ReferenceEquals(_exploreFilterRefreshDebounceCts, debounceCts))
+        {
+            return;
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (!ReferenceEquals(_exploreFilterRefreshDebounceCts, debounceCts))
+            {
+                return;
+            }
+
+            ApplyExploreFilterIfNeeded();
+        }, DispatcherPriority.Background);
     }
 
     private bool ApplyExploreFilterRecursive(ArchiveNode node, string filter)

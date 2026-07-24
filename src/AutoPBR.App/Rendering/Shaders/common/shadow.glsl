@@ -200,8 +200,8 @@ float sampleSceneShadowCascaded(vec3 worldPos, vec3 cameraPos, vec4 lightClipFar
         return mix(1.0, singleVis, rangeFade);
     }
 
-    // Neighbor blend for cascade detail. Always min() with far so large terrain casters that only
-    // fit the wide far ortho still darken near-camera receivers (circular "lit hole" otherwise).
+    // Neighbor blend for cascade detail. min() with far (outer softness only) keeps tall terrain
+    // casters that only fit the wide far ortho from leaving lit holes near the camera.
     float nearMidT = shadowCascadeBlendT(dist, splitNear, blendWidth);
     float midFarT = shadowCascadeBlendT(dist, splitMid, blendWidth);
 
@@ -213,9 +213,7 @@ float sampleSceneShadowCascaded(vec3 worldPos, vec3 cameraPos, vec4 lightClipFar
     {
         float nearVis = sampleSceneShadowFromWorld(worldPos, lightVpNear, shadowNear, texelSizeNear,
             minBias, maxBias, N, L, softnessTexels);
-        float midVis = sampleSceneShadowFromWorld(worldPos, lightVpMid, shadowMid, texelSizeMid,
-            minBias, maxBias, N, L, outerSoftness);
-        vis = min(min(nearVis, midVis), farVis);
+        vis = min(nearVis, farVis);
     }
     else if (nearMidT < 1.0)
     {
@@ -223,8 +221,7 @@ float sampleSceneShadowCascaded(vec3 worldPos, vec3 cameraPos, vec4 lightClipFar
             minBias, maxBias, N, L, softnessTexels);
         float midVis = sampleSceneShadowFromWorld(worldPos, lightVpMid, shadowMid, texelSizeMid,
             minBias, maxBias, N, L, outerSoftness);
-        float blended = mix(nearVis, midVis, nearMidT);
-        vis = min(min(blended, midVis), farVis);
+        vis = min(mix(nearVis, midVis, nearMidT), farVis);
     }
     else if (midFarT <= 0.0)
     {
@@ -236,8 +233,7 @@ float sampleSceneShadowCascaded(vec3 worldPos, vec3 cameraPos, vec4 lightClipFar
     {
         float midVis = sampleSceneShadowFromWorld(worldPos, lightVpMid, shadowMid, texelSizeMid,
             minBias, maxBias, N, L, outerSoftness);
-        float blended = mix(midVis, farVis, midFarT);
-        vis = min(blended, farVis);
+        vis = min(mix(midVis, farVis, midFarT), farVis);
     }
     else
     {

@@ -28,6 +28,8 @@ public sealed class TerrainChunkStreamer : IDisposable
     private TerrainChunkKey _lastDesiredCameraChunk;
     private int _lastDesiredViewDistance = int.MinValue;
     private PreviewTerrainGrassBakeSettings _grassBakeSettings = PreviewTerrainGrassBakeSettings.BuiltIn;
+    private PreviewTerrainWorldGenSettings _worldGenSettings = PreviewTerrainWorldGenSettings.Default;
+    private PreviewTerrainVegetationBakePlan? _vegetationBakePlan;
     private bool _disposed;
 
     public PreviewTerrainGrassBakeSettings GrassBakeSettings
@@ -44,6 +46,42 @@ public sealed class TerrainChunkStreamer : IDisposable
             lock (_desiredLock)
             {
                 _grassBakeSettings = value;
+            }
+        }
+    }
+
+    public PreviewTerrainVegetationBakePlan? VegetationBakePlan
+    {
+        get
+        {
+            lock (_desiredLock)
+            {
+                return _vegetationBakePlan;
+            }
+        }
+        set
+        {
+            lock (_desiredLock)
+            {
+                _vegetationBakePlan = value;
+            }
+        }
+    }
+
+    public PreviewTerrainWorldGenSettings WorldGenSettings
+    {
+        get
+        {
+            lock (_desiredLock)
+            {
+                return _worldGenSettings;
+            }
+        }
+        set
+        {
+            lock (_desiredLock)
+            {
+                _worldGenSettings = PreviewTerrainWorldGenSettings.Resolve(value);
             }
         }
     }
@@ -267,9 +305,11 @@ public sealed class TerrainChunkStreamer : IDisposable
                 _resident.TryRemove(jobKey, out _);
 
                 var grassSettings = GrassBakeSettings;
+                var worldGen = WorldGenSettings;
+                var vegetation = VegetationBakePlan;
                 PreviewTerrainChunkMesh? mesh = needLod == TerrainChunkLodKind.Full
-                    ? PreviewTerrainMeshBaker.BakeFullChunk(jobKey, grassSettings)
-                    : PreviewTerrainLodMeshBaker.BakeLodChunk(jobKey);
+                    ? PreviewTerrainMeshBaker.BakeFullChunk(jobKey, grassSettings, worldGen, vegetation)
+                    : PreviewTerrainLodMeshBaker.BakeLodChunk(jobKey, worldGen);
 
                 if (mesh is not null)
                 {

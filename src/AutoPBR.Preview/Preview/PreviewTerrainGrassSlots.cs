@@ -18,8 +18,14 @@ public static class PreviewTerrainGrassSlots
     public const int Sand = 5;
     public const int Gravel = 6;
 
-    /// <summary>Full slot count including stone/sand/gravel.</summary>
+    /// <summary>Terrain-only slot count including stone/sand/gravel (before vegetation).</summary>
     public const int MaxCount = 7;
+
+    /// <summary>
+    /// First material index reserved for discovered log/leaves/cactus slots
+    /// (see <see cref="PreviewTerrainVegetationKit"/>).
+    /// </summary>
+    public const int VegetationBase = MaxCount;
 
     /// <summary>Legacy grass-only count when overlay is present.</summary>
     public const int GrassWithOverlayCount = 4;

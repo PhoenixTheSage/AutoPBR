@@ -29,6 +29,9 @@ internal sealed partial class ExploreTreeController : IArchiveNodeHost, IDisposa
     private readonly object _batchPackIconSync = new();
     private string _exploreFilter = "";
     private string? _exploreTagFilterId;
+    /// <summary>True while a filter walk is materializing/visibility-marking nodes; suppresses nested filter + structure notifies from <see cref="IArchiveNodeHost.EnsureChildrenLoaded"/>.</summary>
+    private bool _isApplyingExploreFilter;
+    private CancellationTokenSource? _exploreFilterRefreshDebounceCts;
     private Func<IReadOnlyList<TagRule>>? _tagRulesProvider;
     private Func<MaterialTagSemanticOptions?>? _materialTagSemanticOptionsProvider;
     private Action<string>? _debugSink;
@@ -76,8 +79,10 @@ internal sealed partial class ExploreTreeController : IArchiveNodeHost, IDisposa
         PersistEffectiveTagCache();
         _tagRefreshCts?.Cancel();
         _refreshDisplayTagsDebounceCts?.Cancel();
+        _exploreFilterRefreshDebounceCts?.Cancel();
         _tagRefreshCts?.Dispose();
         _refreshDisplayTagsDebounceCts?.Dispose();
+        _exploreFilterRefreshDebounceCts?.Dispose();
         _tagComputeConcurrency.Dispose();
     }
 }

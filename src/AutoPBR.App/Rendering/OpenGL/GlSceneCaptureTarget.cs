@@ -16,6 +16,7 @@ internal sealed class GlSceneCaptureTarget(GL gl, bool useOpenGlEs, bool useFloa
     private bool _useFloatColor = useFloatColor;
     private bool _disposed;
 
+    public uint FramebufferHandle => _fbo;
     public uint DepthTextureHandle => _depthTexture;
     public uint TaaSignalTextureHandle => _taaSignalTexture;
     public int Width => _width;

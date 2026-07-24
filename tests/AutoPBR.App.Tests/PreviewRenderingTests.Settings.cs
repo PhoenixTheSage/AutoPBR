@@ -100,16 +100,21 @@ public sealed partial class PreviewRenderingTests
 
         Assert.Contains("PrepareTerrainShadowCasterSelections(", shadow, StringComparison.Ordinal);
         Assert.Contains("PrepareShadowSubjectGpuUploads(ref frame);", shadow, StringComparison.Ordinal);
-        Assert.Contains("FinishShadowSubjectGpuUploads();", shadow, StringComparison.Ordinal);
+        Assert.Contains("_shadowSubjectUploadsPrepared = false;", shadow, StringComparison.Ordinal);
         Assert.Contains("nearCasterDist = nearHalf + casterPad", shadow, StringComparison.Ordinal);
         Assert.Contains("midCasterDist = midHalf + casterPad", shadow, StringComparison.Ordinal);
         Assert.Contains("Parallel.Invoke(", ground, StringComparison.Ordinal);
+        Assert.Contains("TryPrepareTerrainShadowCasterSelectionsGpu(", ground, StringComparison.Ordinal);
+        Assert.Contains("TryDrawTerrainShadowCastersGpu(", ground, StringComparison.Ordinal);
+        Assert.Contains("MultiDrawIndirectCount", ground, StringComparison.Ordinal);
+        Assert.Contains("GlTerrainMeshPool", ground, StringComparison.Ordinal);
+        Assert.Contains("EnsureFrameSubjectGpuUploads(ref frame);", shadow, StringComparison.Ordinal);
         Assert.Contains(
-            "_shadowSubjectUseMaterialDrawRecords = TryUploadGenesisMaterialDrawRecords(ref frame);",
+            "_frameSubjectUseMaterialDrawRecords = TryUploadGenesisMaterialDrawRecords(ref frame);",
             shadow,
             StringComparison.Ordinal);
-        Assert.DoesNotContain(
-            "var useMaterialDrawRecords = TryUploadGenesisMaterialDrawRecords(ref frame);",
+        Assert.Contains(
+            "_shadowSubjectUseMaterialDrawRecords = _frameSubjectUseMaterialDrawRecords;",
             shadow,
             StringComparison.Ordinal);
 
@@ -167,12 +172,19 @@ public sealed partial class PreviewRenderingTests
             "if (frame.Settings.ShowGroundMesh &&",
             StringComparison.Ordinal);
         Assert.True(groundBlockStart >= 0);
-        var groundDraw = source.IndexOf("_groundMesh.Draw(_mainProgramUsesTessellation);", groundBlockStart, StringComparison.Ordinal);
+        // Prefer the chunked ground draw; fall back if the marker moves again.
+        var groundDraw = source.IndexOf("DrawGroundTerrainChunks(", groundBlockStart, StringComparison.Ordinal);
+        if (groundDraw < 0)
+        {
+            groundDraw = source.IndexOf("_groundMesh.Draw(_mainProgramUsesTessellation);", groundBlockStart, StringComparison.Ordinal);
+        }
+
         Assert.True(groundDraw > groundBlockStart);
         var groundBlock = source[groundBlockStart..groundDraw];
 
         Assert.Contains("SetIntLoc(u.EnableTessellationDisplacement, 0);", groundBlock, StringComparison.Ordinal);
         Assert.Contains("SetIntLoc(u.GenesisUseMaterialDrawRecord, 0);", groundBlock, StringComparison.Ordinal);
+        Assert.Contains("SetIntLoc(u.GenesisUseMaterialTextureArray, 0);", groundBlock, StringComparison.Ordinal);
         Assert.Contains("SetIntLoc(u.GenesisDrawRecordIndex, 0);", groundBlock, StringComparison.Ordinal);
         Assert.Contains("SetIntLoc(u.IsGroundPass, 1);", groundBlock, StringComparison.Ordinal);
     }
@@ -189,6 +201,59 @@ public sealed partial class PreviewRenderingTests
 
         Assert.Contains("frame.EnableTessellationDisplacementEff &&", source, StringComparison.Ordinal);
         Assert.Contains("frame.Settings.DrawPreviewSubject;", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NeedsContinuousRendering_KeepsFramesWhileTerrainStreamingCatchUp()
+    {
+        var source = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.cs");
+
+        Assert.Contains("private bool _terrainStreamingNeedsFrames = true;", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "(!_settings.DrawPreviewSubject || _terrainStreamingNeedsFrames)",
+            source,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GlRender_AllowsFrameWhenGroundTexturesMissingButDirty()
+    {
+        var source = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.Render.cs");
+
+        Assert.Contains("!_grassGroundMaterialDirty", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "Ground textures missing and nothing queued to re-upload",
+            source,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ResourcePackPreviewRenderer_SkipsEmulatedRebakeForErrorPlaceholder()
+    {
+        var source = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.Preview",
+            "ResourcePackPreviewRenderer.cs");
+
+        Assert.Contains("useEmulatedEntityPipeline", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "meshProvenance.Kind != PreviewMeshDriverKind.ErrorPlaceholder",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "meshProvenance.Kind == PreviewMeshDriverKind.ErrorPlaceholder",
+            source,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -228,6 +293,51 @@ public sealed partial class PreviewRenderingTests
         Assert.True(
             register.IndexOf("Apply3DPreviewIfNeeded();", StringComparison.Ordinal) <
             register.IndexOf("SchedulePreviewGroundTextureRefresh();", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void OnPreviewGpuInitProgressChanged_RepushesSceneOnlyOnReadyTransitions()
+    {
+        var viewModel = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "ViewModels",
+            "MainWindowViewModel.Preview.cs");
+
+        var handlerStart = viewModel.IndexOf(
+            "private void OnPreviewGpuInitProgressChanged(PreviewGpuInitProgress progress)",
+            StringComparison.Ordinal);
+        Assert.True(handlerStart >= 0);
+        var handlerEnd = viewModel.IndexOf("private void ApplyPreviewGpuInitOverlay(", handlerStart, StringComparison.Ordinal);
+        Assert.True(handlerEnd > handlerStart);
+        var handler = viewModel[handlerStart..handlerEnd];
+        Assert.Contains("coreBecameReady", handler, StringComparison.Ordinal);
+        Assert.Contains("fullyBecameReady", handler, StringComparison.Ordinal);
+        Assert.Contains("(coreBecameReady || fullyBecameReady) && IsPreview3D", handler, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "if ((progress.CoreReady || progress.IsFullyReady) && IsPreview3D)",
+            handler,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RaiseGpuInitProgress_SkipsUnchangedReadinessNotifications()
+    {
+        var init = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.Init.cs");
+
+        var raiseStart = init.IndexOf("private void RaiseGpuInitProgress(", StringComparison.Ordinal);
+        Assert.True(raiseStart >= 0);
+        var raiseEnd = init.IndexOf("private double ComputeTierProgressFraction(", raiseStart, StringComparison.Ordinal);
+        Assert.True(raiseEnd > raiseStart);
+        var raise = init[raiseStart..raiseEnd];
+        Assert.Contains("var changed =", raise, StringComparison.Ordinal);
+        Assert.Contains("if (changed)", raise, StringComparison.Ordinal);
+        Assert.Contains("GpuInitProgressChanged?.Invoke(progress);", raise, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -648,7 +758,7 @@ public sealed partial class PreviewRenderingTests
         Assert.Contains("EmitPreviewTaaShaderDiagnostic", taa, StringComparison.Ordinal);
         Assert.Contains("Preview TAA shader ready: resolveSource=", taa, StringComparison.Ordinal);
         Assert.Contains("MaybeLogPreviewTaaReadbackDiagnostics", taa, StringComparison.Ordinal);
-        Assert.Contains("LogPreviewTaaDiagnostics = DebugMode", viewModel, StringComparison.Ordinal);
+        Assert.Contains("LogPreviewTaaDiagnostics = Preview3DLogVerbosePreviewDiagnostics", viewModel, StringComparison.Ordinal);
         Assert.Contains("[3D preview] TAA readback:", taa, StringComparison.Ordinal);
         Assert.Contains("scratch={PixelHashText", taa, StringComparison.Ordinal);
         Assert.Contains("read-failed({ReadbackErrorText(error)})", taa, StringComparison.Ordinal);

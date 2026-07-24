@@ -34,12 +34,14 @@ public sealed partial class OpenGlPreviewBackend
             return;
         }
 
-        // Wide XZ floor so zoom-out still reads as a ground plane (still finite line count for GLES).
+        // Thick XZ ribbons (triangles) so Core-profile GL still gets visible width.
+        // Vertex color is white; runtime tint comes from uColorMul.
         var gridVerts = PreviewGridLinesFactory.BuildGrid(
             PreviewStageConstants.GridHalfExtent,
             PreviewStageConstants.GridStep,
-            PreviewStageConstants.GridWorldY,
-            0.32f, 0.32f, 0.38f, 1f);
+            PreviewStageConstants.GridWorldY + PreviewStageConstants.GridYBias,
+            1f, 1f, 1f, 1f,
+            PreviewStageConstants.GridLineHalfWidth);
         _gridVertexCount = gridVerts.Length / PreviewGridLinesFactory.FloatsPerVertex;
         var axisVerts = PreviewGridLinesFactory.BuildAxes(0.82f, 1f, 0.28f, 0.22f, 0.22f, 0.95f, 0.28f, 0.32f, 0.58f, 1f);
         _gridVao = gl.GenVertexArray();
@@ -117,7 +119,7 @@ public sealed partial class OpenGlPreviewBackend
         _lineProgram = null;
     }
 
-    private void DrawBackgroundGrid(GL gl, Matrix4x4 proj, Matrix4x4 view)
+    private void DrawBackgroundGrid(GL gl, Matrix4x4 proj, Matrix4x4 view, in PreviewRenderSettingsSnapshot settings)
     {
         if (_lineProgram is null || !_lineProgram.IsValid || _gridVao == 0)
         {
@@ -127,9 +129,24 @@ public sealed partial class OpenGlPreviewBackend
         var mvp = proj * view * Matrix4x4.Identity;
         _lineProgram.Use();
         SetLineProgramMvp(gl, mvp);
+        SetLineProgramColorMul(settings.GridColorR, settings.GridColorG, settings.GridColorB, settings.GridColorA);
+        var priorBlend = gl.IsEnabled(EnableCap.Blend);
+        var priorCull = gl.IsEnabled(EnableCap.CullFace);
+        gl.Enable(EnableCap.Blend);
+        gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+        gl.Disable(EnableCap.CullFace);
         gl.BindVertexArray(_gridVao);
-        gl.DrawArrays(PrimitiveType.Lines, 0, (uint)_gridVertexCount);
+        gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)_gridVertexCount);
         gl.BindVertexArray(0);
+        if (priorCull)
+        {
+            gl.Enable(EnableCap.CullFace);
+        }
+
+        if (!priorBlend)
+        {
+            gl.Disable(EnableCap.Blend);
+        }
     }
 
     private void DrawCornerAxes(GL gl, int vpX, int vpY, int vw, int vh, Matrix4x4 proj, Matrix4x4 view)
@@ -160,6 +177,7 @@ public sealed partial class OpenGlPreviewBackend
         gl.Disable(EnableCap.DepthTest);
         _lineProgram.Use();
         SetLineProgramMvp(gl, mvp);
+        SetLineProgramColorMul(1f, 1f, 1f, 1f);
         gl.BindVertexArray(_axesVao);
         gl.DrawArrays(PrimitiveType.Lines, 0, 6);
         gl.BindVertexArray(0);
@@ -169,11 +187,22 @@ public sealed partial class OpenGlPreviewBackend
 
     private void SetLineProgramMvp(GL gl, Matrix4x4 mvp)
     {
+        _ = gl;
         if (_lineProgram is null || !_lineProgram.IsValid)
         {
             return;
         }
 
         SetMatrixLoc(_lineUniformLocs.Mvp, mvp);
+    }
+
+    private void SetLineProgramColorMul(float r, float g, float b, float a)
+    {
+        if (_lineProgram is null || !_lineProgram.IsValid)
+        {
+            return;
+        }
+
+        SetVec4Loc(_lineUniformLocs.ColorMul, new Vector4(r, g, b, a));
     }
 }

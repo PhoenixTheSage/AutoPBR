@@ -284,10 +284,15 @@ public sealed partial class OpenGlPreviewBackend
             }
             else if (_program is null || !_program.IsValid || _albedo is null ||
                      _normal is null || _spec is null || _height is null || _mesh is null || _groundMesh is null ||
-                     _grassGroundAlbedo is null || _grassGroundNormal is null || _grassGroundSpec is null ||
-                     _grassGroundHeight is null || _neutralNormal is null || _neutralSpec is null ||
-                     _neutralHeight is null)
+                     _neutralNormal is null || _neutralSpec is null || _neutralHeight is null)
             {
+                return;
+            }
+            else if ((_grassGroundAlbedo is null || _grassGroundNormal is null ||
+                      _grassGroundSpec is null || _grassGroundHeight is null) &&
+                     !_grassGroundMaterialDirty)
+            {
+                // Ground textures missing and nothing queued to re-upload — cannot draw the stage.
                 return;
             }
             else
@@ -379,34 +384,38 @@ public sealed partial class OpenGlPreviewBackend
             return;
         }
 
+        BeginCpuTimerFrame();
         _ = BeginGpuTimerFrame(gl);
         try
         {
-            using (BeginGpuTimerScope(GlGpuTimerScope.Setup))
+            _frameSubjectGpuUploadsReady = false;
+            using (BeginPassTimerScope(GlGpuTimerScope.Setup))
             {
                 GlRenderPassSetup(ref frame);
             }
 
-            using (BeginGpuTimerScope(GlGpuTimerScope.Shadow))
+            // Eye / view-proj / frustum before shadow so light-frustum caster cull shares camera eye.
+            PopulateCameraMatricesAndFrustum(ref frame);
+
+            using (BeginPassTimerScope(GlGpuTimerScope.Shadow))
             {
                 GlRenderPassShadow(ref frame);
             }
 
-            using (BeginGpuTimerScope(GlGpuTimerScope.Scene))
-            {
-                GlRenderPassScene(ref frame);
-            }
+            // Scene manages DepthPrepass / HiZ / Scene timer scopes internally (cannot nest queries).
+            GlRenderPassScene(ref frame);
 
             GlRenderPassPost(ref frame);
 
-            using (BeginGpuTimerScope(GlGpuTimerScope.Overlay))
+            using (BeginPassTimerScope(GlGpuTimerScope.Overlay))
             {
                 DrawNativeWglOverlayIfNeeded(gl, defaultFbo, vw, vh);
             }
         }
         finally
         {
-            EndGpuTimerFrame(renderTime);
+            FinishFrameSubjectGpuUploads();
+            EndPassTimerFrame(renderTime);
         }
     }
 

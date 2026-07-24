@@ -44,7 +44,8 @@ public sealed partial class OpenGlPreviewBackend
         GL gl,
         PreviewMaterial[]? slotMaterials,
         bool overlayIsCutout,
-        bool nearest)
+        bool nearest,
+        bool[]? cutoutBySlot = null)
     {
         DisposeGroundGpuResources();
         if (slotMaterials is null || slotMaterials.Length == 0)
@@ -57,13 +58,16 @@ public sealed partial class OpenGlPreviewBackend
         for (var i = 0; i < slotMaterials.Length; i++)
         {
             var mat = slotMaterials[i];
+            var cutout = cutoutBySlot is not null && i < cutoutBySlot.Length
+                ? cutoutBySlot[i]
+                : overlayIsCutout && i == PreviewTerrainGrassSlots.Overlay;
             var slot = new GroundGpuSlot
             {
                 Albedo = new GlTexture2D(gl),
                 Normal = new GlTexture2D(gl),
                 Spec = new GlTexture2D(gl),
                 Height = new GlTexture2D(gl),
-                Cutout = overlayIsCutout && i == PreviewTerrainGrassSlots.Overlay,
+                Cutout = cutout,
                 Width = Math.Max(1, mat.Width),
                 TexHeight = Math.Max(1, mat.Height),
             };
@@ -94,6 +98,8 @@ public sealed partial class OpenGlPreviewBackend
         _grassGroundHasSpecular = primary.HasSpecular;
         _grassGroundHasHeight = primary.HasHeight;
         _grassGroundReady = _grassGroundAlbedo is not null;
+        _grassGroundSlotMaterials = slotMaterials;
+        DisposeGroundTextureArrays();
     }
 
     private void DisposeGroundGpuResources()
@@ -985,6 +991,8 @@ public sealed partial class OpenGlPreviewBackend
         _groundMesh = null;
         _groundChunkBatches = [];
         DisposeTerrainGpuChunks();
+        DisposeTerrainMeshPool();
+        DisposeGroundTextureArrays();
         _terrainStreamer?.Dispose();
         _terrainStreamer = null;
         DisposeGroundGpuResources();
@@ -1005,6 +1013,7 @@ public sealed partial class OpenGlPreviewBackend
         _height = null;
         DisposeMaterialTextureArrays();
         DisposeGpuTimerProfiler();
+        DisposeHierarchicalZResources();
         DestroyGenesisProgramCache();
         _program?.Dispose();
         _program = null;
@@ -1064,6 +1073,7 @@ public sealed partial class OpenGlPreviewBackend
         _height = null;
         AbandonMaterialTextureArrays();
         AbandonGpuTimerProfiler();
+        AbandonHierarchicalZResources();
         _genesisPrograms.Clear();
         _genesisProgramLru.Clear();
         _program = null;

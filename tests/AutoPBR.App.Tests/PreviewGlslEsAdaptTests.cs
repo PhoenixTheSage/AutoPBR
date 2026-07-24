@@ -437,10 +437,11 @@ public class PreviewGlslEsAdaptTests
         Assert.Contains("sampleSceneShadowCascaded", adapted, StringComparison.Ordinal);
         Assert.Contains("mix(nearVis, midVis, nearMidT)", shadowAdapted, StringComparison.Ordinal);
         Assert.Contains("mix(midVis, farVis, midFarT)", shadowAdapted, StringComparison.Ordinal);
-        // Far cascade must still occlude near-camera receivers when hills sit outside near/mid orthos.
-        Assert.Contains("min(min(nearVis, midVis), farVis)", shadowAdapted, StringComparison.Ordinal);
-        Assert.Contains("min(min(blended, midVis), farVis)", shadowAdapted, StringComparison.Ordinal);
-        Assert.Contains("min(blended, farVis)", shadowAdapted, StringComparison.Ordinal);
+        // Far cascade (outer softness) still occludes near receivers for tall terrain outside near/mid.
+        Assert.Contains("min(nearVis, farVis)", shadowAdapted, StringComparison.Ordinal);
+        Assert.Contains("min(mix(nearVis, midVis, nearMidT), farVis)", shadowAdapted, StringComparison.Ordinal);
+        Assert.Contains("min(mix(midVis, farVis, midFarT), farVis)", shadowAdapted, StringComparison.Ordinal);
+        Assert.DoesNotContain("min(min(nearVis, midVis), farVis)", shadowAdapted, StringComparison.Ordinal);
         Assert.Contains("min(softnessTexels, 1.0)", shadowAdapted, StringComparison.Ordinal);
     }
 

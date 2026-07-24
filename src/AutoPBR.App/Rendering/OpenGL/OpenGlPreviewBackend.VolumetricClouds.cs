@@ -427,44 +427,48 @@ public sealed partial class OpenGlPreviewBackend
         BindCloudShaderUniforms(frame, invViewProj, layerWorldY, profile, useSceneDepth,
             windOffset, cirrusWindOffset, jitterPhase);
 
-        var priorBlend = gl.IsEnabled(EnableCap.Blend);
-        var priorScissor = gl.IsEnabled(EnableCap.ScissorTest);
-        var priorColorMask = new bool[4];
-        gl.GetBoolean(GetPName.ColorWritemask, priorColorMask);
-        if (useOffscreen)
+        GLEnum cloudDrawErr;
+        using (BeginPassTimerScope(GlGpuTimerScope.CloudTrace))
         {
-            gl.Disable(EnableCap.Blend);
-        }
-        else
-        {
-            gl.Enable(EnableCap.Blend);
-            gl.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
-        }
+            var priorBlend = gl.IsEnabled(EnableCap.Blend);
+            var priorScissor = gl.IsEnabled(EnableCap.ScissorTest);
+            var priorColorMask = new bool[4];
+            gl.GetBoolean(GetPName.ColorWritemask, priorColorMask);
+            if (useOffscreen)
+            {
+                gl.Disable(EnableCap.Blend);
+            }
+            else
+            {
+                gl.Enable(EnableCap.Blend);
+                gl.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
+            }
 
-        gl.Disable(EnableCap.DepthTest);
-        gl.DepthMask(false);
-        gl.Disable(EnableCap.ScissorTest);
-        gl.ColorMask(true, true, true, true);
-        FlushPendingGlErrors(gl);
-        gl.BindVertexArray(_cloudQuadVao);
-        gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
-        var cloudDrawErr = gl.GetError();
-        gl.BindVertexArray(0);
-        gl.DepthMask(true);
-        gl.Enable(EnableCap.DepthTest);
-        gl.ColorMask(priorColorMask[0], priorColorMask[1], priorColorMask[2], priorColorMask[3]);
-        if (priorScissor)
-        {
-            gl.Enable(EnableCap.ScissorTest);
-        }
+            gl.Disable(EnableCap.DepthTest);
+            gl.DepthMask(false);
+            gl.Disable(EnableCap.ScissorTest);
+            gl.ColorMask(true, true, true, true);
+            FlushPendingGlErrors(gl);
+            gl.BindVertexArray(_cloudQuadVao);
+            gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
+            cloudDrawErr = gl.GetError();
+            gl.BindVertexArray(0);
+            gl.DepthMask(true);
+            gl.Enable(EnableCap.DepthTest);
+            gl.ColorMask(priorColorMask[0], priorColorMask[1], priorColorMask[2], priorColorMask[3]);
+            if (priorScissor)
+            {
+                gl.Enable(EnableCap.ScissorTest);
+            }
 
-        if (priorBlend)
-        {
-            gl.Enable(EnableCap.Blend);
-        }
-        else
-        {
-            gl.Disable(EnableCap.Blend);
+            if (priorBlend)
+            {
+                gl.Enable(EnableCap.Blend);
+            }
+            else
+            {
+                gl.Disable(EnableCap.Blend);
+            }
         }
 
         if (cloudDrawErr != GLEnum.NoError)
@@ -475,32 +479,44 @@ public sealed partial class OpenGlPreviewBackend
         if (useOffscreen)
         {
             _cloudCompositeTarget = _cloudRenderTarget;
-            if (useTemporalReproject && ResolveCloudTemporal(
-                    frame, invViewProj, windOffset, cirrusWindOffset, profile))
+            if (useTemporalReproject)
             {
-                _cloudCompositeTarget = _cloudResolveTarget;
-                if (updateHistory && _cloudHistoryTarget!.CopyFrom(_cloudResolveTarget!))
+                var temporalOk = false;
+                using (BeginPassTimerScope(GlGpuTimerScope.CloudTemporal))
                 {
-                    _cloudPrevViewProj = viewProj;
-                    _cloudPrevCameraPos = frame.Eye;
-                    _cloudPrevWindOffset = windOffset;
-                    _cloudPrevCirrusWindOffset = cirrusWindOffset;
-                    _cloudHistorySettingsHash = settingsHash;
-                    _cloudHistoryValid = true;
+                    temporalOk = ResolveCloudTemporal(
+                        frame, invViewProj, windOffset, cirrusWindOffset, profile);
                 }
-                else if (updateHistory)
+
+                if (temporalOk)
                 {
-                    InvalidateCloudTemporalHistory();
+                    _cloudCompositeTarget = _cloudResolveTarget;
+                    if (updateHistory && _cloudHistoryTarget!.CopyFrom(_cloudResolveTarget!))
+                    {
+                        _cloudPrevViewProj = viewProj;
+                        _cloudPrevCameraPos = frame.Eye;
+                        _cloudPrevWindOffset = windOffset;
+                        _cloudPrevCirrusWindOffset = cirrusWindOffset;
+                        _cloudHistorySettingsHash = settingsHash;
+                        _cloudHistoryValid = true;
+                    }
+                    else if (updateHistory)
+                    {
+                        InvalidateCloudTemporalHistory();
+                    }
                 }
             }
-            else if (!useTemporalReproject)
+            else
             {
                 InvalidateCloudTemporalHistory();
             }
 
             if (!deferComposite)
             {
-                CompositeCloudRenderTargetToDefault(ref frame);
+                using (BeginPassTimerScope(GlGpuTimerScope.CloudUpsample))
+                {
+                    CompositeCloudRenderTargetToDefault(ref frame);
+                }
             }
         }
 

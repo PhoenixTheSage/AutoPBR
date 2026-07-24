@@ -16,43 +16,42 @@ internal static class VanillaAnimationIrPreviewSampler
     internal static bool TryGetAnimationRoot(MinecraftNativeProfile? profile, string officialJvmName, out JsonObject root)
     {
         root = null!;
-        var ver = NativeIrVersionLabels.PrimaryForProfile(profile);
-        if (string.IsNullOrEmpty(ver))
+        foreach (var ver in NativeIrVersionLabels.ForProfile(profile))
         {
-            return false;
-        }
-
-        var path = Path.Combine(
-            AppContext.BaseDirectory,
-            "Data",
-            "minecraft-native",
-            "animation",
-            ver,
-            $"{officialJvmName}.json");
-        if (!File.Exists(path))
-        {
-            return false;
-        }
-
-        var node = Cache.GetOrAdd(path, static p =>
-        {
-            try
+            var path = Path.Combine(
+                AppContext.BaseDirectory,
+                "Data",
+                "minecraft-native",
+                "animation",
+                ver,
+                $"{officialJvmName}.json");
+            if (!File.Exists(path))
             {
-                return JsonNode.Parse(File.ReadAllText(p));
+                continue;
             }
-            catch
-            {
-                return null;
-            }
-        });
 
-        if (node is not JsonObject o)
-        {
-            return false;
+            var node = Cache.GetOrAdd(path, static p =>
+            {
+                try
+                {
+                    return JsonNode.Parse(File.ReadAllText(p));
+                }
+                catch
+                {
+                    return null;
+                }
+            });
+
+            if (node is not JsonObject o)
+            {
+                continue;
+            }
+
+            root = o;
+            return true;
         }
 
-        root = o;
-        return true;
+        return false;
     }
 
     private static bool TryGetDefinition(JsonObject animationRoot, string fieldName, out JsonObject definition)

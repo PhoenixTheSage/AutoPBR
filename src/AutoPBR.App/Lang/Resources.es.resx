@@ -1651,10 +1651,13 @@
     <value>Limita la distancia que puede viajar un rastro de paralaje en el espacio ultravioleta. Levante para un alivio más profundo; Baje para reducir el estiramiento del ángulo de pastoreo.</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacement" xml:space="preserve">
-    <value>Protuberancia teselada</value>
+    <value>Teselación</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacementTooltip" xml:space="preserve">
     <value>Utilice la teselación OpenGL de escritorio para agregar geometría exterior real desde regiones del mapa de gran altura. POM todavía maneja detalles empotrados.</value>
+  </data>
+  <data name="Preview3DTessellationSection" xml:space="preserve">
+    <value>Teselación</value>
   </data>
   <data name="Preview3DTessellationLevel" xml:space="preserve">
     <value>Nivel de teselación</value>

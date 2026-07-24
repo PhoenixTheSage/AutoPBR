@@ -142,6 +142,7 @@ public sealed partial class OpenGlPreviewBackend
         ConfigureSunDebugVertexPointers(gl, _sunDebugVertexUpload.ActiveOffset);
         _lineProgram.Use();
         SetLineProgramMvp(gl, viewProj);
+        SetLineProgramColorMul(1f, 1f, 1f, 1f);
         gl.DrawArrays(PrimitiveType.Lines, 0, (uint)(i / PreviewGridLinesFactory.FloatsPerVertex));
         _sunDebugVertexUpload.MarkSubmitted();
         gl.BindVertexArray(0);

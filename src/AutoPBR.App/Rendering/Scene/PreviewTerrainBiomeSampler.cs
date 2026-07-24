@@ -3,21 +3,34 @@ namespace AutoPBR.App.Rendering.Scene;
 /// <summary>
 /// Climate-driven biome + height + block-stack sampling for stage terrain.
 /// Flat pad under the subject is always Plains at height 0.
+/// Biome borders soft-blend height; mountains use analytical advanced erosion.
 /// </summary>
 public static class PreviewTerrainBiomeSampler
 {
     /// <summary>
-    /// Full column sample. Thread-safe and deterministic for a fixed seed.
+    /// Full column sample. Thread-safe and deterministic for a fixed world-gen settings.
     /// </summary>
     public static PreviewTerrainColumnSample Sample(
         int x,
         int z,
         int flatPadHalfExtent = PreviewStageConstants.TerrainFlatPadHalfExtent,
         int transitionBlocks = PreviewStageConstants.TerrainTransitionBlocks,
-        int seed = PreviewStageConstants.TerrainHeightSeed)
+        int seed = PreviewStageConstants.TerrainHeightSeed) =>
+        Sample(x, z, PreviewTerrainWorldGenSettings.Default with { Seed = seed }, flatPadHalfExtent, transitionBlocks);
+
+    /// <summary>
+    /// Full column sample with runtime world-gen modifiers.
+    /// </summary>
+    public static PreviewTerrainColumnSample Sample(
+        int x,
+        int z,
+        in PreviewTerrainWorldGenSettings worldGen,
+        int flatPadHalfExtent = PreviewStageConstants.TerrainFlatPadHalfExtent,
+        int transitionBlocks = PreviewStageConstants.TerrainTransitionBlocks)
     {
         flatPadHalfExtent = Math.Max(0, flatPadHalfExtent);
         transitionBlocks = Math.Max(0, transitionBlocks);
+        var gen = PreviewTerrainWorldGenSettings.Resolve(worldGen);
 
         var chebyshev = Math.Max(Math.Abs(x), Math.Abs(z));
         if (chebyshev <= flatPadHalfExtent)
@@ -25,10 +38,24 @@ public static class PreviewTerrainBiomeSampler
             return PlainsColumn(height: 0);
         }
 
-        SampleClimate(x, z, seed, out var temperature, out var humidity, out var continental);
-        var biome = ClassifyBiome(temperature, humidity, continental);
-        var rawHeight = SampleBiomeHeight(x, z, seed, biome);
-        var height = ApplyPadTransition(rawHeight, chebyshev, flatPadHalfExtent, transitionBlocks);
+        SampleClimate(x, z, gen, out var temperature, out var humidity, out var continental);
+        ComputeBiomeWeights(
+            temperature,
+            humidity,
+            continental,
+            PreviewStageConstants.TerrainBiomeBlendHalfWidth,
+            out var wMountains,
+            out var wDesert,
+            out var wBeach,
+            out var wPlains);
+
+        var biome = DominantBiome(wMountains, wDesert, wBeach, wPlains);
+        var blended = SampleBlendedHeight(x, z, gen, wMountains, wDesert, wBeach, wPlains);
+        var height = ApplyPadTransition(
+            (int)Math.Round(blended),
+            chebyshev,
+            flatPadHalfExtent,
+            transitionBlocks);
         return BuildColumn(height, biome, continental);
     }
 
@@ -41,100 +68,215 @@ public static class PreviewTerrainBiomeSampler
         int seed = PreviewStageConstants.TerrainHeightSeed) =>
         Sample(x, z, flatPadHalfExtent, transitionBlocks, seed).Height;
 
+    public static int SampleHeight(
+        int x,
+        int z,
+        in PreviewTerrainWorldGenSettings worldGen,
+        int flatPadHalfExtent = PreviewStageConstants.TerrainFlatPadHalfExtent,
+        int transitionBlocks = PreviewStageConstants.TerrainTransitionBlocks) =>
+        Sample(x, z, worldGen, flatPadHalfExtent, transitionBlocks).Height;
+
     public static void SampleClimate(
         int x,
         int z,
         int seed,
         out float temperature,
         out float humidity,
+        out float continental) =>
+        SampleClimate(
+            x,
+            z,
+            PreviewTerrainWorldGenSettings.Default with { Seed = seed },
+            out temperature,
+            out humidity,
+            out continental);
+
+    public static void SampleClimate(
+        int x,
+        int z,
+        in PreviewTerrainWorldGenSettings worldGen,
+        out float temperature,
+        out float humidity,
         out float continental)
     {
-        var climateSeed = seed ^ PreviewStageConstants.TerrainClimateSeedSalt;
-        // Low-frequency climate fields in [0, 1].
-        temperature = Noise01(x * 0.008f, z * 0.008f, climateSeed);
-        humidity = Noise01(x * 0.0095f, z * 0.0095f, climateSeed ^ unchecked((int)0xA5A5A5A5));
-        continental = Noise01(x * 0.0065f, z * 0.0065f, climateSeed ^ unchecked((int)0x3C6EF372));
+        var gen = PreviewTerrainWorldGenSettings.Resolve(worldGen);
+        var climateSeed = gen.Seed ^ PreviewStageConstants.TerrainClimateSeedSalt;
+        // Larger BiomeSize → lower frequency → bigger regions.
+        var freq = 1f / gen.BiomeSize;
+        temperature = Noise01(x * 0.008f * freq, z * 0.008f * freq, climateSeed);
+        humidity = Noise01(
+            x * 0.0095f * freq,
+            z * 0.0095f * freq,
+            climateSeed ^ unchecked((int)0xA5A5A5A5));
+        continental = Noise01(
+            x * 0.0065f * freq,
+            z * 0.0065f * freq,
+            climateSeed ^ unchecked((int)0x3C6EF372));
+        // Stretch continental around 0.5 so islands ↔ continents can be biased.
+        continental = Math.Clamp((continental - 0.5f) * gen.Continentalness + 0.5f, 0f, 1f);
     }
 
+    /// <summary>
+    /// Hard classification (threshold midpoints). Prefer soft weights for geometry;
+    /// this remains for tests and material-dominant decisions at exact thresholds.
+    /// </summary>
     public static PreviewTerrainBiomeId ClassifyBiome(float temperature, float humidity, float continental)
+    {
+        ComputeBiomeWeights(
+            temperature,
+            humidity,
+            continental,
+            blendHalfWidth: 0f,
+            out var wMountains,
+            out var wDesert,
+            out var wBeach,
+            out var wPlains);
+        return DominantBiome(wMountains, wDesert, wBeach, wPlains);
+    }
+
+    /// <summary>
+    /// Soft biome affinities that preserve hard-classify priority
+    /// (Mountains → Desert → Beach → Plains) while blending near thresholds.
+    /// Weights always sum to 1.
+    /// </summary>
+    public static void ComputeBiomeWeights(
+        float temperature,
+        float humidity,
+        float continental,
+        float blendHalfWidth,
+        out float mountains,
+        out float desert,
+        out float beach,
+        out float plains)
     {
         temperature = Math.Clamp(temperature, 0f, 1f);
         humidity = Math.Clamp(humidity, 0f, 1f);
         continental = Math.Clamp(continental, 0f, 1f);
+        blendHalfWidth = Math.Max(0f, blendHalfWidth);
 
-        // Cold + high continental → mountains.
-        if (continental > 0.55f && temperature < 0.55f)
+        var mCont = SoftGateHigh(continental, threshold: 0.55f, blendHalfWidth);
+        var mTemp = SoftGateLow(temperature, threshold: 0.55f, blendHalfWidth);
+        var mAff = mCont * mTemp;
+
+        var dTemp = SoftGateHigh(temperature, threshold: 0.62f, blendHalfWidth);
+        var dHum = SoftGateLow(humidity, threshold: 0.38f, blendHalfWidth);
+        var dAff = dTemp * dHum * (1f - mAff);
+
+        var bAff = SoftGateLow(continental, threshold: 0.34f, blendHalfWidth) * (1f - mAff) * (1f - dAff);
+
+        var pAff = Math.Max(0f, 1f - mAff - dAff - bAff);
+        var sum = mAff + dAff + bAff + pAff;
+        if (sum <= 1e-8f)
         {
-            return PreviewTerrainBiomeId.Mountains;
+            mountains = 0f;
+            desert = 0f;
+            beach = 0f;
+            plains = 1f;
+            return;
         }
 
-        // Hot + dry → desert.
-        if (temperature > 0.62f && humidity < 0.38f)
-        {
-            return PreviewTerrainBiomeId.Desert;
-        }
-
-        // Coastal fringe: low continental (and not desert).
-        if (continental < 0.34f)
-        {
-            return PreviewTerrainBiomeId.Beach;
-        }
-
-        return PreviewTerrainBiomeId.Plains;
+        mountains = mAff / sum;
+        desert = dAff / sum;
+        beach = bAff / sum;
+        plains = pAff / sum;
     }
 
-    private static int SampleBiomeHeight(int x, int z, int seed, PreviewTerrainBiomeId biome)
+    private static float SampleBlendedHeight(
+        int x,
+        int z,
+        in PreviewTerrainWorldGenSettings gen,
+        float wMountains,
+        float wDesert,
+        float wBeach,
+        float wPlains)
     {
-        return biome switch
+        const float eps = 1e-4f;
+        var h = 0f;
+        if (wPlains > eps)
         {
-            PreviewTerrainBiomeId.Desert => SampleDesertHeight(x, z, seed),
-            PreviewTerrainBiomeId.Beach => SampleBeachHeight(x, z, seed),
-            PreviewTerrainBiomeId.Mountains => SampleMountainHeight(x, z, seed),
-            _ => SamplePlainsHeight(x, z, seed),
-        };
+            h += wPlains * SamplePlainsHeightContinuous(x, z, gen.Seed);
+        }
+
+        if (wDesert > eps)
+        {
+            h += wDesert * SampleDesertHeightContinuous(x, z, gen.Seed);
+        }
+
+        if (wBeach > eps)
+        {
+            h += wBeach * SampleBeachHeightContinuous(x, z, gen.Seed);
+        }
+
+        if (wMountains > eps)
+        {
+            h += wMountains * SampleMountainHeightContinuous(x, z, gen);
+        }
+
+        h *= gen.Amplification;
+        var maxAbs = (int)Math.Ceiling(
+            PreviewStageConstants.TerrainMountainMaxReliefBlocks * gen.Amplification);
+        return Math.Clamp(h, -maxAbs, maxAbs);
     }
 
-    private static int SamplePlainsHeight(int x, int z, int seed)
+    private static float SamplePlainsHeightContinuous(int x, int z, int seed)
     {
         var max = PreviewStageConstants.TerrainMaxReliefBlocks;
-        var n = PreviewTerrainHeightfield.SampleFbm(x, z, seed);
-        return ClampRelief((int)Math.Round(n * max), max);
+        return PreviewTerrainHeightfield.SampleFbm(x, z, seed) * max;
     }
 
-    private static int SampleDesertHeight(int x, int z, int seed)
+    private static float SampleDesertHeightContinuous(int x, int z, int seed)
     {
         var max = PreviewStageConstants.TerrainDesertMaxReliefBlocks;
-        // Slightly stretchier dunes.
         var n =
             PreviewTerrainHeightfield.SampleValueNoise(x * 0.035f, z * 0.035f, seed) * 0.65f +
             PreviewTerrainHeightfield.SampleValueNoise(x * 0.09f, z * 0.09f, seed ^ 0x11111111) * 0.35f;
-        n = Math.Clamp(n, -1f, 1f);
-        return ClampRelief((int)Math.Round(n * max), max);
+        return Math.Clamp(n, -1f, 1f) * max;
     }
 
-    private static int SampleBeachHeight(int x, int z, int seed)
+    private static float SampleBeachHeightContinuous(int x, int z, int seed)
     {
         var max = PreviewStageConstants.TerrainBeachMaxReliefBlocks;
         var n = PreviewTerrainHeightfield.SampleFbm(x, z, seed ^ unchecked((int)0xBEAC0001));
-        // Bias toward low/coastal.
-        var relief = (int)Math.Round((n * 0.55f - 0.15f) * max);
-        return Math.Clamp(relief, -max, max);
+        return Math.Clamp((n * 0.55f - 0.15f) * max, -max, max);
     }
 
-    private static int SampleMountainHeight(int x, int z, int seed)
+    private static float SampleMountainHeightContinuous(
+        int x,
+        int z,
+        in PreviewTerrainWorldGenSettings gen)
     {
         var max = PreviewStageConstants.TerrainMountainMaxReliefBlocks;
-        var baseN = PreviewTerrainHeightfield.SampleFbm(x, z, seed);
-        // Sharp ridges: cubic falloff so neighboring columns often jump multiple blocks.
-        var ridge = PreviewTerrainHeightfield.SampleValueNoise(x * 0.05f, z * 0.05f, seed ^ unchecked((int)0x51D6E001));
-        ridge = 1f - MathF.Abs(ridge);
-        ridge = ridge * ridge * ridge;
-        // Coarse terrace hash creates intentional multi-block cliff faces.
-        var terrace = PreviewTerrainHeightfield.Hash01(x >> 1, z >> 1, seed ^ unchecked((int)0x7E55ACE0));
-        terrace = terrace * 2f - 1f;
-        var detail = PreviewTerrainHeightfield.SampleValueNoise(x * 0.22f, z * 0.22f, seed ^ 0x51A1E001) * 0.15f;
-        var n = Math.Clamp(baseN * 0.20f + ridge * 0.85f + terrace * 0.40f + detail - 0.05f, -1f, 1f);
-        return ClampRelief((int)Math.Round(n * max), max);
+        var n = PreviewTerrainAdvancedErosion.SampleErodedMountainNormalized(
+            x, z, gen.Seed, gen.ErosionStrength);
+        return n * max;
+    }
+
+    private static PreviewTerrainBiomeId DominantBiome(
+        float mountains,
+        float desert,
+        float beach,
+        float plains)
+    {
+        var best = PreviewTerrainBiomeId.Plains;
+        var bestW = plains;
+        if (beach >= bestW)
+        {
+            best = PreviewTerrainBiomeId.Beach;
+            bestW = beach;
+        }
+
+        if (desert >= bestW)
+        {
+            best = PreviewTerrainBiomeId.Desert;
+            bestW = desert;
+        }
+
+        if (mountains >= bestW)
+        {
+            best = PreviewTerrainBiomeId.Mountains;
+        }
+
+        return best;
     }
 
     private static int ApplyPadTransition(
@@ -181,7 +323,6 @@ public static class PreviewTerrainBiomeSampler
 
     private static PreviewTerrainColumnSample BuildMountainColumn(int height, float continental)
     {
-        // High/steep peaks: stone surface; gentler shoulders: grass.
         var rocky = continental > 0.72f || height >= PreviewStageConstants.TerrainMaxReliefBlocks + 4;
         return new PreviewTerrainColumnSample(
             height,
@@ -199,7 +340,36 @@ public static class PreviewTerrainBiomeSampler
             Subsurface: PreviewTerrainBlockKind.Dirt,
             Deep: PreviewTerrainBlockKind.Stone);
 
-    private static int ClampRelief(int relief, int max) => Math.Clamp(relief, -max, max);
+    private static float SoftGateHigh(float value, float threshold, float blendHalfWidth)
+    {
+        if (blendHalfWidth <= 0f)
+        {
+            return value > threshold ? 1f : 0f;
+        }
+
+        return Smoothstep(threshold - blendHalfWidth, threshold + blendHalfWidth, value);
+    }
+
+    private static float SoftGateLow(float value, float threshold, float blendHalfWidth)
+    {
+        if (blendHalfWidth <= 0f)
+        {
+            return value < threshold ? 1f : 0f;
+        }
+
+        return 1f - Smoothstep(threshold - blendHalfWidth, threshold + blendHalfWidth, value);
+    }
+
+    private static float Smoothstep(float edge0, float edge1, float x)
+    {
+        if (edge1 <= edge0)
+        {
+            return x < edge0 ? 0f : 1f;
+        }
+
+        var t = Math.Clamp((x - edge0) / (edge1 - edge0), 0f, 1f);
+        return t * t * (3f - 2f * t);
+    }
 
     private static float Noise01(float x, float z, int seed)
     {

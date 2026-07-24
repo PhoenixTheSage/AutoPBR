@@ -201,6 +201,40 @@ public sealed class PreviewTerrainTests
     }
 
     [Fact]
+    public void IsSolid_seals_tall_columns_to_shared_floor_past_fillDepth()
+    {
+        // Cliff shelf: tall=10 beside short=0 with fillDepth=3. Pre-fix solids were only
+        // y=8..10 on the tall column → sky holes at y=1..7. Shared floor must seal that.
+        int HeightAt(int x, int z) => x == 0 ? 10 : 0;
+
+        Assert.Equal(
+            PreviewStageConstants.TerrainSolidFloorRelativeY,
+            PreviewTerrainMeshBaker.SolidBottomY(10, fillDepth: 3));
+
+        Assert.True(PreviewTerrainMeshBaker.IsSolid(HeightAt, fillDepth: 3, bx: 0, by: 5, bz: 0));
+        Assert.True(PreviewTerrainMeshBaker.IsSolid(
+            HeightAt,
+            fillDepth: 3,
+            bx: 0,
+            by: PreviewStageConstants.TerrainSolidFloorRelativeY,
+            bz: 0));
+        Assert.False(PreviewTerrainMeshBaker.IsSolid(HeightAt, fillDepth: 3, bx: 0, by: 11, bz: 0));
+        Assert.False(PreviewTerrainMeshBaker.IsSolid(HeightAt, fillDepth: 3, bx: 1, by: 5, bz: 0));
+        Assert.True(PreviewTerrainMeshBaker.IsSolid(HeightAt, fillDepth: 3, bx: 1, by: 0, bz: 0));
+    }
+
+    [Fact]
+    public void ResolveLayerMin_reaches_shared_solid_floor()
+    {
+        Assert.Equal(
+            PreviewStageConstants.TerrainSolidFloorRelativeY,
+            PreviewTerrainMeshBaker.ResolveLayerMin(minColumnHeight: 0, fillDepth: 3));
+        Assert.Equal(
+            PreviewStageConstants.TerrainSolidFloorRelativeY,
+            PreviewTerrainMeshBaker.ResolveLayerMin(minColumnHeight: 12, fillDepth: 3));
+    }
+
+    [Fact]
     public void TerrainBake_occludes_internal_faces_between_neighbors()
     {
         // 2×1 flat pad: shared interior vertical face must not be emitted.
@@ -213,13 +247,15 @@ public sealed class PreviewTerrainTests
             surfaceWorldY: 0f,
             nearPomRadius: 100f);
 
-        // Without occlusion: 4 blocks × 6 faces × 4 verts = 96 verts.
-        // With occlusion + greedy: far fewer (outer shell only).
-        Assert.True(bake.Mesh.VertexCount < 96,
-            $"expected occluded/merged shell, got {bake.Mesh.VertexCount} verts");
+        // Without occlusion every solid cell emits 6 faces. Shared floor makes columns thick,
+        // so assert against a naive per-cell bound rather than a thin-slab constant.
+        var solidLayers = 0 - PreviewTerrainMeshBaker.SolidBottomY(0, fillDepth: 1) + 1;
+        var naiveVerts = 4 * solidLayers * 6 * 4;
+        Assert.True(bake.Mesh.VertexCount < naiveVerts,
+            $"expected occluded/merged shell, got {bake.Mesh.VertexCount} verts (naive {naiveVerts})");
 
         // No +X face at x=0 between columns -1|0 (shared plane at x=0 inside solid volume of neighbors).
-        // Both columns solid at layer 0; shared face at x=0 should be culled.
+        // Both columns solid through the shared floor; shared face at x=0 should be culled.
         const int s = PreviewMesh.FloatsPerVertex;
         var v = bake.Mesh.InterleavedVertices;
         var sharedInterior = false;
@@ -731,6 +767,126 @@ public sealed class PreviewTerrainTests
         TerrainChunkDrawCull.Select(
             candidates, vp, Vector3.Zero, fallbackCount: 64, fullOnly: true, selected);
         Assert.Equal(new[] { 0 }, selected);
+    }
+
+    [Fact]
+    public void TerrainChunkDrawCull_CompareDrawItems_orders_opaque_before_cutout_then_material()
+    {
+        var fullPom = new TerrainChunkDrawCull.Candidate
+        {
+            BoundsCenter = Vector3.Zero,
+            BoundsRadius = 1f,
+            Lod = TerrainChunkLodKind.Full,
+            NearPom = true,
+            SourceIndex = 0
+        };
+        var cmp = TerrainChunkDrawCull.CompareDrawItems(
+            fullPom, materialA: 1, cutoutA: false,
+            fullPom, materialB: 1, cutoutB: true,
+            sourceOrderA: 0, sourceOrderB: 1);
+        Assert.True(cmp < 0);
+
+        cmp = TerrainChunkDrawCull.CompareDrawItems(
+            fullPom, materialA: 0, cutoutA: false,
+            fullPom, materialB: 2, cutoutB: false,
+            sourceOrderA: 5, sourceOrderB: 1);
+        Assert.True(cmp < 0);
+    }
+
+    [Fact]
+    public void TerrainChunkDrawCull_ApplyNearPomFlags_marks_near_full_chunks()
+    {
+        var candidates = new List<TerrainChunkDrawCull.Candidate>
+        {
+            new()
+            {
+                BoundsCenter = Vector3.Zero,
+                BoundsRadius = 8f,
+                Lod = TerrainChunkLodKind.Full,
+                NearPom = false,
+                SourceIndex = 0
+            },
+            new()
+            {
+                BoundsCenter = new Vector3(200f, 0f, 200f),
+                BoundsRadius = 8f,
+                Lod = TerrainChunkLodKind.Full,
+                NearPom = true,
+                SourceIndex = 1
+            },
+            new()
+            {
+                BoundsCenter = Vector3.Zero,
+                BoundsRadius = 8f,
+                Lod = TerrainChunkLodKind.Lod,
+                NearPom = true,
+                SourceIndex = 2
+            }
+        };
+
+        TerrainChunkDrawCull.ApplyNearPomFlags(
+            candidates,
+            cameraPosition: Vector3.Zero,
+            enableParallaxSetting: true);
+
+        Assert.True(candidates[0].NearPom);
+        Assert.False(candidates[1].NearPom);
+        Assert.False(candidates[2].NearPom);
+
+        TerrainChunkDrawCull.ApplyNearPomFlags(
+            candidates,
+            cameraPosition: Vector3.Zero,
+            enableParallaxSetting: false);
+        Assert.False(candidates[0].NearPom);
+    }
+
+    [Fact]
+    public void TerrainChunkDrawCull_parallel_filter_stable_sort_by_group_then_index()
+    {
+        var view = Matrix4x4.Identity;
+        var projection = Matrix4x4.CreateOrthographic(400f, 400f, 0.1f, 400f);
+        var vp = projection * view;
+        var n = TerrainChunkDrawCull.ParallelFilterMinCandidates + 8;
+        var candidates = new TerrainChunkDrawCull.Candidate[n];
+        for (var i = 0; i < n; i++)
+        {
+            var lod = i % 3 == 0 ? TerrainChunkLodKind.Lod : TerrainChunkLodKind.Full;
+            var nearPom = lod == TerrainChunkLodKind.Full && i % 2 == 0;
+            candidates[i] = new TerrainChunkDrawCull.Candidate
+            {
+                BoundsCenter = new Vector3((i % 16) * 4f, 0f, (i / 16) * 4f),
+                BoundsRadius = 6f,
+                Lod = lod,
+                NearPom = nearPom,
+                SourceIndex = i
+            };
+        }
+
+        var selected = new List<int>();
+        TerrainChunkDrawCull.Select(
+            candidates,
+            vp,
+            cameraPosition: Vector3.Zero,
+            fallbackCount: 64,
+            fullOnly: false,
+            selected);
+
+        Assert.True(selected.Count >= TerrainChunkDrawCull.ParallelFilterMinCandidates);
+        for (var i = 1; i < selected.Count; i++)
+        {
+            var prev = candidates[selected[i - 1]];
+            var cur = candidates[selected[i]];
+            var prevGroup = prev.Lod == TerrainChunkLodKind.Full
+                ? (prev.NearPom ? 0 : 1)
+                : 2;
+            var curGroup = cur.Lod == TerrainChunkLodKind.Full
+                ? (cur.NearPom ? 0 : 1)
+                : 2;
+            Assert.True(
+                prevGroup < curGroup ||
+                (prevGroup == curGroup && selected[i - 1] < selected[i]),
+                $"order broken at {i}: {selected[i - 1]}->{selected[i]}");
+        }
     }
 
     [Fact]

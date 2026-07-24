@@ -40,6 +40,123 @@ public sealed class PreviewTerrainBiomeTests
     }
 
     [Fact]
+    public void ComputeBiomeWeights_sum_to_one_and_blend_near_threshold()
+    {
+        PreviewTerrainBiomeSampler.ComputeBiomeWeights(
+            temperature: 0.55f,
+            humidity: 0.5f,
+            continental: 0.55f,
+            PreviewStageConstants.TerrainBiomeBlendHalfWidth,
+            out var m,
+            out var d,
+            out var b,
+            out var p);
+        Assert.InRange(m + d + b + p, 0.999f, 1.001f);
+        Assert.True(m > 0.05f && m < 0.95f, $"expected soft mountain weight near threshold, got {m}");
+        Assert.True(p > 0.05f, $"expected plains to share the border, got {p}");
+    }
+
+    [Fact]
+    public void Biome_border_geometry_includes_soft_height_steps()
+    {
+        // Soft climate weights let neighboring columns change biome while height stays continuous.
+        var borderPairs = 0;
+        var softPairs = 0;
+        for (var z = -120; z <= 120; z++)
+        {
+            for (var x = -120; x <= 120; x++)
+            {
+                var a = PreviewTerrainBiomeSampler.Sample(x, z);
+                var b = PreviewTerrainBiomeSampler.Sample(x + 1, z);
+                if (a.Biome == b.Biome)
+                {
+                    continue;
+                }
+
+                borderPairs++;
+                if (Math.Abs(a.Height - b.Height) <= 1)
+                {
+                    softPairs++;
+                }
+            }
+        }
+
+        Assert.True(borderPairs > 0, "expected at least one biome border within search radius");
+        Assert.True(
+            softPairs > 0,
+            $"expected soft |Δh|≤1 across some biome borders (soft={softPairs}/{borderPairs})");
+    }
+
+    [Fact]
+    public void WorldGen_seed_changes_height_outside_pad_but_pad_stays_zero()
+    {
+        var a = PreviewTerrainWorldGenSettings.Default with { Seed = 11 };
+        var b = PreviewTerrainWorldGenSettings.Default with { Seed = 99 };
+        Assert.Equal(0, PreviewTerrainBiomeSampler.Sample(0, 0, a).Height);
+        Assert.Equal(0, PreviewTerrainBiomeSampler.Sample(0, 0, b).Height);
+
+        var foundDiff = false;
+        for (var z = 20; z <= 80 && !foundDiff; z++)
+        {
+            for (var x = 20; x <= 80; x++)
+            {
+                if (PreviewTerrainBiomeSampler.Sample(x, z, a).Height !=
+                    PreviewTerrainBiomeSampler.Sample(x, z, b).Height)
+                {
+                    foundDiff = true;
+                    break;
+                }
+            }
+        }
+
+        Assert.True(foundDiff, "expected seed change to alter terrain outside the flat pad");
+    }
+
+    [Fact]
+    public void WorldGen_amplification_scales_absolute_height()
+    {
+        var baseGen = PreviewTerrainWorldGenSettings.Default;
+        var tallGen = baseGen with { Amplification = 2f };
+        var maxBase = 0;
+        var maxTall = 0;
+        for (var z = -100; z <= 100; z++)
+        {
+            for (var x = -100; x <= 100; x++)
+            {
+                maxBase = Math.Max(maxBase, Math.Abs(PreviewTerrainBiomeSampler.Sample(x, z, baseGen).Height));
+                maxTall = Math.Max(maxTall, Math.Abs(PreviewTerrainBiomeSampler.Sample(x, z, tallGen).Height));
+            }
+        }
+
+        Assert.True(maxTall > maxBase, $"expected amp=2 to raise peak relief (base={maxBase}, tall={maxTall})");
+    }
+
+    [Fact]
+    public void AdvancedErosion_is_deterministic_and_finite()
+    {
+        var a = PreviewTerrainAdvancedErosion.SampleErodedMountainNormalized(12.5f, -7.25f, seed: 42);
+        var b = PreviewTerrainAdvancedErosion.SampleErodedMountainNormalized(12.5f, -7.25f, seed: 42);
+        Assert.Equal(a, b);
+        Assert.True(float.IsFinite(a));
+        Assert.InRange(a, -1f, 1f);
+
+        var baseH = PreviewTerrainAdvancedErosion.Fbm(
+            new System.Numerics.Vector2(0.42f, 0.31f),
+            frequency: 2.4f,
+            octaves: 3,
+            lacunarity: 2f,
+            gain: 0.18f);
+        var filtered = PreviewTerrainAdvancedErosion.ErosionFilter(
+            new System.Numerics.Vector2(0.42f, 0.31f),
+            baseH,
+            fadeTargetIn: 0f,
+            PreviewTerrainAdvancedErosion.MountainParams);
+        Assert.True(float.IsFinite(filtered.Delta.X));
+        Assert.True(float.IsFinite(filtered.Magnitude));
+        Assert.True(filtered.Magnitude > 0f);
+    }
+
+    [Fact]
     public void Mountains_can_produce_multi_block_neighbor_steps()
     {
         var foundMountain = false;

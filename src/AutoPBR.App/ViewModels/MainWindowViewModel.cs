@@ -583,10 +583,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _scanCts?.Cancel();
         _previewCts?.Cancel();
         _previewRefreshDebounceCts?.Cancel();
+        _exploreFilterDebounceCts?.Cancel();
         _cts?.Dispose();
         _scanCts?.Dispose();
         _previewCts?.Dispose();
         _previewRefreshDebounceCts?.Dispose();
+        _exploreFilterDebounceCts?.Dispose();
         DisposePreviewResources();
         _materialTagSemanticMatcher?.Dispose();
         _exploreController.Dispose();

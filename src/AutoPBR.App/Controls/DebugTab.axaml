@@ -49,11 +49,28 @@
                                                   ToolTip.Tip="{Binding Strings.Preview3DLogGpuPassTimingsTooltip}">
                                             <TextBlock Text="{Binding Strings.Preview3DLogGpuPassTimings}" TextWrapping="Wrap" />
                                         </CheckBox>
+                                        <CheckBox IsChecked="{Binding Preview3DLogVerbosePreviewDiagnostics, Mode=TwoWay}"
+                                                  IsVisible="{Binding IsPreview3D}"
+                                                  ToolTip.Tip="{Binding Strings.Preview3DLogVerbosePreviewDiagnosticsTooltip}">
+                                            <TextBlock Text="{Binding Strings.Preview3DLogVerbosePreviewDiagnostics}" TextWrapping="Wrap" />
+                                        </CheckBox>
                                         <CheckBox IsChecked="{Binding Preview3DShowExpandedGpuTimingHud, Mode=TwoWay}"
                                                   IsVisible="{Binding IsPreview3D}"
                                                   ToolTip.Tip="{Binding Strings.Preview3DShowExpandedGpuTimingHudTooltip}">
                                             <TextBlock Text="{Binding Strings.Preview3DShowExpandedGpuTimingHud}" TextWrapping="Wrap" />
                                         </CheckBox>
+                                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" MinWidth="0"
+                                              IsVisible="{Binding IsPreview3D}"
+                                              ToolTip.Tip="{Binding Strings.Preview3DOcclusionDebugModeTooltip}">
+                                            <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                                       Text="{Binding Strings.Preview3DOcclusionDebugMode}" TextWrapping="Wrap" />
+                                            <ComboBox Grid.Column="1" HorizontalAlignment="Left" MinWidth="160"
+                                                      SelectedIndex="{Binding Preview3DOcclusionDebugMode, Mode=TwoWay}">
+                                                <ComboBoxItem Content="{Binding Strings.Preview3DOcclusionDebugOff}" />
+                                                <ComboBoxItem Content="{Binding Strings.Preview3DOcclusionDebugStats}" />
+                                                <ComboBoxItem Content="{Binding Strings.Preview3DOcclusionDebugTintCulled}" />
+                                            </ComboBox>
+                                        </Grid>
                                         <ctrls:FlyoutSection Header="{Binding Strings.Preview3DGodRayDebugSection}" FlyoutMaxWidth="720">
                                             <StackPanel Spacing="8">
                                                 <CheckBox IsChecked="{Binding Preview3DGodRayStabilizeDebug, Mode=TwoWay}"

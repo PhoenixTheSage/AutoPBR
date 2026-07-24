@@ -8,9 +8,14 @@ internal readonly record struct GlGpuDrawReductionSnapshot(
     uint EmptyCommands,
     uint VisibilityFlagCulledCommands,
     uint OverflowCommands,
-    uint MaximumIndexCount)
+    uint MaximumIndexCount,
+    uint OcclusionCulledCommands = 0)
 {
-    public const int DwordCount = 8;
+    /// <summary>
+    /// Diagnostic dwords after the visible-command counter (examined…occlusion).
+    /// Visible count stays at SSBO byte offset 0 for <c>MultiDrawElementsIndirectCount</c>.
+    /// </summary>
+    public const int DwordCount = 9;
 
     public uint AccountedCommands =>
         WrittenCommands +
@@ -18,7 +23,8 @@ internal readonly record struct GlGpuDrawReductionSnapshot(
         DistanceCulledCommands +
         EmptyCommands +
         VisibilityFlagCulledCommands +
-        OverflowCommands;
+        OverflowCommands +
+        OcclusionCulledCommands;
 
     public bool IsConsistent => ExaminedCommands == AccountedCommands;
 
@@ -26,7 +32,7 @@ internal readonly record struct GlGpuDrawReductionSnapshot(
     {
         if (dwords.Length < DwordCount)
         {
-            throw new ArgumentException("GPU draw reduction snapshot requires eight uints.", nameof(dwords));
+            throw new ArgumentException($"GPU draw reduction snapshot requires {DwordCount} uints.", nameof(dwords));
         }
 
         return new GlGpuDrawReductionSnapshot(
@@ -37,12 +43,14 @@ internal readonly record struct GlGpuDrawReductionSnapshot(
             dwords[4],
             dwords[5],
             dwords[6],
-            dwords[7]);
+            dwords[7],
+            dwords[8]);
     }
 
     public string FormatDiagnostic() =>
         $"examined={ExaminedCommands}, written={WrittenCommands}, " +
         $"frustum={FrustumCulledCommands}, distance={DistanceCulledCommands}, " +
         $"empty={EmptyCommands}, flags={VisibilityFlagCulledCommands}, " +
-        $"overflow={OverflowCommands}, maxIndices={MaximumIndexCount}";
+        $"overflow={OverflowCommands}, maxIndices={MaximumIndexCount}, " +
+        $"occlusion={OcclusionCulledCommands}";
 }

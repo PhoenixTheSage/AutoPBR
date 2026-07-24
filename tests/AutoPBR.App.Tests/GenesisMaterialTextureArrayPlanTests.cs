@@ -92,14 +92,13 @@ public sealed class GenesisMaterialTextureArrayPlanTests
     }
 
     [Theory]
-    [InlineData(false, true, false, true, true, "capability gate is off")]
-    [InlineData(true, false, false, true, true, "material draw records are unavailable")]
-    [InlineData(true, true, false, false, true, "no block/entity model")]
-    [InlineData(true, true, false, true, false, "no material slots")]
+    [InlineData(false, true, true, true, "capability gate is off")]
+    [InlineData(true, false, true, true, "material draw records are unavailable")]
+    [InlineData(true, true, false, true, "no block/entity model")]
+    [InlineData(true, true, true, false, "no material slots")]
     public void Eligibility_RejectsFallbackCases(
         bool capabilityEnabled,
         bool materialDrawRecordsUploaded,
-        bool tessellationDisplacementActive,
         bool hasBlockModel,
         bool hasSlots,
         string expectedReason)
@@ -107,7 +106,6 @@ public sealed class GenesisMaterialTextureArrayPlanTests
         var ok = GenesisMaterialTextureArrayEligibility.TryResolve(
             capabilityEnabled,
             materialDrawRecordsUploaded,
-            tessellationDisplacementActive,
             hasBlockModel,
             hasSlots,
             out var reason);
@@ -117,12 +115,11 @@ public sealed class GenesisMaterialTextureArrayPlanTests
     }
 
     [Fact]
-    public void Eligibility_AcceptsCompatibleNonTessellatedBlockModel()
+    public void Eligibility_AcceptsCompatibleBlockModel()
     {
         var ok = GenesisMaterialTextureArrayEligibility.TryResolve(
             capabilityEnabled: true,
             materialDrawRecordsUploaded: true,
-            tessellationDisplacementActive: false,
             hasBlockModel: true,
             hasSlots: true,
             out var reason);
@@ -132,12 +129,12 @@ public sealed class GenesisMaterialTextureArrayPlanTests
     }
 
     [Fact]
-    public void Eligibility_AcceptsTessellatedBlockModel()
+    public void Eligibility_AcceptsWhenTessellationWouldHaveBeenActive()
     {
+        // Tessellation no longer gates material texture arrays (desktop WGL composes both).
         var ok = GenesisMaterialTextureArrayEligibility.TryResolve(
             capabilityEnabled: true,
             materialDrawRecordsUploaded: true,
-            tessellationDisplacementActive: true,
             hasBlockModel: true,
             hasSlots: true,
             out var reason);
@@ -199,7 +196,6 @@ public sealed class GenesisMaterialTextureArrayPlanTests
         Assert.True(GenesisMaterialTextureArrayEligibility.TryResolve(
             capabilityEnabled: true,
             materialDrawRecordsUploaded: true,
-            tessellationDisplacementActive: false,
             hasBlockModel: true,
             hasSlots: slots.Length > 0,
             out var reason), reason);
@@ -224,7 +220,6 @@ public sealed class GenesisMaterialTextureArrayPlanTests
         Assert.True(GenesisMaterialTextureArrayEligibility.TryResolve(
             capabilityEnabled: true,
             materialDrawRecordsUploaded: true,
-            tessellationDisplacementActive: false,
             hasBlockModel: true,
             hasSlots: slots.Length > 0,
             out var reason), reason);
@@ -255,7 +250,6 @@ public sealed class GenesisMaterialTextureArrayPlanTests
         Assert.True(GenesisMaterialTextureArrayEligibility.TryResolve(
             capabilityEnabled: true,
             materialDrawRecordsUploaded: true,
-            tessellationDisplacementActive: effectiveTessellation,
             hasBlockModel: true,
             hasSlots: slots.Length > 0,
             out var reason), reason);

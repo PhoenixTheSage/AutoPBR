@@ -11,6 +11,7 @@ public partial class MainWindowViewModel
 {
     private CancellationTokenSource? _previewGroundTextureCts;
     private PreviewTerrainGrassKit? _previewGroundKit;
+    private PreviewTerrainVegetationKit? _previewVegetationKit;
 
     private void SchedulePreviewGroundTextureRefresh()
     {
@@ -45,13 +46,22 @@ public partial class MainWindowViewModel
             }
 
             var options = BuildConversionOptions(new HashSet<string>(StringComparer.OrdinalIgnoreCase), null);
-            var kit = await PreviewTerrainGrassKitResolver.TryResolveAsync(
-                    diskPack,
-                    diskPack is not null,
-                    MinecraftAssetsDirectory,
-                    options,
-                    cts.Token)
-                .ConfigureAwait(false);
+            var kitTask = PreviewTerrainGrassKitResolver.TryResolveAsync(
+                diskPack,
+                diskPack is not null,
+                MinecraftAssetsDirectory,
+                options,
+                cts.Token);
+            var vegetationTask = PreviewTerrainVegetationKitResolver.TryResolveAsync(
+                diskPack,
+                diskPack is not null,
+                MinecraftAssetsDirectory,
+                options,
+                cts.Token);
+
+            await Task.WhenAll(kitTask, vegetationTask).ConfigureAwait(false);
+            var kit = await kitTask.ConfigureAwait(false);
+            var vegetation = await vegetationTask.ConfigureAwait(false);
 
             if (cts.IsCancellationRequested)
             {
@@ -66,7 +76,9 @@ public partial class MainWindowViewModel
                 }
 
                 _previewGroundKit = kit;
+                _previewVegetationKit = vegetation.HasAny ? vegetation : PreviewTerrainVegetationKit.Empty;
                 EnsurePreviewGrassColormapLoaded();
+                EnsurePreviewFoliageColormapLoaded();
                 PushPreviewGroundKitToGpu();
             });
         }
@@ -96,12 +108,19 @@ public partial class MainWindowViewModel
         }
 
         var kit = _previewGroundKit;
+        var vegetation = _previewVegetationKit is { HasAny: true }
+            ? _previewVegetationKit
+            : PreviewTerrainVegetationKit.Empty;
         var bake = kit is null
-            ? PreviewTerrainGrassBakeSettings.BuiltIn
-            : PreviewTerrainGrassBakeSettings.FromKit(kit);
+            ? PreviewTerrainGrassBakeSettings.BuiltIn with
+            {
+                VegetationIdentity = vegetation.HasAny ? vegetation.Identity : "",
+            }
+            : PreviewTerrainGrassBakeSettings.FromKit(kit, vegetation);
         _glPreview.SetTerrainGrassBakeSettings(bake);
+        _glPreview.SetTerrainVegetationBakePlan(vegetation.HasAny ? vegetation.ToBakePlan() : null);
 
-        var slots = BuildPreviewGroundMaterials(kit);
+        var (slots, cutout) = BuildPreviewGroundMaterials(kit, vegetation);
         if (slots is null || slots.Length == 0)
         {
             if (PreviewBundledGroundMapsLoader.TryLoad(out var bundled))
@@ -115,15 +134,17 @@ public partial class MainWindowViewModel
             return;
         }
 
-        _glPreview.SetGroundMaterials(slots, overlayIsCutout: true);
+        _glPreview.SetGroundMaterials(slots, overlayIsCutout: true, cutout);
     }
 
-    private PreviewMaterial[]? BuildPreviewGroundMaterials(PreviewTerrainGrassKit? kit)
+    private (PreviewMaterial[]? Slots, bool[]? Cutout) BuildPreviewGroundMaterials(
+        PreviewTerrainGrassKit? kit,
+        PreviewTerrainVegetationKit vegetation)
     {
         if (!PreviewBundledGroundMapsLoader.TryLoad(out var bundledFallback) &&
             kit?.Top is null)
         {
-            return null;
+            return (null, null);
         }
 
         PreviewMaterial Fallback()
@@ -139,7 +160,20 @@ public partial class MainWindowViewModel
         }
 
         var grassTop = Fallback();
-        var slots = new PreviewMaterial[PreviewTerrainGrassSlots.MaxCount];
+        var slotCount = Math.Max(
+            PreviewTerrainGrassSlots.MaxCount,
+            vegetation.HasAny ? vegetation.TotalSlotCount : PreviewTerrainGrassSlots.MaxCount);
+        var slots = new PreviewMaterial[slotCount];
+        var cutout = new bool[slotCount];
+        if (vegetation.CutoutBySlot is { Length: > 0 } vegCutout)
+        {
+            Array.Copy(vegCutout, cutout, Math.Min(vegCutout.Length, cutout.Length));
+        }
+        else
+        {
+            cutout[PreviewTerrainGrassSlots.Overlay] = true;
+        }
+
         slots[PreviewTerrainGrassSlots.Top] = grassTop;
 
         if (kit is null || kit.Mode == PreviewTerrainGrassMode.BuiltInSingleTop)
@@ -151,12 +185,13 @@ public partial class MainWindowViewModel
             slots[PreviewTerrainGrassSlots.Stone] = MapOrAlias(kit?.Stone, kit?.StoneArchivePath, grassTop);
             slots[PreviewTerrainGrassSlots.Sand] = MapOrAlias(kit?.Sand, kit?.SandArchivePath, grassTop);
             slots[PreviewTerrainGrassSlots.Gravel] = MapOrAlias(kit?.Gravel, kit?.GravelArchivePath, grassTop);
-            return slots;
+            FillVegetationSlots(slots, vegetation, grassTop);
+            return (slots, cutout);
         }
 
         if (kit.Top is null || kit.Side is null || kit.Dirt is null)
         {
-            return null;
+            return (null, null);
         }
 
         slots[PreviewTerrainGrassSlots.Top] = PreviewMaterialMapper.FromCoreMaps(
@@ -186,7 +221,60 @@ public partial class MainWindowViewModel
         slots[PreviewTerrainGrassSlots.Gravel] =
             MapOrAlias(kit.Gravel, kit.GravelArchivePath, slots[PreviewTerrainGrassSlots.Top]);
 
-        return slots;
+        FillVegetationSlots(slots, vegetation, slots[PreviewTerrainGrassSlots.Top]);
+        return (slots, cutout);
+    }
+
+    private void FillVegetationSlots(
+        PreviewMaterial[] slots,
+        PreviewTerrainVegetationKit vegetation,
+        PreviewMaterial alias)
+    {
+        if (!vegetation.HasAny)
+        {
+            for (var i = PreviewTerrainGrassSlots.VegetationBase; i < slots.Length; i++)
+            {
+                slots[i] ??= alias;
+            }
+
+            return;
+        }
+
+        foreach (var species in vegetation.Species)
+        {
+            if ((uint)species.LogSlot < (uint)slots.Length)
+            {
+                slots[species.LogSlot] = PreviewMaterialMapper.FromCoreMaps(
+                    species.LogMaps,
+                    species.LogArchivePath);
+            }
+
+            if ((uint)species.LeavesOrTopSlot < (uint)slots.Length)
+            {
+                var leafMaps = species.IsCactus
+                    ? species.LeavesOrTopMaps
+                    : ApplyFoliageColormapTintIfNeeded(
+                        species.LeavesOrTopMaps,
+                        species.LeavesOrTopArchivePath);
+                slots[species.LeavesOrTopSlot] = PreviewMaterialMapper.FromCoreMaps(
+                    leafMaps,
+                    species.LeavesOrTopArchivePath);
+            }
+
+            if (species.LogTopSlot is int topSlot &&
+                species.LogTopMaps is not null &&
+                (uint)topSlot < (uint)slots.Length)
+            {
+                slots[topSlot] = PreviewMaterialMapper.FromCoreMaps(
+                    species.LogTopMaps,
+                    species.LogTopArchivePath);
+            }
+        }
+
+        for (var i = 0; i < slots.Length; i++)
+        {
+            slots[i] ??= alias;
+        }
     }
 
     private static PreviewMaterial MapOrAlias(

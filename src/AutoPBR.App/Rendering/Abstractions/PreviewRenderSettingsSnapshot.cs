@@ -24,8 +24,17 @@ public readonly struct PreviewRenderSettingsSnapshot
     public float SpriteThickness { get; init; }
     public bool ItemFlatSpritePreview { get; init; }
     public bool ShowBackgroundGrid { get; init; }
+    public float GridColorR { get; init; }
+    public float GridColorG { get; init; }
+    public float GridColorB { get; init; }
+    public float GridColorA { get; init; }
     public bool ShowGroundMesh { get; init; }
     public int ChunkViewDistance { get; init; }
+    public int TerrainWorldSeed { get; init; }
+    public float TerrainBiomeSize { get; init; }
+    public float TerrainAmplification { get; init; }
+    public float TerrainErosionStrength { get; init; }
+    public float TerrainContinentalness { get; init; }
     public bool ShowCornerAxes { get; init; }
     public bool DrawPreviewSubject { get; init; }
     public bool EnableSss { get; init; }
@@ -103,6 +112,7 @@ public readonly struct PreviewRenderSettingsSnapshot
     public bool LogPreviewTaaDiagnostics { get; init; }
     public bool LogGpuPassTimings { get; init; }
     public bool ShowExpandedGpuTimingHud { get; init; }
+    public int OcclusionDebugMode { get; init; }
     public bool EnablePreviewTaa { get; init; }
     public int PreviewTaaMode { get; init; }
     public float PreviewTaaTemporalScale { get; init; }
@@ -142,8 +152,17 @@ public readonly struct PreviewRenderSettingsSnapshot
         SpriteThickness = s.SpriteThickness,
         ItemFlatSpritePreview = s.ItemFlatSpritePreview,
         ShowBackgroundGrid = s.ShowBackgroundGrid,
+        GridColorR = s.GridColorR,
+        GridColorG = s.GridColorG,
+        GridColorB = s.GridColorB,
+        GridColorA = s.GridColorA,
         ShowGroundMesh = s.ShowGroundMesh,
         ChunkViewDistance = s.ChunkViewDistance,
+        TerrainWorldSeed = s.TerrainWorldSeed,
+        TerrainBiomeSize = s.TerrainBiomeSize,
+        TerrainAmplification = s.TerrainAmplification,
+        TerrainErosionStrength = s.TerrainErosionStrength,
+        TerrainContinentalness = s.TerrainContinentalness,
         ShowCornerAxes = s.ShowCornerAxes,
         DrawPreviewSubject = s.DrawPreviewSubject,
         EnableSss = s.EnableSss,
@@ -221,6 +240,7 @@ public readonly struct PreviewRenderSettingsSnapshot
         LogPreviewTaaDiagnostics = s.LogPreviewTaaDiagnostics,
         LogGpuPassTimings = s.LogGpuPassTimings,
         ShowExpandedGpuTimingHud = s.ShowExpandedGpuTimingHud,
+        OcclusionDebugMode = Math.Clamp(s.OcclusionDebugMode, 0, 2),
         EnablePreviewTaa = s.EnablePreviewTaa,
         PreviewTaaMode = s.PreviewTaaMode,
         PreviewTaaTemporalScale = s.PreviewTaaTemporalScale,

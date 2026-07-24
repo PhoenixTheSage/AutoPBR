@@ -12,11 +12,23 @@
   
     <Application.Styles>
         <FluentTheme />
+        <StyleInclude Source="avares://Avalonia.Controls.ColorPicker/Themes/Fluent/Fluent.xaml" />
         <Style Selector="NumericUpDown.overlay-slider-box">
             <Setter Property="Cursor" Value="Hand" />
         </Style>
         <Style Selector="NumericUpDown.overlay-slider-box:pointerover">
             <Setter Property="BorderBrush" Value="{DynamicResource SystemControlHighlightBaseMediumBrush}" />
+        </Style>
+        <!-- Match Fluent CheckBox indicator (~20×20) for compact color swatches. -->
+        <Style Selector="ColorPicker.checkbox-swatch">
+            <Setter Property="Width" Value="20" />
+            <Setter Property="Height" Value="20" />
+            <Setter Property="MinWidth" Value="20" />
+            <Setter Property="MinHeight" Value="20" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="CornerRadius" Value="3" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Cursor" Value="Hand" />
         </Style>
         <Style Selector="Button.flyout-expander-header">
             <Setter Property="Background" Value="Transparent" />

@@ -1390,11 +1390,32 @@
   <data name="Preview3DLogGpuPassTimingsTooltip" xml:space="preserve">
     <value>Write periodic P8 GPU pass timings to the log. Off by default to avoid flooding the log pane.</value>
   </data>
+  <data name="Preview3DLogVerbosePreviewDiagnostics" xml:space="preserve">
+    <value>Log verbose preview diagnostics</value>
+  </data>
+  <data name="Preview3DLogVerbosePreviewDiagnosticsTooltip" xml:space="preserve">
+    <value>Write periodic frame fingerprint, volumetric timing, and TAA diagnostic lines to the log. Off by default to avoid flooding the log pane.</value>
+  </data>
   <data name="Preview3DShowExpandedGpuTimingHud" xml:space="preserve">
-    <value>Expanded GPU timing overlay</value>
+    <value>Expanded timing overlays</value>
   </data>
   <data name="Preview3DShowExpandedGpuTimingHudTooltip" xml:space="preserve">
-    <value>Show per-pass GPU timings in the FPS overlay instead of total GPU milliseconds only.</value>
+    <value>Show per-pass GPU and CPU timings in separate FPS overlays instead of totals only.</value>
+  </data>
+  <data name="Preview3DOcclusionDebugMode" xml:space="preserve">
+    <value>Occlusion debug</value>
+  </data>
+  <data name="Preview3DOcclusionDebugModeTooltip" xml:space="preserve">
+    <value>Off: no occlusion counter readback. Stats / Tint: sample frustum/distance/occlusion cull counts about every 2 seconds (HUD + log). Does not force the Hi-Z prepass — voxel DDA stays primary when its atlas is ready.</value>
+  </data>
+  <data name="Preview3DOcclusionDebugOff" xml:space="preserve">
+    <value>Off</value>
+  </data>
+  <data name="Preview3DOcclusionDebugStats" xml:space="preserve">
+    <value>Stats</value>
+  </data>
+  <data name="Preview3DOcclusionDebugTintCulled" xml:space="preserve">
+    <value>Stats (verbose)</value>
   </data>
   <data name="Preview3DHorizonFogStrength" xml:space="preserve">
     <value>Horizon fog</value>
@@ -1685,10 +1706,13 @@
     <value>Caps how far one parallax trace may travel in UV space. Raise for deeper relief; lower to reduce grazing-angle stretching.</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacement" xml:space="preserve">
-    <value>Tessellated protrusion</value>
+    <value>Tessellation</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacementTooltip" xml:space="preserve">
-    <value>Use desktop OpenGL tessellation to add real outward geometry from high height-map regions. POM still handles recessed detail.</value>
+    <value>Desktop OpenGL only: subdivide subject triangles and push bright height-map regions outward as real geometry. Independent of POM (which still handles recessed detail). Off by default.</value>
+  </data>
+  <data name="Preview3DTessellationSection" xml:space="preserve">
+    <value>Tessellation</value>
   </data>
   <data name="Preview3DTessellationLevel" xml:space="preserve">
     <value>Tessellation level</value>
@@ -1738,6 +1762,9 @@
   <data name="Preview3DShowGridTooltip" xml:space="preserve">
     <value>Show an XZ reference grid under the object in 3D preview.</value>
   </data>
+  <data name="Preview3DGridColorTooltip" xml:space="preserve">
+    <value>Color of the ground reference grid. Opens the standard color picker (spectrum, palette, and sliders).</value>
+  </data>
   <data name="Preview3DShowGroundMesh" xml:space="preserve">
     <value>Ground mesh (3D)</value>
   </data>
@@ -1749,6 +1776,42 @@
   </data>
   <data name="Preview3DChunkViewDistanceTooltip" xml:space="preserve">
     <value>Hard radius (in 16-block chunks) of full-detail terrain around the camera. A merged LOD ring and fog extend beyond this to hide the unload edge.</value>
+  </data>
+  <data name="Preview3DWorldSeed" xml:space="preserve">
+    <value>World seed</value>
+  </data>
+  <data name="Preview3DWorldSeedTooltip" xml:space="preserve">
+    <value>Deterministic seed for biome climate and height. Changing it clears streamed chunks and regenerates the world; the flat preview pad under the subject stays level.</value>
+  </data>
+  <data name="Preview3DWorldSeedRandomize" xml:space="preserve">
+    <value>Randomize</value>
+  </data>
+  <data name="Preview3DWorldSeedRandomizeTooltip" xml:space="preserve">
+    <value>Pick a new random world seed in the valid range (0–2147483647).</value>
+  </data>
+  <data name="Preview3DTerrainBiomeSize" xml:space="preserve">
+    <value>Biome size</value>
+  </data>
+  <data name="Preview3DTerrainBiomeSizeTooltip" xml:space="preserve">
+    <value>Scales climate region size. Higher values produce larger biome patches; lower values create more fragmented biomes.</value>
+  </data>
+  <data name="Preview3DTerrainAmplification" xml:space="preserve">
+    <value>Amplification</value>
+  </data>
+  <data name="Preview3DTerrainAmplificationTooltip" xml:space="preserve">
+    <value>Multiplies terrain height for all biomes. Higher values create taller mountains and deeper valleys.</value>
+  </data>
+  <data name="Preview3DTerrainErosionStrength" xml:space="preserve">
+    <value>Erosion</value>
+  </data>
+  <data name="Preview3DTerrainErosionStrengthTooltip" xml:space="preserve">
+    <value>Strength of analytical mountain gully erosion. 0 keeps smoother ridges; higher values carve deeper branching gullies.</value>
+  </data>
+  <data name="Preview3DTerrainContinentalness" xml:space="preserve">
+    <value>Continentalness</value>
+  </data>
+  <data name="Preview3DTerrainContinentalnessTooltip" xml:space="preserve">
+    <value>Biases climate toward coasts (lower) or inland / mountain mass (higher).</value>
   </data>
   <data name="Preview3DAutoRotate" xml:space="preserve">
     <value>3D auto-rotate</value>

@@ -55,7 +55,12 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private PreviewDrawBatch[] _groundChunkBatches = [];
     private readonly Dictionary<TerrainChunkKey, TerrainGpuChunk> _terrainGpuChunks = new();
     private TerrainChunkStreamer? _terrainStreamer;
-    private bool _terrainStreamingNeedsFrames;
+    /// <summary>
+    /// When true, <see cref="NeedsContinuousRendering"/> keeps requesting frames so chunk uploads can catch up.
+    /// Starts true so selecting a subject before the first idle catch-up does not freeze an empty terrain.
+    /// Reads/writes must happen under <see cref="_sync"/>.
+    /// </summary>
+    private bool _terrainStreamingNeedsFrames = true;
     private float _terrainEnvFloorY = PreviewStageConstants.GroundPlaneWorldY;
     private float _terrainEnvCeilingY = PreviewStageConstants.GroundPlaneWorldY + 0.05f;
     private GlTexture2D? _grassGroundAlbedo;
@@ -69,6 +74,7 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private PreviewMaterial? _grassGroundMaterial;
     private PreviewMaterial[]? _grassGroundSlotMaterials;
     private bool _grassGroundOverlayCutout = true;
+    private bool[]? _grassGroundSlotCutout;
     private bool _grassGroundMaterialDirty = true;
     private bool _grassGroundHasNormal;
     private bool _grassGroundHasSpecular;
@@ -76,6 +82,10 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private GroundGpuSlot[] _grassGroundSlots = [];
     private PreviewTerrainGrassBakeSettings _terrainGrassBakeSettings = PreviewTerrainGrassBakeSettings.BuiltIn;
     private bool _terrainGrassBakeSettingsDirty;
+    private PreviewTerrainVegetationBakePlan? _terrainVegetationBakePlan;
+    private bool _terrainVegetationBakePlanDirty;
+    private PreviewTerrainWorldGenSettings _terrainWorldGenSettings = PreviewTerrainWorldGenSettings.Default;
+    private bool _terrainWorldGenSettingsDirty;
     private GlLineShaderProgram? _lineProgram;
     private uint _gridVao;
     private uint _gridVbo;
@@ -85,6 +95,7 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private GlNativeOverlayRenderer? _nativeOverlayRenderer;
     private PreviewNativeWglOverlayBitmap? _nativeOverlayDebug;
     private PreviewNativeWglOverlayBitmap? _nativeOverlayFps;
+    private PreviewNativeWglOverlayBitmap? _nativeOverlayCpu;
     private int _nativeOverlayMarginPixels = 8;
     private bool _nativeOverlayShaderErrorLogged;
     /// <summary>Bump when overlay shader source changes so hot sessions rebuild the program.</summary>
@@ -149,8 +160,22 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private GlIndirectDrawCommandBuffer? _genesisIndirectDrawCommands;
     private GlShaderProgram? _gpuDrawCommandCompactionProgram;
     private GlGpuDrawCommandCompactor? _gpuDrawCommandCompactor;
+    private GlShaderProgram? _terrainShadowCullProgram;
+    private GlTerrainShadowCuller? _terrainShadowCuller;
+    private bool _terrainShadowCullCompileDisabled;
+    private bool _loggedTerrainShadowGpuCull;
+    private bool _frameSubjectGpuUploadsReady;
+    private bool _frameSubjectUseMaterialDrawRecords;
+    private bool _frameSubjectUseIndirectDrawCommands;
+    private bool _frameSubjectUseMaterialTextureArrays;
+    private bool _terrainShadowWorldAabbValid;
+    private Vector3 _terrainShadowWorldAabbMin;
+    private Vector3 _terrainShadowWorldAabbMax;
     private GlGpuTimerProfiler? _gpuTimerProfiler;
+    private GlCpuTimerProfiler? _cpuTimerProfiler;
     private readonly GlGpuTimingWindow _gpuTimingWindow = new();
+    private readonly GlGpuTimingHudLinger _gpuTimingHudLinger = new();
+    private readonly GlGpuTimingHudLinger _cpuTimingHudLinger = new();
     private uint _entityBoneUbo;
     private uint _entityPrevBoneUbo;
     private uint _entityNormalBoneUbo;
@@ -228,6 +253,7 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private int _lastMainPassAppliedSettingsRevision = -1;
     private string? _entityBindPosePrepDiagKey;
     private string? _latestGpuTimingHudText;
+    private string? _latestCpuTimingHudText;
     private double _lastGpuTimingDiagnosticSeconds = double.NegativeInfinity;
 
     /// <summary>Orbit camera is re-synced from the scene only when this changes (block vs item), so texture swaps keep user framing.</summary>
@@ -282,6 +308,17 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
             }
         }
     }
+
+    public string? LatestCpuTimingHudText
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _latestCpuTimingHudText;
+            }
+        }
+    }
     public string? LastErrorMessage => _lastError;
 
     public bool NeedsContinuousRendering
@@ -297,9 +334,9 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
                        ShouldContinuouslyAccumulatePreviewTaa(_settings) ||
                        (_settings.EnableEntityAnimation && _blockModelSubject?.EnableRenderTimeAnimation == true) ||
                        (_settings.EnableVolumetricClouds && !_settings.CloudFreezeWind) ||
-                       // Idle stage with ground still needs frames after bootstrap (no subject animation).
-                       (_settings.ShowGroundMesh && _scene is not null && !_settings.DrawPreviewSubject) ||
-                       (_settings.ShowGroundMesh && _terrainStreamingNeedsFrames) ||
+                       // Keep pumping while ground is shown and either idle (no subject) or terrain still catching up.
+                       (_settings.ShowGroundMesh && _scene is not null &&
+                        (!_settings.DrawPreviewSubject || _terrainStreamingNeedsFrames)) ||
                        (_debugFlyRmbHeld && _flyEngaged) ||
                        _userCameraDragging;
             }
@@ -401,7 +438,8 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     {
         lock (_sync)
         {
-            var prevKind = _scene?.SceneKind;
+            var prev = _scene;
+            var prevKind = prev?.SceneKind;
             var nextKind = scene.SceneKind;
             var orbitKey = ResolveOrbitSyncKey(scene, _blockModelSubject);
             var reseedOrbit = _orbitSyncedKey is null || !string.Equals(_orbitSyncedKey, orbitKey, StringComparison.Ordinal);
@@ -412,6 +450,7 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
             }
 
             var kindChanged = prevKind != nextKind;
+            var meshContentChanged = kindChanged || SceneMeshContentChanged(prev, scene);
             _scene = scene;
             if (kindChanged || reseedOrbit)
             {
@@ -422,12 +461,39 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
             {
                 _meshDirty = true;
             }
-            else if (nextKind != PreviewSceneKind.ItemPlane)
+            else if (nextKind != PreviewSceneKind.ItemPlane && meshContentChanged)
             {
                 // Block/entity scenes carry authoritative mesh refs on the scene object.
                 _meshDirty = true;
             }
         }
+    }
+
+    private static bool SceneMeshContentChanged(IRenderPreviewScene? prev, IRenderPreviewScene next)
+    {
+        if (prev is null)
+        {
+            return true;
+        }
+
+        if (prev.Meshes.Count != next.Meshes.Count)
+        {
+            return true;
+        }
+
+        for (var i = 0; i < next.Meshes.Count; i++)
+        {
+            var a = prev.Meshes[i];
+            var b = next.Meshes[i];
+            if (!ReferenceEquals(a.InterleavedVertices, b.InterleavedVertices) ||
+                !ReferenceEquals(a.Indices, b.Indices) ||
+                !string.Equals(a.Name, b.Name, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string ResolveOrbitSyncKey(IRenderPreviewScene scene, PreviewModelSubject? blockModel)
@@ -472,13 +538,17 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
         {
             _grassGroundMaterial = material;
             _grassGroundSlotMaterials = material is null ? null : [material];
+            _grassGroundSlotCutout = null;
             _grassGroundOverlayCutout = true;
             _grassGroundMaterialDirty = true;
             InvalidatePreviewTaaHistory();
         }
     }
 
-    public void SetGroundMaterials(PreviewMaterial[]? slotMaterials, bool overlayIsCutout = true)
+    public void SetGroundMaterials(
+        PreviewMaterial[]? slotMaterials,
+        bool overlayIsCutout = true,
+        bool[]? cutoutBySlot = null)
     {
         lock (_sync)
         {
@@ -486,11 +556,13 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
             {
                 _grassGroundMaterial = null;
                 _grassGroundSlotMaterials = null;
+                _grassGroundSlotCutout = null;
             }
             else
             {
                 _grassGroundSlotMaterials = slotMaterials;
                 _grassGroundMaterial = slotMaterials[0];
+                _grassGroundSlotCutout = cutoutBySlot;
             }
 
             _grassGroundOverlayCutout = overlayIsCutout;
@@ -510,6 +582,24 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
 
             _terrainGrassBakeSettings = settings;
             _terrainGrassBakeSettingsDirty = true;
+            InvalidatePreviewTaaHistory();
+        }
+    }
+
+    public void SetTerrainVegetationBakePlan(PreviewTerrainVegetationBakePlan? plan)
+    {
+        lock (_sync)
+        {
+            var next = plan is { HasAny: true } ? plan : PreviewTerrainVegetationBakePlan.Empty;
+            var prevId = _terrainVegetationBakePlan?.Identity ?? PreviewTerrainVegetationBakePlan.Empty.Identity;
+            if (string.Equals(prevId, next.Identity, StringComparison.Ordinal))
+            {
+                _terrainVegetationBakePlan = next;
+                return;
+            }
+
+            _terrainVegetationBakePlan = next;
+            _terrainVegetationBakePlanDirty = true;
             InvalidatePreviewTaaHistory();
         }
     }
@@ -951,6 +1041,19 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
             {
                 // SetRenderSettings runs on the UI thread; GenTexture requires a current GL context.
                 _shadowTargetsDirty = true;
+            }
+
+            var nextWorldGen = new PreviewTerrainWorldGenSettings(
+                _settings.TerrainWorldSeed,
+                _settings.TerrainBiomeSize,
+                _settings.TerrainAmplification,
+                _settings.TerrainErosionStrength,
+                _settings.TerrainContinentalness).Clamped();
+            if (!nextWorldGen.Equals(_terrainWorldGenSettings))
+            {
+                _terrainWorldGenSettings = nextWorldGen;
+                _terrainWorldGenSettingsDirty = true;
+                InvalidatePreviewTaaHistory();
             }
         }
     }

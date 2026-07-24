@@ -1651,10 +1651,13 @@
     <value>कैप्स कि एक लंबन निशान यूवी अंतरिक्ष में कितनी दूर तक यात्रा कर सकता है। गहरी राहत के लिए उठाएँ; चराई-कोण के खिंचाव को कम करने के लिए नीचे।</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacement" xml:space="preserve">
-    <value>टेस्सेलेटेड फलाव</value>
+    <value>टेस्सेलेशन</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacementTooltip" xml:space="preserve">
     <value>उच्च ऊंचाई-मानचित्र क्षेत्रों से वास्तविक बाहरी ज्यामिति जोड़ने के लिए डेस्कटॉप ओपनजीएल टेस्सेलेशन का उपयोग करें। POM अभी भी छुपे हुए विवरण को संभालता है।</value>
+  </data>
+  <data name="Preview3DTessellationSection" xml:space="preserve">
+    <value>टेस्सेलेशन</value>
   </data>
   <data name="Preview3DTessellationLevel" xml:space="preserve">
     <value>टेस्सेलेशन स्तर</value>

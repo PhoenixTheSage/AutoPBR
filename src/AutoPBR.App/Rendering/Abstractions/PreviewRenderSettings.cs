@@ -52,6 +52,12 @@ public sealed class PreviewRenderSettings
     /// <summary>Draw a subtle XZ grid under the preview object in 3D mode.</summary>
     public bool ShowBackgroundGrid { get; init; } = true;
 
+    /// <summary>Ground-grid tint (linear 0–1 RGBA applied as a shader color multiply).</summary>
+    public float GridColorR { get; init; } = 0.949f;
+    public float GridColorG { get; init; } = 0.949f;
+    public float GridColorB { get; init; } = 0.973f;
+    public float GridColorA { get; init; } = 0.910f;
+
     /// <summary>Draw the textured grass ground plane under the preview object in 3D mode.</summary>
     public bool ShowGroundMesh { get; init; } = true;
 
@@ -59,6 +65,21 @@ public sealed class PreviewRenderSettings
     /// Hard Full-detail Chebyshev radius in chunks for streamed terrain (LOD + fog extend beyond).
     /// </summary>
     public int ChunkViewDistance { get; init; } = 8;
+
+    /// <summary>Deterministic world seed for streamed terrain (pad under subject stays flat).</summary>
+    public int TerrainWorldSeed { get; init; } = unchecked((int)0x41504252);
+
+    /// <summary>Biome region scale (1 = default; larger = bigger biomes).</summary>
+    public float TerrainBiomeSize { get; init; } = 1f;
+
+    /// <summary>Height amplification multiplier for all biomes.</summary>
+    public float TerrainAmplification { get; init; } = 1f;
+
+    /// <summary>Mountain analytical erosion strength (1 = default).</summary>
+    public float TerrainErosionStrength { get; init; } = 1f;
+
+    /// <summary>Continental climate stretch (higher = more inland/mountain mass).</summary>
+    public float TerrainContinentalness { get; init; } = 1f;
 
     /// <summary>Draw RGB world-axis lines in a corner (matches block Y-rotation).</summary>
     public bool ShowCornerAxes { get; init; } = true;
@@ -90,7 +111,7 @@ public sealed class PreviewRenderSettings
     public float ParallaxMaxUvShift { get; init; } = 0.45f;
 
     /// <summary>Genesis high-end preview: tessellate triangles and displace high height-map regions outward.</summary>
-    public bool EnableTessellationDisplacement { get; init; } = true;
+    public bool EnableTessellationDisplacement { get; init; }
 
     /// <summary>Genesis tessellation: fixed triangle tessellation level for the preview path.</summary>
     public float TessellationLevel { get; init; } = 8f;
@@ -158,7 +179,7 @@ public sealed class PreviewRenderSettings
     /// <summary>Game-hours advanced per real second when <see cref="AnimateTimeOfDay"/> is on.</summary>
     public float TimeOfDaySpeed { get; init; } = 1f;
 
-    /// <summary>Debug: downsample and hash the default framebuffer after the preview frame (diagnostics only).</summary>
+    /// <summary>Debug tab: downsample and hash the default framebuffer after the preview frame (off by default; expensive readback).</summary>
     public bool CapturePreviewFingerprint { get; init; }
 
     /// <summary>Genesis: SSS contribution scalar (multiplier on wrap + transmission lobes).</summary>
@@ -280,10 +301,10 @@ public sealed class PreviewRenderSettings
     /// <summary>Debug: hold wind advection at time zero so cloud shapes stay fixed while tuning.</summary>
     public bool CloudFreezeWind { get; init; }
 
-    /// <summary>When true, log froxel inject/integrate timings that exceed the documented budget.</summary>
+    /// <summary>When true, log froxel inject/integrate timings that exceed the documented budget (Debug tab; off by default).</summary>
     public bool LogVolumetricTiming { get; init; }
 
-    /// <summary>When true, emit periodic TXAA resolve/readback diagnostics (Debug tab only; expensive on the render thread).</summary>
+    /// <summary>When true, emit periodic TXAA resolve/readback diagnostics (Debug tab; off by default; expensive on the render thread).</summary>
     public bool LogPreviewTaaDiagnostics { get; init; }
 
     /// <summary>When true, emit periodic P8 GPU pass timings to the preview log (Debug tab; off by default).</summary>
@@ -291,6 +312,12 @@ public sealed class PreviewRenderSettings
 
     /// <summary>When true, FPS overlay shows per-pass GPU timings; otherwise only total GPU ms.</summary>
     public bool ShowExpandedGpuTimingHud { get; init; }
+
+    /// <summary>
+    /// Occlusion culling debug: 0 = off, 1 = stats (HUD/log counter readback), 2 = tint/keep Hi-Z for inspection.
+    /// See <see cref="PreviewOcclusionDebugMode"/>.
+    /// </summary>
+    public int OcclusionDebugMode { get; init; }
 
     /// <summary>Final full-res TAA on the composited preview frame (uses shared temporal reprojection).</summary>
     public bool EnablePreviewTaa { get; init; } = true;

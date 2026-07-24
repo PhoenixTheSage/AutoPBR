@@ -77,11 +77,22 @@ internal ref struct GlRenderFrame
     public Matrix4x4 Proj;
     public Matrix4x4 UnjitteredProj;
     public Matrix4x4 View;
+    /// <summary>Unjittered camera <c>proj * view</c> used for CPU/GPU frustum culling.</summary>
+    public Matrix4x4 CameraViewProj;
+    /// <summary>
+    /// Rasterization <c>proj * view</c> matching the shaded pass (includes TAA jitter when active).
+    /// Depth prepass + Hi-Z occlusion must use this so early-Z and occlusion tests agree with draws.
+    /// </summary>
+    public Matrix4x4 RasterViewProj;
+    /// <summary>Six world-space frustum planes from <see cref="CameraViewProj"/> (left..far).</summary>
+    public PreviewFrustumPlaneBuffer CameraFrustumPlanes;
+    public bool CameraFrustumValid;
     public Vector2 PreviewTaaJitterNdc;
     public float NearPlane;
     public float FarPlane;
     public Vector3 LightDir;
     public bool GodRayCaptureActive;
+    public bool HiZReady;
     public double LastVolumeInjectMs;
     public double LastVolumeIntegrateMs;
 }

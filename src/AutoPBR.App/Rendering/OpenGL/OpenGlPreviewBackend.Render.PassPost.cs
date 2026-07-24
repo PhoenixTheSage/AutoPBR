@@ -25,13 +25,10 @@ public sealed partial class OpenGlPreviewBackend
         {
             try
             {
-                using (BeginGpuTimerScope(GlGpuTimerScope.CloudTrace))
-                {
-                    cloudRenderedOffscreen = DrawVolumetricClouds(
-                        ref frame,
-                        deferComposite: true,
-                        forceTemporal: cloudShaderTemporal ? null : false);
-                }
+                cloudRenderedOffscreen = DrawVolumetricClouds(
+                    ref frame,
+                    deferComposite: true,
+                    forceTemporal: cloudShaderTemporal ? null : false);
             }
             catch (Exception ex)
             {
@@ -43,17 +40,14 @@ public sealed partial class OpenGlPreviewBackend
 
         if (godRaysActive)
         {
-            using (BeginGpuTimerScope(GlGpuTimerScope.GodRays))
-            {
-                DrawGodRayComposite(ref frame);
-            }
+            DrawGodRayComposite(ref frame);
         }
 
         if (cloudsActive && cloudRenderedOffscreen)
         {
             try
             {
-                using (BeginGpuTimerScope(GlGpuTimerScope.CloudComposite))
+                using (BeginPassTimerScope(GlGpuTimerScope.CloudUpsample))
                 {
                     CompositeCloudRenderTargetToDefault(ref frame);
                 }
@@ -74,7 +68,7 @@ public sealed partial class OpenGlPreviewBackend
 
         CompositePendingGodRays(ref frame);
 
-        using (BeginGpuTimerScope(GlGpuTimerScope.Post))
+        using (BeginPassTimerScope(GlGpuTimerScope.Post))
         {
             DrawSunProjectionDebug(ref frame);
 
@@ -82,10 +76,14 @@ public sealed partial class OpenGlPreviewBackend
             {
                 DrawCornerAxes(frame.Gl, frame.VpX, frame.VpY, frame.Vw, frame.Vh, frame.Proj, frame.View);
             }
-
-            DrawPreviewTaa(ref frame);
-            MaybeLogPreviewFingerprint(ref frame);
         }
+
+        using (BeginPassTimerScope(GlGpuTimerScope.Taa))
+        {
+            DrawPreviewTaa(ref frame);
+        }
+
+        MaybeLogPreviewFingerprint(ref frame);
     }
 
     private void MaybeLogPreviewFingerprint(ref GlRenderFrame frame)

@@ -57,6 +57,8 @@ public partial class MainWindowViewModel
     public ObservableCollection<ExploreListRow> ExploreDisplayItems { get; } = new();
 
     private int _exploreDisplayRebuildQueued;
+    private CancellationTokenSource? _exploreFilterDebounceCts;
+    private const int ExploreFilterDebounceMs = 200;
 
     private IReadOnlyList<ExploreTagFilterOption>? _exploreTagFilterOptions;
 
@@ -156,13 +158,58 @@ public partial class MainWindowViewModel
     partial void OnExploreFilterChanged(string value)
     {
         _ = value;
-        _exploreController.ApplyExploreFilter(ExploreFilter, string.IsNullOrEmpty(ExploreTagFilterId) ? null : ExploreTagFilterId);
+        ScheduleDebouncedExploreFilterApply();
     }
 
     partial void OnExploreTagFilterIdChanged(string value)
     {
+        // Tag dropdown is a discrete selection — apply immediately (still cancels any pending text debounce).
         _ = value;
-        _exploreController.ApplyExploreFilter(ExploreFilter, string.IsNullOrEmpty(value) ? null : value);
+        ApplyExploreFilterNow();
+    }
+
+    private void ScheduleDebouncedExploreFilterApply()
+    {
+        _exploreFilterDebounceCts?.Cancel();
+        _exploreFilterDebounceCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _exploreFilterDebounceCts = cts;
+        _ = RunDebouncedExploreFilterApplyAsync(cts);
+    }
+
+    private async Task RunDebouncedExploreFilterApplyAsync(CancellationTokenSource debounceCts)
+    {
+        try
+        {
+            await Task.Delay(ExploreFilterDebounceMs, debounceCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (!ReferenceEquals(_exploreFilterDebounceCts, debounceCts))
+        {
+            return;
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (!ReferenceEquals(_exploreFilterDebounceCts, debounceCts))
+            {
+                return;
+            }
+
+            ApplyExploreFilterNow();
+        });
+    }
+
+    private void ApplyExploreFilterNow()
+    {
+        _exploreFilterDebounceCts?.Cancel();
+        _exploreFilterDebounceCts?.Dispose();
+        _exploreFilterDebounceCts = null;
+        _exploreController.ApplyExploreFilter(ExploreFilter, string.IsNullOrEmpty(ExploreTagFilterId) ? null : ExploreTagFilterId);
     }
     private void ApplyTextureTypeOverridesToExplore()
     {
@@ -177,6 +224,9 @@ public partial class MainWindowViewModel
     }
     private void ClearScannedArchive()
     {
+        _exploreFilterDebounceCts?.Cancel();
+        _exploreFilterDebounceCts?.Dispose();
+        _exploreFilterDebounceCts = null;
         _scanCts?.Cancel();
         _scanCts?.Dispose();
         _scanCts = null;

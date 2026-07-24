@@ -798,7 +798,13 @@ public sealed partial class OpenGlPreviewBackend
         var quality = PreviewVolumetricQuality.Resolve(frame.Settings.VolumetricQuality);
         var froxelW = quality.ResolveFroxelWidth(frame.Vw);
         var froxelH = quality.ResolveFroxelHeight(frame.Vh);
-        if (!InjectVolumeFroxels(ref frame, halfExtent, froxelW, froxelH, quality.FroxelSlices))
+        var injectOk = false;
+        using (BeginPassTimerScope(GlGpuTimerScope.GodRayInject))
+        {
+            injectOk = InjectVolumeFroxels(ref frame, halfExtent, froxelW, froxelH, quality.FroxelSlices);
+        }
+
+        if (!injectOk)
         {
             return false;
         }
@@ -810,7 +816,13 @@ public sealed partial class OpenGlPreviewBackend
             _volumeJitter = (_volumeJitter + 0.0618f) % 1f;
         }
 
-        if (!TryIntegrateVolumeGodRaysToHalfRes(ref frame, halfExtent, marchJitter))
+        var integrateOk = false;
+        using (BeginPassTimerScope(GlGpuTimerScope.GodRayIntegrate))
+        {
+            integrateOk = TryIntegrateVolumeGodRaysToHalfRes(ref frame, halfExtent, marchJitter);
+        }
+
+        if (!integrateOk)
         {
             return false;
         }

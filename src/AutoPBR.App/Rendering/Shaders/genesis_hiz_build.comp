@@ -1,0 +1,42 @@
+#version 430 core
+
+// Build a max-depth Hi-Z pyramid for occlusion culling (standard depth 0=near .. 1=far).
+// Mode 0: copy sampler2D depth to R32F mip 0.
+// Mode 1: reduce previous R32F mip to next mip with 2x2 (clamped) max.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+uniform sampler2D uDepth;
+layout(r32f, binding = 0) readonly uniform image2D uSrcMip;
+layout(r32f, binding = 1) writeonly uniform image2D uDstMip;
+
+uniform int uMode;
+uniform ivec2 uDstSize;
+
+void main()
+{
+    ivec2 dst = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(dst, uDstSize)))
+    {
+        return;
+    }
+
+    float maxDepth;
+    if (uMode == 0)
+    {
+        maxDepth = texelFetch(uDepth, dst, 0).r;
+    }
+    else
+    {
+        ivec2 srcBase = dst * 2;
+        ivec2 srcSize = imageSize(uSrcMip);
+        ivec2 maxCoord = srcSize - ivec2(1);
+        float d00 = imageLoad(uSrcMip, clamp(srcBase, ivec2(0), maxCoord)).r;
+        float d10 = imageLoad(uSrcMip, clamp(srcBase + ivec2(1, 0), ivec2(0), maxCoord)).r;
+        float d01 = imageLoad(uSrcMip, clamp(srcBase + ivec2(0, 1), ivec2(0), maxCoord)).r;
+        float d11 = imageLoad(uSrcMip, clamp(srcBase + ivec2(1, 1), ivec2(0), maxCoord)).r;
+        maxDepth = max(max(d00, d10), max(d01, d11));
+    }
+
+    imageStore(uDstMip, dst, vec4(maxDepth, 0.0, 0.0, 0.0));
+}

@@ -1,4 +1,5 @@
 using AutoPBR.App.Rendering.OpenGL;
+using AutoPBR.App.Rendering.Scene;
 using AutoPBR.Preview;
 
 using Avalonia.OpenGL;
@@ -75,6 +76,7 @@ public sealed class PreviewLiveGlSmokeTests
                     caps.CanUseGpuCommandCompaction,
                     caps.CanUseGpuBatchCulling,
                     caps.CanUseGpuCompactedDrawSubmission,
+                    caps.CanUseHierarchicalZOcclusion,
                     caps.CanUseGpuReductionDiagnostics,
                     caps.CanUseImageHistogram,
                     caps.CanUseMaterialTextureArrays,
@@ -94,6 +96,7 @@ public sealed class PreviewLiveGlSmokeTests
         Assert.Contains("gpuCommandCompaction=", report.CapabilityDiagnostic, StringComparison.Ordinal);
         Assert.Contains("gpuBatchCulling=", report.CapabilityDiagnostic, StringComparison.Ordinal);
         Assert.Contains("gpuCompactedDraws=", report.CapabilityDiagnostic, StringComparison.Ordinal);
+        Assert.Contains("hiZOcclusion=", report.CapabilityDiagnostic, StringComparison.Ordinal);
         Assert.Contains("gpuReductions=", report.CapabilityDiagnostic, StringComparison.Ordinal);
         Assert.Contains("imageHistogram=", report.CapabilityDiagnostic, StringComparison.Ordinal);
         Assert.Contains("materialTextureArrays=", report.CapabilityDiagnostic, StringComparison.Ordinal);
@@ -233,7 +236,7 @@ public sealed class PreviewLiveGlSmokeTests
         {
         }
         var pixels = Enumerable.Repeat((byte)255, 4 * 4 * 4).ToArray();
-        overlay.Draw(64, 64, 2, new PreviewNativeWglOverlayBitmap(4, 4, pixels), null);
+        overlay.Draw(64, 64, 2, new PreviewNativeWglOverlayBitmap(4, 4, pixels), null, null);
         gl.Finish();
         Assert.Equal(GLEnum.NoError, gl.GetError());
         diagnostics.Add("[3D preview] Persistent mapped overlay VBO ring rendered without GL errors.");
@@ -551,7 +554,7 @@ public sealed class PreviewLiveGlSmokeTests
         Assert.Equal(2, compactor.LastVisibleCount);
         var flagDiagnostics = compactor.ReadReductionDiagnostics();
         Assert.Equal(
-            new GlGpuDrawReductionSnapshot(4, 2, 0, 0, 1, 1, 0, 12),
+            new GlGpuDrawReductionSnapshot(4, 2, 0, 0, 1, 1, 0, 12, 0),
             flagDiagnostics);
         Assert.True(flagDiagnostics.IsConsistent);
 
@@ -635,7 +638,7 @@ public sealed class PreviewLiveGlSmokeTests
         Assert.Equal(2, compactor.LastVisibleCount);
         var cullDiagnostics = compactor.ReadReductionDiagnostics();
         Assert.Equal(
-            new GlGpuDrawReductionSnapshot(5, 2, 1, 1, 1, 0, 0, 9),
+            new GlGpuDrawReductionSnapshot(5, 2, 1, 1, 1, 0, 0, 9, 0),
             cullDiagnostics);
         Assert.True(cullDiagnostics.IsConsistent);
 
@@ -657,7 +660,7 @@ public sealed class PreviewLiveGlSmokeTests
             Assert.Equal(1, compactor.LastVisibleCount);
             var overflowDiagnostics = compactor.ReadReductionDiagnostics();
             Assert.Equal(
-                new GlGpuDrawReductionSnapshot(4, 1, 0, 0, 1, 0, 2, 12),
+                new GlGpuDrawReductionSnapshot(4, 1, 0, 0, 1, 0, 2, 12, 0),
                 overflowDiagnostics);
             Assert.True(overflowDiagnostics.IsConsistent);
             diagnostics.Add(
@@ -701,6 +704,244 @@ public sealed class PreviewLiveGlSmokeTests
             diagnostics.Add(
                 "[3D preview] P5.2 GPU indirect-count submission executed without CPU counter readback " +
                 "(4 source commands -> 3 submitted draws).");
+        }
+
+        RunHierarchicalZOcclusionIfSupported(gl, caps, program, compactor, diagnostics);
+        RunVoxelDdaOcclusionIfSupported(gl, caps, program, compactor, diagnostics);
+    }
+
+    private static void RunVoxelDdaOcclusionIfSupported(
+        GL gl,
+        PreviewGlCapabilities caps,
+        GlShaderProgram compactProgram,
+        GlGpuDrawCommandCompactor compactor,
+        List<string> diagnostics)
+    {
+        if (!caps.CanUseGpuCompactedDrawSubmission)
+        {
+            diagnostics.Add("[3D preview] P5.4 voxel DDA occlusion skipped; compacted draw gate is off.");
+            return;
+        }
+
+        using var atlas = new GlTerrainOccluderAtlas(gl);
+        var cameraChunk = new TerrainChunkKey(0, 0);
+        atlas.EnsureFilled(
+            cameraChunk,
+            chunkViewDistance: 2,
+            PreviewTerrainWorldGenSettings.Default,
+            worldGenRevision: 1);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!atlas.IsValid && DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(10);
+            atlas.PumpUpload();
+        }
+
+        Assert.True(atlas.IsValid, "Timed out waiting for async voxel occluder atlas bake.");
+
+        PreviewDrawBatch[] batches =
+        [
+            // Buried inside the solid stack under the flat pad → occluded by DDA.
+            new(0, 3, 0)
+            {
+                BoundsCenter = new Vector3(
+                    1.5f,
+                    PreviewStageConstants.GroundPlaneWorldY - 2f,
+                    1.5f),
+                BoundsRadius = 0.2f,
+            },
+            // Above the pad surface → should remain visible.
+            new(3, 3, 0)
+            {
+                BoundsCenter = new Vector3(
+                    1.5f,
+                    PreviewStageConstants.GroundPlaneWorldY + 4f,
+                    1.5f),
+                BoundsRadius = 0.2f,
+            },
+            new(6, 3, 0)
+            {
+                BoundsCenter = new Vector3(
+                    3.5f,
+                    PreviewStageConstants.GroundPlaneWorldY + 4f,
+                    1.5f),
+                BoundsRadius = 0.2f,
+            },
+            new(9, 3, 0)
+            {
+                BoundsCenter = new Vector3(
+                    5.5f,
+                    PreviewStageConstants.GroundPlaneWorldY + 4f,
+                    1.5f),
+                BoundsRadius = 0.2f,
+            },
+        ];
+        using var source = new GlIndirectDrawCommandBuffer(gl);
+        Assert.True(source.Upload(batches));
+        Vector4[] planes =
+        [
+            new(1f, 0f, 0f, 40f),
+            new(-1f, 0f, 0f, 40f),
+            new(0f, 1f, 0f, 40f),
+            new(0f, -1f, 0f, 40f),
+            new(0f, 0f, 1f, 40f),
+            new(0f, 0f, -1f, 40f),
+        ];
+        var camera = new Vector3(1.5f, PreviewStageConstants.GroundPlaneWorldY + 8f, 1.5f);
+        Assert.True(
+            compactor.DispatchWithGpuCulling(
+                compactProgram,
+                source,
+                batches,
+                planes,
+                camera,
+                readBackCounter: true,
+                collectDiagnostics: true,
+                enableVoxelOcclusion: true,
+                voxelAtlas: atlas,
+                voxelTextureUnit: 11));
+        var snap = compactor.ReadReductionDiagnostics();
+        Assert.True(snap.IsConsistent, snap.FormatDiagnostic());
+        Assert.True(
+            snap.OcclusionCulledCommands >= 1,
+            "Expected buried sphere to be DDA-occluded: " + snap.FormatDiagnostic());
+        Assert.True(
+            snap.WrittenCommands >= 1,
+            "Expected above-ground spheres to remain visible: " + snap.FormatDiagnostic());
+        diagnostics.Add("[3D preview] P5.4 voxel DDA occlusion compaction passed: " + snap.FormatDiagnostic() + ".");
+    }
+
+    private static void RunHierarchicalZOcclusionIfSupported(
+        GL gl,
+        PreviewGlCapabilities caps,
+        GlShaderProgram compactProgram,
+        GlGpuDrawCommandCompactor compactor,
+        List<string> diagnostics)
+    {
+        if (!caps.CanUseHierarchicalZOcclusion)
+        {
+            diagnostics.Add("[3D preview] P5.3 Hi-Z occlusion skipped; capability gate is off.");
+            return;
+        }
+
+        var ctx = new GlShaderCompileContext(gl, useOpenGlEs: false, caps.Vendor, caps.Renderer);
+        using var buildProgram = ctx.CreateComputeProgram(
+            "genesis_hiz_build.comp",
+            out var buildError,
+            "p53-smoke-hiz-build");
+        Assert.True(buildProgram.IsValid, "Hi-Z build compute failed: " + buildError);
+
+        const int width = 64;
+        const int height = 64;
+        var depthTex = gl.GenTexture();
+        try
+        {
+            gl.BindTexture(TextureTarget.Texture2D, depthTex);
+            var depths = new float[width * height];
+            for (var y = 0; y < height; y++)
+            {
+                for (var x = 0; x < width; x++)
+                {
+                    // Left half close (0.2), right half far (0.95).
+                    depths[y * width + x] = x < width / 2 ? 0.2f : 0.95f;
+                }
+            }
+
+            unsafe
+            {
+                fixed (float* ptr = depths)
+                {
+                    gl.TexImage2D(
+                        TextureTarget.Texture2D,
+                        0,
+                        InternalFormat.R32f,
+                        width,
+                        height,
+                        0,
+                        PixelFormat.Red,
+                        PixelType.Float,
+                        ptr);
+                }
+            }
+
+            gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Nearest);
+            gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Nearest);
+            gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
+            gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
+            gl.BindTexture(TextureTarget.Texture2D, 0);
+
+            using var hiz = new GlHierarchicalZPyramid(gl);
+            Assert.True(hiz.EnsureSize(width, height));
+            Assert.True(hiz.Build(buildProgram, depthTex));
+
+            var viewProj = PreviewGlMatrices.CreatePerspectiveFieldOfViewOpenGl(
+                MathF.PI / 2f, 1f, 0.5f, 100f) *
+                PreviewGlMatrices.CreateLookAtRhOpenGlRowStorage(
+                    Vector3.Zero, -Vector3.UnitZ, Vector3.UnitY);
+
+            PreviewDrawBatch[] batches =
+            [
+                // Behind the near left wall → should occlude.
+                new(0, 3, 0)
+                {
+                    BoundsCenter = new Vector3(-0.5f, 0f, -8f),
+                    BoundsRadius = 0.05f,
+                },
+                // On the open right half → should remain visible.
+                new(3, 3, 0)
+                {
+                    BoundsCenter = new Vector3(0.5f, 0f, -8f),
+                    BoundsRadius = 0.05f,
+                },
+                new(6, 3, 0)
+                {
+                    BoundsCenter = new Vector3(0.25f, 0f, -8f),
+                    BoundsRadius = 0.05f,
+                },
+                new(9, 3, 0)
+                {
+                    BoundsCenter = new Vector3(0.75f, 0f, -8f),
+                    BoundsRadius = 0.05f,
+                },
+            ];
+            using var source = new GlIndirectDrawCommandBuffer(gl);
+            Assert.True(source.Upload(batches));
+            Vector4[] planes =
+            [
+                new(1f, 0f, 0f, 2f),
+                new(-1f, 0f, 0f, 2f),
+                new(0f, 1f, 0f, 2f),
+                new(0f, -1f, 0f, 2f),
+                new(0f, 0f, 1f, 20f),
+                new(0f, 0f, -1f, 20f),
+            ];
+            Assert.True(
+                compactor.DispatchWithGpuCulling(
+                    compactProgram,
+                    source,
+                    batches,
+                    planes,
+                    Vector3.Zero,
+                    readBackCounter: true,
+                    collectDiagnostics: true,
+                    enableHiZ: true,
+                    hiZ: hiz,
+                    viewProj: viewProj));
+            var diagnosticsSnap = compactor.ReadReductionDiagnostics();
+            Assert.True(diagnosticsSnap.IsConsistent);
+            Assert.True(
+                diagnosticsSnap.OcclusionCulledCommands >= 1,
+                "Expected at least one Hi-Z occlusion cull: " + diagnosticsSnap.FormatDiagnostic());
+            Assert.True(
+                diagnosticsSnap.WrittenCommands >= 1,
+                "Expected at least one visible command to survive Hi-Z: " + diagnosticsSnap.FormatDiagnostic());
+            diagnostics.Add(
+                "[3D preview] P5.3 Hi-Z occlusion compaction passed: " +
+                diagnosticsSnap.FormatDiagnostic() + ".");
+        }
+        finally
+        {
+            gl.DeleteTexture(depthTex);
         }
     }
 
@@ -1003,6 +1244,7 @@ public sealed class PreviewLiveGlSmokeTests
             $"gpuCommandCompaction: {(report.GpuCommandCompaction ? "on" : "off")}",
             $"gpuBatchCulling: {(report.GpuBatchCulling ? "on" : "off")}",
             $"gpuCompactedDraws: {(report.GpuCompactedDraws ? "on" : "off")}",
+            $"hiZOcclusion: {(report.HiZOcclusion ? "on" : "off")}",
             $"gpuReductions: {(report.GpuReductions ? "on" : "off")}",
             $"imageHistogram: {(report.ImageHistogram ? "on" : "off")}",
             $"materialTextureArrays: {(report.MaterialTextureArrays ? "on" : "off")}",
@@ -1055,6 +1297,7 @@ public sealed class PreviewLiveGlSmokeTests
         bool GpuCommandCompaction,
         bool GpuBatchCulling,
         bool GpuCompactedDraws,
+        bool HiZOcclusion,
         bool GpuReductions,
         bool ImageHistogram,
         bool MaterialTextureArrays,

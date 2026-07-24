@@ -92,6 +92,7 @@
                                                    IsVisible="{Binding IsPreviewGlSurfaceVisible}"
                                                    OverlayDebugText="{Binding Preview3DCameraDebugText}"
                                                    OverlayFpsText="{Binding Preview3DFpsCounterText}"
+                                                   OverlayCpuText="{Binding Preview3DCpuTimingHudText}"
                                                    OverlayFpsVisible="{Binding IsPreview3DFpsCounterVisible}"
                                                    HorizontalAlignment="Stretch"
                                                    VerticalAlignment="Stretch"
@@ -141,19 +142,30 @@
                                    Text="{Binding Preview3DCameraDebugText}"
                                    TextWrapping="Wrap"
                                    MaxWidth="520" />
-                        <Border IsVisible="{Binding IsPreview3DFpsCounterVisible}"
-                                HorizontalAlignment="Right"
-                                VerticalAlignment="Top"
-                                Margin="8"
-                                ZIndex="2"
-                                Background="#66000000"
-                                CornerRadius="4"
-                                Padding="6,3">
-                            <TextBlock FontFamily="Consolas"
-                                       FontSize="12"
-                                       Foreground="#F0FFFFFF"
-                                       Text="{Binding Preview3DFpsCounterText}" />
-                        </Border>
+                        <StackPanel IsVisible="{Binding IsPreview3DFpsCounterVisible}"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Top"
+                                    Margin="8"
+                                    Spacing="4"
+                                    ZIndex="2">
+                            <Border Background="#66000000"
+                                    CornerRadius="4"
+                                    Padding="6,3">
+                                <TextBlock FontFamily="Consolas"
+                                           FontSize="12"
+                                           Foreground="#F0FFFFFF"
+                                           Text="{Binding Preview3DFpsCounterText}" />
+                            </Border>
+                            <Border IsVisible="{Binding IsPreview3DCpuTimingHudVisible}"
+                                    Background="#66000000"
+                                    CornerRadius="4"
+                                    Padding="6,3">
+                                <TextBlock FontFamily="Consolas"
+                                           FontSize="12"
+                                           Foreground="#F0FFFFFF"
+                                           Text="{Binding Preview3DCpuTimingHudText}" />
+                            </Border>
+                        </StackPanel>
                     </Grid>
                     <StackPanel Grid.Row="2"
                                 Orientation="Vertical"

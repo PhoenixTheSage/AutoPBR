@@ -43,6 +43,7 @@ void main()
     private readonly int _hdrScaleLoc;
     private readonly OverlayTexture _debugTexture;
     private readonly OverlayTexture _fpsTexture;
+    private readonly OverlayTexture _cpuTexture;
     private uint _program;
     private bool _disposed;
 
@@ -61,6 +62,7 @@ void main()
             _vertexUpload = null;
             _debugTexture = new OverlayTexture();
             _fpsTexture = new OverlayTexture();
+            _cpuTexture = new OverlayTexture();
             return;
         }
 
@@ -74,6 +76,7 @@ void main()
             _vertexUpload = null;
             _debugTexture = new OverlayTexture();
             _fpsTexture = new OverlayTexture();
+            _cpuTexture = new OverlayTexture();
             return;
         }
 
@@ -96,6 +99,7 @@ void main()
             _vertexUpload = null;
             _debugTexture = new OverlayTexture();
             _fpsTexture = new OverlayTexture();
+            _cpuTexture = new OverlayTexture();
             return;
         }
 
@@ -122,6 +126,7 @@ void main()
         _gl.BindVertexArray(0);
         _debugTexture = new OverlayTexture(gl);
         _fpsTexture = new OverlayTexture(gl);
+        _cpuTexture = new OverlayTexture(gl);
     }
 
     public bool IsValid => _program != 0 && _vao != 0 && _vertexUpload?.Handle != 0;
@@ -137,6 +142,7 @@ void main()
         int marginPixels,
         PreviewNativeWglOverlayBitmap? debug,
         PreviewNativeWglOverlayBitmap? fps,
+        PreviewNativeWglOverlayBitmap? cpu,
         float hdrScRgbScale = 0f)
     {
         if (!IsValid || viewportWidth <= 0 || viewportHeight <= 0)
@@ -166,10 +172,18 @@ void main()
             DrawBitmap(_debugTexture, debug, marginPixels, marginPixels, viewportWidth, viewportHeight);
         }
 
+        var rightStackY = marginPixels;
         if (fps is not null)
         {
             var x = Math.Max(marginPixels, viewportWidth - fps.Width - marginPixels);
-            DrawBitmap(_fpsTexture, fps, x, marginPixels, viewportWidth, viewportHeight);
+            DrawBitmap(_fpsTexture, fps, x, rightStackY, viewportWidth, viewportHeight);
+            rightStackY += fps.Height + Math.Max(4, marginPixels / 2);
+        }
+
+        if (cpu is not null)
+        {
+            var x = Math.Max(marginPixels, viewportWidth - cpu.Width - marginPixels);
+            DrawBitmap(_cpuTexture, cpu, x, rightStackY, viewportWidth, viewportHeight);
         }
 
         _gl.BindVertexArray(0);
@@ -276,6 +290,7 @@ void main()
         _disposed = true;
         _debugTexture.Dispose();
         _fpsTexture.Dispose();
+        _cpuTexture.Dispose();
         _vertexUpload?.Dispose();
 
         if (_vao != 0)
