@@ -4,7 +4,6 @@ using AutoPBR.App.Lang;
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.Scene;
 using AutoPBR.Core.Models;
-using AutoPBR.Preview;
 
 using Avalonia.Threading;
 
@@ -52,7 +51,6 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private byte[]? _rgbaUploadScratch;
     private GlMeshBuffer? _mesh;
     private GlMeshBuffer? _groundMesh;
-    private PreviewDrawBatch[] _groundChunkBatches = [];
     private readonly Dictionary<TerrainChunkKey, TerrainGpuChunk> _terrainGpuChunks = new();
     private TerrainChunkStreamer? _terrainStreamer;
     /// <summary>
@@ -234,8 +232,6 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private bool _loggedGpuCompactedDrawSubmission;
     private bool _loggedGpuTimerProfilerActive;
     private bool _loggedGpuTimerProfilerFallback;
-    private int _gpuCompactedSubmissionGroups;
-    private int _gpuCompactedSubmissionSourceCommands;
     private bool _gpuDrawCommandCompactionCompileDisabled;
     private bool _genesisTessellationCompileDisabled;
     private bool _genesisTessellationFailureLogged;
@@ -332,10 +328,10 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
                        _settings.AutoRotate ||
                        _settings.AnimateTimeOfDay ||
                        ShouldContinuouslyAccumulatePreviewTaa(_settings) ||
-                       (_settings.EnableEntityAnimation && _blockModelSubject?.EnableRenderTimeAnimation == true) ||
-                       (_settings.EnableVolumetricClouds && !_settings.CloudFreezeWind) ||
+                       (_settings.EnableEntityAnimation && _blockModelSubject is { EnableRenderTimeAnimation: true }) ||
+                       _settings is { EnableVolumetricClouds: true, CloudFreezeWind: false } ||
                        // Keep pumping while ground is shown and either idle (no subject) or terrain still catching up.
-                       (_settings.ShowGroundMesh && _scene is not null &&
+                       (_settings.ShowGroundMesh && _scene is { } &&
                         (!_settings.DrawPreviewSubject || _terrainStreamingNeedsFrames)) ||
                        (_debugFlyRmbHeld && _flyEngaged) ||
                        _userCameraDragging;
@@ -613,9 +609,9 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
         public bool HasNormal { get; set; }
         public bool HasSpecular { get; set; }
         public bool HasHeight { get; set; }
-        public int Width { get; set; } = 1;
-        public int TexHeight { get; set; } = 1;
-        public bool Cutout { get; set; }
+        public int Width { get; init; } = 1;
+        public int TexHeight { get; init; } = 1;
+        public bool Cutout { get; init; }
 
         public void DisposeTextures()
         {

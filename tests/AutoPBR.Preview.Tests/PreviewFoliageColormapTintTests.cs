@@ -1,5 +1,3 @@
-using AutoPBR.Core.Models;
-using AutoPBR.Preview;
 
 using SixLabors.ImageSharp.PixelFormats;
 

@@ -105,7 +105,7 @@ public static class PreviewTerrainGrassKitResolver
             sources.Add(installSource);
         }
 
-        IAssetSource? composite = sources.Count > 0 ? new CompositeAssetSource(sources.ToArray()) : null;
+        IAssetSource? composite = sources.Count > 0 ? new CompositeAssetSource([.. sources]) : null;
 
         if (sources.Count == 0 || composite is null || !HasValidGrassSet(composite.Exists))
         {
@@ -173,8 +173,7 @@ public static class PreviewTerrainGrassKitResolver
         }
 
         // Multilayer BetterGrass: layer2 = texture.grass (tinted) as overlay when present.
-        if (betterGrass.Multilayer &&
-            betterGrass.GrassEnabled &&
+        if (betterGrass is { Multilayer: true, GrassEnabled: true } &&
             composite.Exists(bgTopPath))
         {
             var multilayerOverlay = await ResolveSlotMapsAsync(composite, bgTopPath, options, cancellationToken)
@@ -213,7 +212,7 @@ public static class PreviewTerrainGrassKitResolver
         var gravelAliased = gravelMaps is null;
 
         var identity = BuildIdentity(
-            Mode: PreviewTerrainGrassMode.BlockModelFaces,
+            mode: PreviewTerrainGrassMode.BlockModelFaces,
             topPath,
             sidePath,
             dirtPath,
@@ -246,7 +245,7 @@ public static class PreviewTerrainGrassKitResolver
     }
 
     private static string BuildIdentity(
-        PreviewTerrainGrassMode Mode,
+        PreviewTerrainGrassMode mode,
         string topPath,
         string sidePath,
         string dirtPath,
@@ -257,7 +256,7 @@ public static class PreviewTerrainGrassKitResolver
         bool gravelAliased)
     {
         var sb = new StringBuilder(256);
-        sb.Append((int)Mode).Append('|')
+        sb.Append((int)mode).Append('|')
             .Append(topPath).Append('|')
             .Append(sidePath).Append('|')
             .Append(dirtPath).Append('|')

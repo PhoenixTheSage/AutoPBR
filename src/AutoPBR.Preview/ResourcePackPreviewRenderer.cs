@@ -3,7 +3,6 @@ using System.Numerics;
 
 using AutoPBR.Core;
 using AutoPBR.Core.Models;
-using AutoPBR.Preview;
 
 namespace AutoPBR.Preview;
 
@@ -57,11 +56,11 @@ public static class ResourcePackPreviewRenderer
             cancellationToken.ThrowIfCancellationRequested();
 
             var previewNativeProfile = ResolveNativeMinecraftDataProfile(inputZipPath, extracted);
-            MergedJavaBlockModel? mergedModel = null;
-            List<string>? orderedModelTextures = null;
-            string? modelDefaultNs = null;
-            var isEmulatedEntityModel = false;
-            PreviewMeshProvenance meshProvenance = default;
+            MergedJavaBlockModel? mergedModel;
+            List<string>? orderedModelTextures;
+            string? modelDefaultNs;
+            bool isEmulatedEntityModel;
+            PreviewMeshProvenance meshProvenance;
             using (var zip = ZipFile.OpenRead(inputZipPath))
             {
                 var zipSource = new ZipAssetSource(zip);
@@ -109,7 +108,9 @@ public static class ResourcePackPreviewRenderer
                 }
             }
 
-            if (mergedModel is not null && orderedModelTextures is not null && modelDefaultNs is not null)
+            if (mergedModel is not null &&
+                orderedModelTextures is not null &&
+                modelDefaultNs is not null)
             {
                 var workOrdered = new List<TextureWorkItem>(orderedModelTextures.Count);
                 foreach (var zpath in orderedModelTextures)
@@ -247,7 +248,7 @@ public static class ResourcePackPreviewRenderer
                                 PreviewPoseId = EntityPreviewBuildContext.CurrentPoseId,
                                 PreviewSizeId = EntityPreviewBuildContext.CurrentSizeId,
                                 PreviewContextTypeId = EntityPreviewBuildContext.CurrentContextTypeId,
-                                OrderedTextureZipPaths = orderedModelTextures.ToArray()
+                                OrderedTextureZipPaths = [.. orderedModelTextures]
                             };
                             EntityPreviewPlacement.TryPopulateRebakeElementPartIds(
                                 emulatedRebake,
@@ -297,7 +298,7 @@ public static class ResourcePackPreviewRenderer
                                 indices,
                                 MinecraftModelBaker.FloatsPerVertex),
                             Materials = materials,
-                            MaterialArchivePaths = orderedModelTextures.ToArray(),
+                            MaterialArchivePaths = [.. orderedModelTextures],
                             PrimaryMaterialIndex = primIdx,
                             Sprite2DFoliageTarget = sprite,
                             EnableRenderTimeAnimation = useEmulatedEntityPipeline && !isParityCatalogEntity,
@@ -508,15 +509,6 @@ public static class ResourcePackPreviewRenderer
                    new Version(26, 1, 2));
     }
 
-    private static bool IsEntityTextureArchivePath(string archivePath) =>
-        archivePath.Replace('\\', '/').Contains("/textures/entity/", StringComparison.OrdinalIgnoreCase);
-
-    private static string? TryGetAssetNamespace(string archivePath)
-    {
-        var parts = archivePath.Replace('\\', '/').TrimStart('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
-        return parts.Length > 1 && parts[0].Equals("assets", StringComparison.OrdinalIgnoreCase) ? parts[1] : null;
-    }
-
     private static float ComputeDeterministicIdlePhase(string archivePath, string profileName)
     {
         var s = archivePath + "|" + profileName;
@@ -529,26 +521,6 @@ public static class ResourcePackPreviewRenderer
             }
 
             return ((h & 0x7fffffff) % 1000) / 1000f;
-        }
-    }
-
-    /// <summary>
-    /// Stable animation phase for explore / initial bake so "Set Preview" does not jump keyframes.
-    /// Render-tab playback uses wall-clock time via <see cref="EntityEmulatedPreviewRebaker"/>.
-    /// </summary>
-    private static float ComputeDeterministicAnimationTimeSeconds(string archivePath, string profileName)
-    {
-        var s = archivePath + "|anim|" + profileName;
-        unchecked
-        {
-            var h = 19;
-            foreach (var ch in s)
-            {
-                h = (h * 31) + ch;
-            }
-
-            // 0..120s window — enough for multi-clip breeze cycles without wrapping too fast.
-            return ((h & 0x7fffffff) % 120_000) / 1000f;
         }
     }
 

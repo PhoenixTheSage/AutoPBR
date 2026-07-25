@@ -6,7 +6,6 @@ using AutoPBR.App.Rendering.OpenGL;
 using AutoPBR.App.ViewModels;
 using AutoPBR.Core;
 using AutoPBR.Core.Models;
-using AutoPBR.Preview;
 
 namespace AutoPBR.App.Services;
 
@@ -87,7 +86,7 @@ internal static class UserSettingsSynchronizer
         vm.Preview3DLogVerbosePreviewDiagnostics = settings.Preview3DLogVerbosePreviewDiagnostics;
         vm.Preview3DShowExpandedGpuTimingHud = settings.Preview3DShowExpandedGpuTimingHud;
         vm.Preview3DOcclusionDebugMode = Math.Clamp(settings.Preview3DOcclusionDebugMode, 0, 2);
-        vm.Preview3DVSyncEnabled = settings.Preview3DVSyncEnabled ?? settings.Preview3DCapFpsAt60;
+        vm.Preview3DvSyncEnabled = settings.Preview3DVSyncEnabled ?? settings.Preview3DCapFpsAt60;
         vm.Preview3DEnableParallax = settings.Preview3DEnableParallax;
         vm.Preview3DEnableNormalMap = settings.Preview3DEnableNormalMap;
         vm.Preview3DEnableSpecularMap = settings.Preview3DEnableSpecularMap;
@@ -270,14 +269,9 @@ internal static class UserSettingsSynchronizer
             128);
         vm.MaxThreads = settings.MaxThreads;
         vm.TempDirectory = settings.TempDirectory;
-        if (string.IsNullOrWhiteSpace(settings.MinecraftAssetsDirectory))
-        {
-            vm.MinecraftAssetsDirectory = MinecraftInstallPathDetector.TryDetectDefaultAssetsRoot();
-        }
-        else
-        {
-            vm.MinecraftAssetsDirectory = settings.MinecraftAssetsDirectory;
-        }
+        vm.MinecraftAssetsDirectory = string.IsNullOrWhiteSpace(settings.MinecraftAssetsDirectory)
+            ? MinecraftInstallPathDetector.TryDetectDefaultAssetsRoot()
+            : settings.MinecraftAssetsDirectory;
         vm.DebugMode = settings.DebugMode;
         vm.PreviewUseOpenGl4 = settings.PreviewUseOpenGl4;
         vm.PreviewHdrMode = PreviewHdrPresentPolicy.FormatMode(
@@ -441,7 +435,7 @@ internal static class UserSettingsSynchronizer
         settings.Preview3DLogVerbosePreviewDiagnostics = vm.Preview3DLogVerbosePreviewDiagnostics;
         settings.Preview3DShowExpandedGpuTimingHud = vm.Preview3DShowExpandedGpuTimingHud;
         settings.Preview3DOcclusionDebugMode = Math.Clamp(vm.Preview3DOcclusionDebugMode, 0, 2);
-        settings.Preview3DVSyncEnabled = vm.Preview3DVSyncEnabled;
+        settings.Preview3DVSyncEnabled = vm.Preview3DvSyncEnabled;
         settings.Preview3DCapFpsAt60 = false;
         settings.Preview3DEnableParallax = vm.Preview3DEnableParallax;
         settings.Preview3DEnableNormalMap = vm.Preview3DEnableNormalMap;
@@ -613,7 +607,7 @@ internal static class UserSettingsSynchronizer
         settings.DictionaryEvidenceWeight = Math.Clamp(vm.DictionaryEvidenceWeight, 0.0, 1.0);
         settings.DictionaryMinEvidenceScore = Math.Clamp(vm.DictionaryMinEvidenceScore, -1.0, 1.0);
         settings.DictionaryRequestTimeoutMs = Math.Clamp(vm.DictionaryRequestTimeoutMs, 100, 5000);
-        settings.CustomTagRules = vm.CustomTagRules.ToList();
+        settings.CustomTagRules = [.. vm.CustomTagRules];
         settings.Save();
     }
 

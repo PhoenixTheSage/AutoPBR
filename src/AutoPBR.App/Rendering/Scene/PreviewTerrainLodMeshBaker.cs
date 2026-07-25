@@ -1,7 +1,6 @@
 using System.Numerics;
 
 using AutoPBR.App.Rendering.Abstractions;
-using AutoPBR.Preview;
 
 namespace AutoPBR.App.Rendering.Scene;
 
@@ -94,13 +93,13 @@ public static class PreviewTerrainLodMeshBaker
         var boundsMin = new Vector3(cx0, minY, cz0);
         var boundsMax = new Vector3(cx1, maxY, cz1);
         var center = (boundsMin + boundsMax) * 0.5f;
-        var indexArray = indices.ToArray();
+        uint[] indexArray = [.. indices];
         return new PreviewTerrainChunkMesh
         {
             Key = key,
             Lod = TerrainChunkLodKind.Lod,
-            InterleavedVertices = verts.ToArray(),
-            Indices = indexArray,
+            InterleavedVertices = [.. verts],
+            Indices = [.. indexArray],
             // Distant LOD stays Top-only (single material slot 0).
             DrawBatches = [new PreviewDrawBatch(0, indexArray.Length, PreviewTerrainGrassSlots.Top)],
             BoundsCenter = center,

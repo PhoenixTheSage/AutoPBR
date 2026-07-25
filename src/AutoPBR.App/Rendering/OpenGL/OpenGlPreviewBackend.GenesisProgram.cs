@@ -1,4 +1,3 @@
-using AutoPBR.App.Rendering.Abstractions;
 
 namespace AutoPBR.App.Rendering.OpenGL;
 

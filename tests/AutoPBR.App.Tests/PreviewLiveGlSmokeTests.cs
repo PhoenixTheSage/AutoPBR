@@ -1,6 +1,5 @@
 using AutoPBR.App.Rendering.OpenGL;
 using AutoPBR.App.Rendering.Scene;
-using AutoPBR.Preview;
 
 using Avalonia.OpenGL;
 
@@ -27,12 +26,12 @@ public sealed class PreviewLiveGlSmokeTests
         Assert.True(OperatingSystem.IsWindows(), "P2.3 live WGL smoke requires Windows.");
 
         var diagnostics = new List<string>();
-        var profiles = new[]
-        {
-            new GlVersion(GlProfileType.OpenGL, 4, 6),
-            new GlVersion(GlProfileType.OpenGL, 4, 0),
-            new GlVersion(GlProfileType.OpenGL, 3, 3),
-        };
+        GlVersion[] profiles =
+        [
+            new(GlProfileType.OpenGL, 4, 6),
+            new(GlProfileType.OpenGL, 4, 0),
+            new(GlProfileType.OpenGL, 3, 3),
+        ];
 
         using var context = PreviewDesktopWglContext.TryCreate(
             profiles,
@@ -41,13 +40,47 @@ public sealed class PreviewLiveGlSmokeTests
             probePresentationAdapter: false);
 
         Assert.NotNull(context);
-        var report = context!.Invoke(() =>
+        var report = RunP23SmokeOnContext(context, diagnostics);
+
+        Assert.Contains("persistentUpload=", report.CapabilityDiagnostic, StringComparison.Ordinal);
+        Assert.Contains("entitySsbo=", report.CapabilityDiagnostic, StringComparison.Ordinal);
+        Assert.Contains("materialDrawSsbo=", report.CapabilityDiagnostic, StringComparison.Ordinal);
+        Assert.Contains("computeFroxels=", report.CapabilityDiagnostic, StringComparison.Ordinal);
+        Assert.Contains("indirectDraws=", report.CapabilityDiagnostic, StringComparison.Ordinal);
+        Assert.Contains("multiDrawGroups=", report.CapabilityDiagnostic, StringComparison.Ordinal);
+        Assert.Contains("gpuCommandCompaction=", report.CapabilityDiagnostic, StringComparison.Ordinal);
+        Assert.Contains("gpuBatchCulling=", report.CapabilityDiagnostic, StringComparison.Ordinal);
+        Assert.Contains("gpuCompactedDraws=", report.CapabilityDiagnostic, StringComparison.Ordinal);
+        Assert.Contains("hiZOcclusion=", report.CapabilityDiagnostic, StringComparison.Ordinal);
+        Assert.Contains("gpuReductions=", report.CapabilityDiagnostic, StringComparison.Ordinal);
+        Assert.Contains("imageHistogram=", report.CapabilityDiagnostic, StringComparison.Ordinal);
+        Assert.Contains("materialTextureArrays=", report.CapabilityDiagnostic, StringComparison.Ordinal);
+        Assert.Contains("gpuTimers=", report.CapabilityDiagnostic, StringComparison.Ordinal);
+        Assert.Contains("separablePrograms=", report.CapabilityDiagnostic, StringComparison.Ordinal);
+        Assert.Contains(
+            report.ComputeFroxels ? "compute froxels" : "fragment froxels",
+            report.ContextSuffix,
+            StringComparison.OrdinalIgnoreCase);
+
+        Assert.Contains(
+            report.MultiDrawGroups ? "multi-draw groups" : report.IndirectDrawCommands ? "indirect draws" : "direct draws",
+            report.ContextSuffix,
+            StringComparison.OrdinalIgnoreCase);
+
+        WriteReport(report);
+    }
+
+    private static LiveGlSmokeReport RunP23SmokeOnContext(
+        PreviewDesktopWglContext context,
+        List<string> diagnostics) =>
+        context.Invoke(() =>
         {
             using (context.BindOnOwnerThread())
             {
                 context.EnsureRenderTargetCore(64, 64);
                 var gl = context.Gl;
-                var caps = PreviewGlCapabilities.FromGl(gl, useOpenGlEs: false, context.VersionString);
+                var versionString = context.VersionString;
+                var caps = PreviewGlCapabilities.FromGl(gl, useOpenGlEs: false, versionString);
                 diagnostics.Add(caps.FormatDiagnostic());
                 diagnostics.Add("[3D preview] P2.3 WGL context suffix: " + caps.FormatContextSuffix());
 
@@ -64,7 +97,7 @@ public sealed class PreviewLiveGlSmokeTests
                 RunSeparableProgramPipelineIfSupported(gl, caps, diagnostics);
 
                 return new LiveGlSmokeReport(
-                    context.VersionString,
+                    versionString,
                     caps.FormatDiagnostic(),
                     caps.FormatContextSuffix(),
                     caps.CanUsePersistentUploadRing,
@@ -83,41 +116,9 @@ public sealed class PreviewLiveGlSmokeTests
                     caps.CanUseGpuTimerQueries,
                     caps.CanUseSpirVShaderBinaries,
                     caps.CanUseSeparableShaderPrograms,
-                    diagnostics.ToArray());
+                    [.. diagnostics]);
             }
         }, TimeSpan.FromSeconds(30));
-
-        Assert.Contains("persistentUpload=", report.CapabilityDiagnostic, StringComparison.Ordinal);
-        Assert.Contains("entitySsbo=", report.CapabilityDiagnostic, StringComparison.Ordinal);
-        Assert.Contains("materialDrawSsbo=", report.CapabilityDiagnostic, StringComparison.Ordinal);
-        Assert.Contains("computeFroxels=", report.CapabilityDiagnostic, StringComparison.Ordinal);
-        Assert.Contains("indirectDraws=", report.CapabilityDiagnostic, StringComparison.Ordinal);
-        Assert.Contains("multiDrawGroups=", report.CapabilityDiagnostic, StringComparison.Ordinal);
-        Assert.Contains("gpuCommandCompaction=", report.CapabilityDiagnostic, StringComparison.Ordinal);
-        Assert.Contains("gpuBatchCulling=", report.CapabilityDiagnostic, StringComparison.Ordinal);
-        Assert.Contains("gpuCompactedDraws=", report.CapabilityDiagnostic, StringComparison.Ordinal);
-        Assert.Contains("hiZOcclusion=", report.CapabilityDiagnostic, StringComparison.Ordinal);
-        Assert.Contains("gpuReductions=", report.CapabilityDiagnostic, StringComparison.Ordinal);
-        Assert.Contains("imageHistogram=", report.CapabilityDiagnostic, StringComparison.Ordinal);
-        Assert.Contains("materialTextureArrays=", report.CapabilityDiagnostic, StringComparison.Ordinal);
-        Assert.Contains("gpuTimers=", report.CapabilityDiagnostic, StringComparison.Ordinal);
-        Assert.Contains("separablePrograms=", report.CapabilityDiagnostic, StringComparison.Ordinal);
-        if (report.ComputeFroxels)
-        {
-            Assert.Contains("compute froxels", report.ContextSuffix, StringComparison.OrdinalIgnoreCase);
-        }
-        else
-        {
-            Assert.Contains("fragment froxels", report.ContextSuffix, StringComparison.OrdinalIgnoreCase);
-        }
-
-        Assert.Contains(
-            report.MultiDrawGroups ? "multi-draw groups" : report.IndirectDrawCommands ? "indirect draws" : "direct draws",
-            report.ContextSuffix,
-            StringComparison.OrdinalIgnoreCase);
-
-        WriteReport(report);
-    }
 
     private static void CompileDesktopGenesisVariant(GL gl, PreviewGlCapabilities caps, List<string> diagnostics)
     {
@@ -147,7 +148,7 @@ public sealed class PreviewLiveGlSmokeTests
         Assert.True(shadowProgram.IsValid, "Desktop Genesis shadow variant failed to compile: " + shadowError);
         diagnostics.Add("[3D preview] P4.1 desktop Genesis base-instance shadow variant compiled.");
 
-        if (caps.CanUseMaterialTextureArrays && caps.CanUseMultiDrawIndirectGroups)
+        if (caps is { CanUseMaterialTextureArrays: true, CanUseMultiDrawIndirectGroups: true })
         {
             using var tessProgram = ctx.CreateProgram(
                 "genesis.vert",
@@ -432,7 +433,7 @@ public sealed class PreviewLiveGlSmokeTests
 
             Assert.True(computeTarget.BindImagesForCompute(0, 1), "Compute target failed to bind image outputs.");
             ApplyFixedFroxelSceneUniforms(gl, computeProgram, width, height, slices, isCompute: true);
-            gl.DispatchCompute((uint)((width + 7) / 8), (uint)((height + 7) / 8), (uint)slices);
+            gl.DispatchCompute((width + 7) / 8, (height + 7) / 8, slices);
             gl.MemoryBarrier(0x00000020 | 0x00000008);
 
             var fragmentRgba = ReadArrayAttachment(gl, fragmentTarget, width, height, slices, ReadBufferMode.ColorAttachment0, PixelFormat.Rgba, 4);
@@ -476,7 +477,7 @@ public sealed class PreviewLiveGlSmokeTests
              1f,  1f,
             -1f,  1f,
         ];
-        gl.BufferData<float>(BufferTargetARB.ArrayBuffer, verts, BufferUsageARB.StaticDraw);
+        gl.BufferData(BufferTargetARB.ArrayBuffer, verts, BufferUsageARB.StaticDraw);
         unsafe
         {
             gl.EnableVertexAttribArray(0);
@@ -554,7 +555,7 @@ public sealed class PreviewLiveGlSmokeTests
         Assert.Equal(2, compactor.LastVisibleCount);
         var flagDiagnostics = compactor.ReadReductionDiagnostics();
         Assert.Equal(
-            new GlGpuDrawReductionSnapshot(4, 2, 0, 0, 1, 1, 0, 12, 0),
+            new GlGpuDrawReductionSnapshot(4, 2, 0, 0, 1, 1, 0, 12),
             flagDiagnostics);
         Assert.True(flagDiagnostics.IsConsistent);
 
@@ -638,7 +639,7 @@ public sealed class PreviewLiveGlSmokeTests
         Assert.Equal(2, compactor.LastVisibleCount);
         var cullDiagnostics = compactor.ReadReductionDiagnostics();
         Assert.Equal(
-            new GlGpuDrawReductionSnapshot(5, 2, 1, 1, 1, 0, 0, 9, 0),
+            new GlGpuDrawReductionSnapshot(5, 2, 1, 1, 1, 0, 0, 9),
             cullDiagnostics);
         Assert.True(cullDiagnostics.IsConsistent);
 
@@ -660,7 +661,7 @@ public sealed class PreviewLiveGlSmokeTests
             Assert.Equal(1, compactor.LastVisibleCount);
             var overflowDiagnostics = compactor.ReadReductionDiagnostics();
             Assert.Equal(
-                new GlGpuDrawReductionSnapshot(4, 1, 0, 0, 1, 0, 2, 12, 0),
+                new GlGpuDrawReductionSnapshot(4, 1, 0, 0, 1, 0, 2, 12),
                 overflowDiagnostics);
             Assert.True(overflowDiagnostics.IsConsistent);
             diagnostics.Add(
@@ -1042,7 +1043,7 @@ public sealed class PreviewLiveGlSmokeTests
         SetUniform3(gl, program, "uHalfExtent", 9f, 6f, 18f);
         if (isCompute)
         {
-            SetUniform3i(gl, program, "uFroxelSize", width, height, slices);
+            SetUniform3I(gl, program, "uFroxelSize", width, height, slices);
         }
 
         SetUniform1(gl, program, "uSliceCount", slices);
@@ -1205,7 +1206,7 @@ public sealed class PreviewLiveGlSmokeTests
         }
     }
 
-    private static void SetUniform3i(GL gl, GlShaderProgram program, string name, int x, int y, int z)
+    private static void SetUniform3I(GL gl, GlShaderProgram program, string name, int x, int y, int z)
     {
         var loc = program.GetUniformLocation(name);
         if (loc >= 0)
@@ -1233,7 +1234,9 @@ public sealed class PreviewLiveGlSmokeTests
         path = Path.IsPathRooted(path)
             ? Path.GetFullPath(path)
             : Path.GetFullPath(Path.Combine(FindRepoRoot(), path));
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var directory = Path.GetDirectoryName(path);
+        Assert.NotNull(directory);
+        Directory.CreateDirectory(directory);
         File.WriteAllLines(path,
         [
             "P2.3 live GL smoke",
@@ -1268,7 +1271,7 @@ public sealed class PreviewLiveGlSmokeTests
 
     private static string FindRepoRoot([System.Runtime.CompilerServices.CallerFilePath] string sourceFilePath = "")
     {
-        foreach (var start in new[] { Path.GetDirectoryName(sourceFilePath), AppContext.BaseDirectory, Directory.GetCurrentDirectory() })
+        foreach (var start in (string?[])[Path.GetDirectoryName(sourceFilePath), AppContext.BaseDirectory, Directory.GetCurrentDirectory()])
         {
             if (string.IsNullOrWhiteSpace(start))
             {

@@ -1,10 +1,8 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
-using System.Threading.Tasks;
 
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.Scene;
-using AutoPBR.Preview;
 
 using Silk.NET.OpenGL;
 
@@ -14,7 +12,6 @@ public sealed partial class OpenGlPreviewBackend
 {
     private sealed class TerrainGpuChunk
     {
-        public required TerrainChunkKey Key { get; init; }
         public required TerrainChunkLodKind Lod { get; set; }
         public GlTerrainMeshPool.Allocation Allocation { get; set; }
         public PreviewDrawBatch[] DrawBatches { get; set; } = [];
@@ -27,7 +24,6 @@ public sealed partial class OpenGlPreviewBackend
 
     private readonly struct TerrainDrawItem
     {
-        public required int CandidateIndex { get; init; }
         public required int FirstIndex { get; init; }
         public required int IndexCount { get; init; }
         public required int MaterialIndex { get; init; }
@@ -128,17 +124,6 @@ public sealed partial class OpenGlPreviewBackend
         _terrainStreamer.Start();
     }
 
-    private void ShutdownTerrainStreamer()
-    {
-        DisposeTerrainGpuChunks();
-        _terrainStreamer?.Dispose();
-        _terrainStreamer = null;
-        _groundMesh = null;
-        _groundChunkBatches = [];
-        DisposeTerrainMeshPool();
-        DisposeGroundTextureArrays();
-    }
-
     private void DisposeTerrainGpuChunks()
     {
         if (_terrainMeshPool is not null)
@@ -171,7 +156,6 @@ public sealed partial class OpenGlPreviewBackend
         EnsureTerrainStreamer();
         _groundMesh ??= new GlMeshBuffer(gl);
         EnsureTerrainMeshPool(gl);
-        _groundChunkBatches = [];
         _terrainEnvFloorY = PreviewStageConstants.GroundPlaneWorldY +
                             PreviewStageConstants.TerrainSolidFloorRelativeY;
         _terrainEnvCeilingY = PreviewStageConstants.GroundPlaneWorldY +
@@ -240,7 +224,7 @@ public sealed partial class OpenGlPreviewBackend
 
         var disposed = 0;
         List<TerrainChunkKey>? toRemove = null;
-        foreach (var (key, gpu) in _terrainGpuChunks)
+        foreach (var (key, _) in _terrainGpuChunks)
         {
             if (!_terrainStreamer.ShouldUnload(key) && desired.ContainsKey(key))
             {
@@ -308,7 +292,6 @@ public sealed partial class OpenGlPreviewBackend
         var allocation = pool.Upload(cpu.InterleavedVertices, cpu.Indices);
         _terrainGpuChunks[cpu.Key] = new TerrainGpuChunk
         {
-            Key = cpu.Key,
             Lod = cpu.Lod,
             Allocation = allocation,
             DrawBatches = RemapBatchesToPool(cpu.DrawBatches, allocation),
@@ -660,12 +643,14 @@ public sealed partial class OpenGlPreviewBackend
                 c.BoundsRadius,
                 isFullLod: c.Lod == TerrainChunkLodKind.Full,
                 candidateIndex: i);
+            var shadowIndexCount = Math.Max(0, chunk.IndexCount);
+            var shadowFirstIndex = Math.Max(0, chunk.Allocation.IndexOffset);
             GlIndirectDrawCommandBuffer.WriteCommandDwords(
                 _terrainShadowSourceCommandScratch.AsSpan(
                     i * GlIndirectDrawCommandBuffer.CommandDwords,
                     GlIndirectDrawCommandBuffer.CommandDwords),
-                (uint)Math.Max(0, chunk.IndexCount),
-                (uint)Math.Max(0, chunk.Allocation.IndexOffset),
+                (uint)shadowIndexCount,
+                (uint)shadowFirstIndex,
                 baseInstance: 0u);
         }
 
@@ -934,7 +919,6 @@ public sealed partial class OpenGlPreviewBackend
 
                 _terrainDrawItems.Add(new TerrainDrawItem
                 {
-                    CandidateIndex = selected[order],
                     FirstIndex = chunk.Allocation.IndexOffset,
                     IndexCount = chunk.IndexCount,
                     MaterialIndex = 0,
@@ -967,7 +951,6 @@ public sealed partial class OpenGlPreviewBackend
 
                 _terrainDrawItems.Add(new TerrainDrawItem
                 {
-                    CandidateIndex = selected[order],
                     FirstIndex = batch.FirstIndex,
                     IndexCount = batch.IndexCount,
                     MaterialIndex = materialIndex,
@@ -1275,7 +1258,7 @@ public sealed partial class OpenGlPreviewBackend
         SetIntLoc(u.HasNormal, slot.HasNormal ? 1 : 0);
         SetIntLoc(u.HasSpecular, slot.HasSpecular ? 1 : 0);
         // Cutout leaves/cactus: never run POM — height noise destroys foliage silhouettes.
-        var hasHeight = slot.HasHeight && !slot.Cutout;
+        var hasHeight = slot is { HasHeight: true, Cutout: false };
         SetIntLoc(u.HasHeight, hasHeight ? 1 : 0);
         if (slot.Cutout)
         {

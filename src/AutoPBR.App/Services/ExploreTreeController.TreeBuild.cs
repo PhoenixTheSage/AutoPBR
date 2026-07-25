@@ -1,5 +1,4 @@
 using AutoPBR.App.Models;
-using AutoPBR.Core;
 
 using Avalonia.Threading;
 
@@ -168,7 +167,7 @@ internal sealed partial class ExploreTreeController
 
         if (deferredTagRefresh.Count > 0)
         {
-            _ = QueueBackgroundEffectiveTagComputeBatchAsync(deferredTagRefresh.Select(static n => n.FullPath).ToList());
+            _ = QueueBackgroundEffectiveTagComputeBatchAsync([.. deferredTagRefresh.Select(static n => n.FullPath)]);
             // Spread tag row work across frames so a folder with hundreds of textures stays responsive.
             const int chunk = 40;
             void PostChunk(int start)

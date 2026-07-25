@@ -6,7 +6,7 @@ namespace AutoPBR.App.Rendering.OpenGL;
 /// </summary>
 internal sealed class GlGpuTimingHudLinger
 {
-    /// <summary>Pass slots used by <see cref="GlGpuTimingSnapshot.FormatHudLine"/>.</summary>
+    /// <summary>Pass slots used by <c>GlGpuTimerProfiler.FormatHudLine</c>.</summary>
     public const int PassCount = 20;
 
     /// <summary>Matches <c>0.0</c> ms formatting — values below this round away.</summary>

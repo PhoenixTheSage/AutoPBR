@@ -1,17 +1,11 @@
-using System.Buffers.Binary;
-using System.Diagnostics;
 using System.Numerics;
-using System.Runtime.InteropServices;
 
 using AutoPBR.App.Lang;
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.Scene;
 using AutoPBR.App.Services;
-using AutoPBR.Core.Models;
-using AutoPBR.Preview;
 
 using Avalonia.OpenGL;
-using Avalonia.Platform;
 
 using Silk.NET.OpenGL;
 
@@ -201,11 +195,11 @@ public sealed partial class OpenGlPreviewBackend
         float orbitYaw;
         float orbitPitch;
         float orbitDistance;
-        var drawBootstrapOnly = false;
-        var previewPixelWidth = 0;
-        var previewPixelHeight = 0;
-        var meshDirty = false;
-        var materialDirty = false;
+        bool drawBootstrapOnly;
+        int previewPixelWidth;
+        int previewPixelHeight;
+        bool meshDirty;
+        bool materialDirty;
         lock (_sync)
         {
             if (_gl is null)
@@ -346,11 +340,7 @@ public sealed partial class OpenGlPreviewBackend
 
         EnsureGpuTier(settings);
 
-        if (scene is null)
-        {
-            // GPU ready but VM has not pushed a scene yet — still render the idle stage.
-            scene = PreviewStageSceneFactory.CreateIdle(settings);
-        }
+        scene ??= PreviewStageSceneFactory.CreateIdle(settings);
 
         var frame = new GlRenderFrame
         {

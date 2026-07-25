@@ -1,6 +1,3 @@
-using AutoPBR.Core.Models;
-using AutoPBR.Preview;
-using Xunit;
 
 namespace AutoPBR.Preview.Tests;
 

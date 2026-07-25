@@ -11,8 +11,6 @@ using AutoPBR.App.Lang;
 using AutoPBR.App.Rendering;
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.OpenGL;
-using AutoPBR.Core.Models;
-using AutoPBR.Preview;
 
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -61,7 +59,7 @@ public partial class MainWindowViewModel
     [ObservableProperty] private double _preview3DChunkViewDistance = PreviewStageConstants.TerrainDefaultChunkViewDistance;
     [ObservableProperty] private bool _preview3DShowAxes = true;
     [ObservableProperty] private bool _preview3DShowFpsCounter;
-    [ObservableProperty] private bool _preview3DVSyncEnabled;
+    [ObservableProperty] private bool _preview3DvSyncEnabled;
     [ObservableProperty] private string? _preview3DFpsCounterText;
     [ObservableProperty] private string? _preview3DCpuTimingHudText;
     [ObservableProperty] private bool _preview3DEnableParallax = true;
@@ -384,9 +382,9 @@ public partial class MainWindowViewModel
         }
     }
 
-    partial void OnPreview3DVSyncEnabledChanged(bool value) => OnPreview3DVSyncSettingChanged(value);
+    partial void OnPreview3DvSyncEnabledChanged(bool value) => OnPreview3DvSyncSettingChanged(value);
 
-    private void OnPreview3DVSyncSettingChanged(bool _)
+    private void OnPreview3DvSyncSettingChanged(bool _)
     {
         if (_loadingSettings)
         {
@@ -394,7 +392,7 @@ public partial class MainWindowViewModel
         }
 
         SaveSettings();
-        PushPreview3DVSync();
+        PushPreview3DvSync();
     }
     partial void OnPreview3DEnableParallaxChanged(bool value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DEnableNormalMapChanged(bool value) => OnPreview3DGpuSettingChanged(value);
@@ -801,7 +799,7 @@ public partial class MainWindowViewModel
         };
     }
 
-    private void PushPreview3DVSync() => _glPreview?.SetPreviewVSync(Preview3DVSyncEnabled);
+    private void PushPreview3DvSync() => _glPreview?.SetPreviewVSync(Preview3DvSyncEnabled);
 
     private void PushPreview3DCamera()
     {
@@ -810,7 +808,7 @@ public partial class MainWindowViewModel
             return;
         }
 
-        PushPreview3DVSync();
+        PushPreview3DvSync();
         var resetKey = Enum.TryParse<Key>(Preview3DCameraResetKey, ignoreCase: true, out var parsedKey)
             ? parsedKey
             : Key.R;
@@ -874,11 +872,11 @@ public partial class MainWindowViewModel
         {
             kind = PreviewSceneKind.BlockModel;
             var paths = subject.MaterialArchivePaths;
-            slotMaterials = subject.Materials.Select((m, i) =>
+            slotMaterials = [.. subject.Materials.Select((m, i) =>
             {
                 var path = paths is not null && i < paths.Length ? paths[i] : null;
                 return PreviewMaterialMapper.FromCoreMaps(ApplyGrassColormapTintIfNeeded(m, path), path);
-            }).ToArray();
+            })];
         }
         else if (maps?.Sprite2DFoliageTarget == true)
         {
@@ -1020,8 +1018,11 @@ public partial class MainWindowViewModel
         }
     }
 
-    partial void OnPreview3DCpuTimingHudTextChanged(string? value) =>
+    partial void OnPreview3DCpuTimingHudTextChanged(string? value)
+    {
+        _ = value;
         OnPropertyChanged(nameof(IsPreview3DCpuTimingHudVisible));
+    }
 
     private void DisposePreviewResources()
     {

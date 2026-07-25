@@ -95,38 +95,27 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         _cloudNoiseTex = new GlTexture3D(gl);
-        if (PreviewCloudBakedAssetLoader.TryLoadShapeNoise(out var shapeRgba))
-        {
-            _cloudNoiseTex.UploadRgba(PreviewCloudNoiseTextureGenerator.Size, shapeRgba);
-        }
-        else
-        {
-            _cloudNoiseTex.UploadRgba(PreviewCloudNoiseTextureGenerator.Size,
-                PreviewCloudNoiseTextureGenerator.GenerateRgba8());
-        }
+        _cloudNoiseTex.UploadRgba(
+            PreviewCloudNoiseTextureGenerator.Size,
+            PreviewCloudBakedAssetLoader.TryLoadShapeNoise(out var shapeRgba)
+                ? shapeRgba
+                : PreviewCloudNoiseTextureGenerator.GenerateRgba8());
 
         _cloudDetailTex = new GlTexture3D(gl);
-        if (PreviewCloudBakedAssetLoader.TryLoadDetailNoise(out var detailRgba))
-        {
-            _cloudDetailTex.UploadRgba(PreviewCloudNoiseTextureGenerator.DetailSize, detailRgba);
-        }
-        else
-        {
-            _cloudDetailTex.UploadRgba(PreviewCloudNoiseTextureGenerator.DetailSize,
-                PreviewCloudNoiseTextureGenerator.GenerateDetailRgba8());
-        }
+        _cloudDetailTex.UploadRgba(
+            PreviewCloudNoiseTextureGenerator.DetailSize,
+            PreviewCloudBakedAssetLoader.TryLoadDetailNoise(out var detailRgba)
+                ? detailRgba
+                : PreviewCloudNoiseTextureGenerator.GenerateDetailRgba8());
 
         _cloudCoverageTex = new GlTexture2D(gl, nearestFilter: false, mipmapped: true);
-        if (PreviewCloudBakedAssetLoader.TryLoadCoverageMap(out var coverageRgba))
-        {
-            _cloudCoverageTex.UploadRgba(PreviewCloudCoverageMapGenerator.Size, PreviewCloudCoverageMapGenerator.Size,
-                coverageRgba, nearestFilter: false);
-        }
-        else
-        {
-            _cloudCoverageTex.UploadRgba(PreviewCloudCoverageMapGenerator.Size, PreviewCloudCoverageMapGenerator.Size,
-                PreviewCloudCoverageMapGenerator.GenerateRgba8(), nearestFilter: false);
-        }
+        _cloudCoverageTex.UploadRgba(
+            PreviewCloudCoverageMapGenerator.Size,
+            PreviewCloudCoverageMapGenerator.Size,
+            PreviewCloudBakedAssetLoader.TryLoadCoverageMap(out var coverageRgba)
+                ? coverageRgba
+                : PreviewCloudCoverageMapGenerator.GenerateRgba8(),
+            nearestFilter: false);
         _cloudRenderTarget = new GlCloudTemporalRenderTarget(gl);
         _cloudResolveTarget = new GlCloudTemporalRenderTarget(gl);
         _cloudHistoryTarget = new GlCloudTemporalRenderTarget(gl);
@@ -481,7 +470,7 @@ public sealed partial class OpenGlPreviewBackend
             _cloudCompositeTarget = _cloudRenderTarget;
             if (useTemporalReproject)
             {
-                var temporalOk = false;
+                bool temporalOk;
                 using (BeginPassTimerScope(GlGpuTimerScope.CloudTemporal))
                 {
                     temporalOk = ResolveCloudTemporal(
@@ -696,9 +685,9 @@ public sealed partial class OpenGlPreviewBackend
 
         gl.DepthMask(priorDepthMask);
         gl.ColorMask(priorColorMask[0], priorColorMask[1], priorColorMask[2], priorColorMask[3]);
-        if (priorBlend) gl.Enable(EnableCap.Blend); else gl.Disable(EnableCap.Blend);
-        if (priorDepthTest) gl.Enable(EnableCap.DepthTest); else gl.Disable(EnableCap.DepthTest);
-        if (priorScissor) gl.Enable(EnableCap.ScissorTest); else gl.Disable(EnableCap.ScissorTest);
+        if (priorBlend) { gl.Enable(EnableCap.Blend); } else { gl.Disable(EnableCap.Blend); }
+        if (priorDepthTest) { gl.Enable(EnableCap.DepthTest); } else { gl.Disable(EnableCap.DepthTest); }
+        if (priorScissor) { gl.Enable(EnableCap.ScissorTest); } else { gl.Disable(EnableCap.ScissorTest); }
 
         if (resolveError != GLEnum.NoError)
         {
@@ -713,8 +702,8 @@ public sealed partial class OpenGlPreviewBackend
         static float ShortestDelta(float value, float range)
         {
             var half = range * 0.5f;
-            if (value > half) return value - range;
-            if (value < -half) return value + range;
+            if (value > half) { return value - range; }
+            if (value < -half) { return value + range; }
             return value;
         }
 

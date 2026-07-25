@@ -1,6 +1,4 @@
 using AutoPBR.App.Rendering.Scene;
-using AutoPBR.Core.Models;
-using AutoPBR.Preview;
 
 using Avalonia.Media.Imaging;
 

@@ -35,7 +35,7 @@ public sealed partial class MainWindowViewModel
     private void RandomizePreview3DWorldSeed()
     {
         // Full inclusive range matching the seed NumericUpDown / world-gen clamp.
-        Preview3DWorldSeed = Random.Shared.NextInt64(0L, (long)int.MaxValue + 1L);
+        Preview3DWorldSeed = Random.Shared.NextInt64(0, int.MaxValue + 1L);
     }
 
     partial void OnPreview3DTerrainBiomeSizeChanged(double value) =>

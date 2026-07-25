@@ -1,7 +1,3 @@
-using System.Numerics;
-
-using AutoPBR.Core.Models;
-using AutoPBR.Preview.Blocks;
 
 namespace AutoPBR.Preview;
 
@@ -280,7 +276,7 @@ public static class PreviewTerrainBlockModelTemplates
         {
             if (list.Count >= PreviewMesh.FloatsPerVertex * 4)
             {
-                result[slot] = list.ToArray();
+                result[slot] = [.. list];
             }
         }
 
@@ -352,9 +348,10 @@ public static class PreviewTerrainBlockModelTemplates
             [Normalize(kit.LogArchivePath)] = kit.LogSlot,
             [Normalize(kit.LeavesOrTopArchivePath)] = kit.LeavesOrTopSlot,
         };
-        if (kit.LogTopSlot is int topSlot && !string.IsNullOrWhiteSpace(kit.LogTopArchivePath))
+        if (kit is { LogTopSlot: { } topSlot, LogTopArchivePath: { Length: > 0 } logTopPath } &&
+            !string.IsNullOrWhiteSpace(logTopPath))
         {
-            map[Normalize(kit.LogTopArchivePath!)] = topSlot;
+            map[Normalize(logTopPath)] = topSlot;
         }
         else
         {
@@ -374,9 +371,10 @@ public static class PreviewTerrainBlockModelTemplates
             [Normalize(kit.LeavesOrTopArchivePath)] =
                 (kit.LeavesOrTopMaps.Width, kit.LeavesOrTopMaps.Height),
         };
-        if (kit.LogTopMaps is not null && !string.IsNullOrWhiteSpace(kit.LogTopArchivePath))
+        if (kit is { LogTopMaps: not null, LogTopArchivePath: not null and var logTopPath } &&
+            !string.IsNullOrWhiteSpace(logTopPath))
         {
-            map[Normalize(kit.LogTopArchivePath!)] = (kit.LogTopMaps.Width, kit.LogTopMaps.Height);
+            map[Normalize(logTopPath)] = (kit.LogTopMaps.Width, kit.LogTopMaps.Height);
         }
         else
         {

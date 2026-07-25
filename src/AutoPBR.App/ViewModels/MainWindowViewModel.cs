@@ -1,16 +1,10 @@
 using System.Collections.ObjectModel;
-using System.Globalization;
 
-using Avalonia.Controls;
-using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 
 using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
-
-using JetBrains.Annotations;
 
 using AutoPBR.App.Lang;
 using AutoPBR.App.Models;
@@ -19,7 +13,6 @@ using AutoPBR.App.ViewModels.Rulesets;
 using AutoPBR.Core;
 using AutoPBR.Core.Embeddings;
 using AutoPBR.Core.Models;
-using AutoPBR.Preview;
 
 namespace AutoPBR.App.ViewModels;
 
@@ -78,7 +71,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             Dispatcher.UIThread.Post(Core);
         }
     }
-
 
     private DateTime _conversionStartUtc;
     private ConversionStage? _currentStage;
@@ -229,7 +221,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>True when the explorer is showing a merged batch index (folder of packs).</summary>
 
-
     [ObservableProperty] private string _colorScheme = "Dark";
     [ObservableProperty] private LanguageOption? _selectedLanguage;
     [ObservableProperty] private FoliageModeOption? _selectedFoliageMode;
@@ -247,7 +238,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public const double MaxUiScale = 1.0;
 
     /// <summary>Dropdown entries: 75%–100% in 5% steps.</summary>
-    public ObservableCollection<FoliageModeOption> UiScaleOptions { get; } = new();
+    public ObservableCollection<FoliageModeOption> UiScaleOptions { get; } = [];
 
     [ObservableProperty] private FoliageModeOption? _selectedUiScaleOption;
 
@@ -284,7 +275,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// <summary>Color used for preview panel top/bottom gradient fade (matches CardBackground).</summary>
     [ObservableProperty] private Color _previewFadeColor = Color.FromRgb(0x22, 0x22, 0x2A);
 
-    public ObservableCollection<string> LogLines { get; } = new();
+    public ObservableCollection<string> LogLines { get; } = [];
 
     /// <summary>Persist the current in-memory log to a file (delegates to <see cref="LogService"/>).</summary>
     private void SaveLogToFile() => LogService.SaveToFile(LogLines);
@@ -293,39 +284,35 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public LocalizedStrings Strings { get; private set; }
 
     /// <summary>Foliage options for the dropdown (display name from Strings, value for settings/converter).</summary>
-    public ObservableCollection<FoliageModeOption> FoliageModeOptions { get; } = new();
+    public ObservableCollection<FoliageModeOption> FoliageModeOptions { get; } = [];
 
     /// <summary>DeepBump tile overlap options (Small, Medium, Large). Matches DeepBump --color_to_normals-overlap.</summary>
-    public ObservableCollection<FoliageModeOption> DeepBumpOverlapOptions { get; } = new();
+    public ObservableCollection<FoliageModeOption> DeepBumpOverlapOptions { get; } = [];
 
     /// <summary>DeepBump input mode options (Auto, Grayscale, RGB).</summary>
-    public ObservableCollection<FoliageModeOption> DeepBumpInputModeOptions { get; } = new();
+    public ObservableCollection<FoliageModeOption> DeepBumpInputModeOptions { get; } = [];
 
     /// <summary>Normal operator options (Sobel + VC, Scharr + VC).</summary>
-    public ObservableCollection<FoliageModeOption> NormalOperatorOptions { get; } = new();
+    public ObservableCollection<FoliageModeOption> NormalOperatorOptions { get; } = [];
 
     /// <summary>Normal kernel size options (3x3, 5x5, 7x7 for Sobel; 3x3,5x5 for Scharr).</summary>
-    public ObservableCollection<FoliageModeOption> NormalKernelSizeOptions { get; } = new();
+    public ObservableCollection<FoliageModeOption> NormalKernelSizeOptions { get; } = [];
 
     /// <summary>Derivative source options: Color, Luminance, Color+Luminance Blend, Color+Luminance Max.</summary>
-    public ObservableCollection<FoliageModeOption> NormalDerivativeOptions { get; } = new();
+    public ObservableCollection<FoliageModeOption> NormalDerivativeOptions { get; } = [];
 
     /// <summary>Color scheme options for the Appearance dropdown (display name from Resources, value for settings).</summary>
-    public ObservableCollection<FoliageModeOption> ColorSchemeOptions { get; } = new();
+    public ObservableCollection<FoliageModeOption> ColorSchemeOptions { get; } = [];
 
     /// <summary>Specular ML channel mode options (which channels keep heuristic contribution).</summary>
-    public ObservableCollection<FoliageModeOption> MlSpecularBlendModeOptions { get; } = new();
+    public ObservableCollection<FoliageModeOption> MlSpecularBlendModeOptions { get; } = [];
     /// <summary>Specular ML blend math options (how heuristic and ML are combined).</summary>
-    public ObservableCollection<FoliageModeOption> MlSpecularBlendMathOptions { get; } = new();
-
+    public ObservableCollection<FoliageModeOption> MlSpecularBlendMathOptions { get; } = [];
 
     /// <summary>Built-in + custom tag rules for conversion and explore. Disabled custom rules are excluded.</summary>
     public IReadOnlyList<TagRule> GetEffectiveTagRules() => Rulesets.GetEffectiveTagRules();
 
     /// <summary>Call when CustomTagRules or effective rules change so legend and explore use new rules.</summary>
-
-
-
 
     public MainWindowViewModel()
     {
@@ -379,7 +366,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
-
     private void SetStatus(string key, params object[] args)
     {
         _statusKey = key;
@@ -400,15 +386,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             : Resources.GetStatusString(_statusKey, _statusFormatArgs);
     }
 
-
-
     private void RefreshPreviewIfActive()
     {
         if (string.IsNullOrWhiteSpace(PreviewArchivePath))
         {
             return;
         }
-
 
         _ = UpdatePreviewAsync();
     }
@@ -455,10 +438,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         });
     }
 
-
-
-
-
     private async Task FlushPendingSettingsSaveAsync()
         => await _settingsPersistence.FlushAsync().ConfigureAwait(false);
 
@@ -473,8 +452,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         ForegroundBrush = palette.ForegroundBrush;
     }
 
-
-
     private static void RunOnUiThread(Action action)
     {
         if (Dispatcher.UIThread.CheckAccess())
@@ -485,8 +462,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         Dispatcher.UIThread.Post(action);
     }
-
-
 
     private async Task UpdatePreviewAsync()
     {
@@ -547,7 +522,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 using var ms = new MemoryStream(previewResult.PngBytes);
@@ -573,10 +547,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
-
-
-
-
     public void Dispose()
     {
         _cts?.Cancel();
@@ -592,6 +562,5 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         DisposePreviewResources();
         _materialTagSemanticMatcher?.Dispose();
         _exploreController.Dispose();
-        GC.SuppressFinalize(this);
     }
 }

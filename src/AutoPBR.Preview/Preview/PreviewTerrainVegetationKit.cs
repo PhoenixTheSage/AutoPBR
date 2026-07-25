@@ -52,11 +52,11 @@ public sealed class PreviewTerrainVegetationKit
 
     public bool TryGet(PreviewTerrainTreeSpecies species, out PreviewTerrainVegetationSpeciesKit kit)
     {
-        for (var i = 0; i < Species.Count; i++)
+        foreach (var candidate in Species)
         {
-            if (Species[i].Species == species)
+            if (candidate.Species == species)
             {
-                kit = Species[i];
+                kit = candidate;
                 return true;
             }
         }
@@ -115,29 +115,21 @@ public readonly record struct PreviewTerrainVegetationBakeEntry(
     int? LogTopSlot);
 
 /// <summary>Lightweight plan passed into Full chunk bakes.</summary>
-public sealed class PreviewTerrainVegetationBakePlan
+public sealed class PreviewTerrainVegetationBakePlan(
+    string identity,
+    PreviewTerrainVegetationBakeEntry[] entries,
+    int totalSlotCount,
+    PreviewTerrainVegetationModelTemplates? modelTemplates = null)
 {
-    public PreviewTerrainVegetationBakePlan(
-        string identity,
-        PreviewTerrainVegetationBakeEntry[] entries,
-        int totalSlotCount,
-        PreviewTerrainVegetationModelTemplates? modelTemplates = null)
-    {
-        Identity = identity ?? "veg-empty";
-        Entries = entries ?? [];
-        TotalSlotCount = Math.Max(PreviewTerrainGrassSlots.MaxCount, totalSlotCount);
-        ModelTemplates = modelTemplates is { HasAny: true }
-            ? modelTemplates
-            : PreviewTerrainVegetationModelTemplates.Empty;
-    }
+    public string Identity { get; } = identity;
 
-    public string Identity { get; }
+    public PreviewTerrainVegetationBakeEntry[] Entries { get; } = entries;
 
-    public PreviewTerrainVegetationBakeEntry[] Entries { get; }
+    public int TotalSlotCount { get; } = Math.Max(PreviewTerrainGrassSlots.MaxCount, totalSlotCount);
 
-    public int TotalSlotCount { get; }
-
-    public PreviewTerrainVegetationModelTemplates ModelTemplates { get; }
+    public PreviewTerrainVegetationModelTemplates ModelTemplates { get; } = modelTemplates is { HasAny: true }
+        ? modelTemplates
+        : PreviewTerrainVegetationModelTemplates.Empty;
 
     public bool HasAny => Entries.Length > 0;
 
@@ -146,11 +138,11 @@ public sealed class PreviewTerrainVegetationBakePlan
 
     public bool TryGet(PreviewTerrainTreeSpecies species, out PreviewTerrainVegetationBakeEntry entry)
     {
-        for (var i = 0; i < Entries.Length; i++)
+        foreach (var candidate in Entries)
         {
-            if (Entries[i].Species == species)
+            if (candidate.Species == species)
             {
-                entry = Entries[i];
+                entry = candidate;
                 return true;
             }
         }
@@ -172,11 +164,11 @@ public sealed class PreviewTerrainVegetationBakePlan
         }
 
         // Last resort: any non-cactus wood present.
-        for (var i = 0; i < Entries.Length; i++)
+        foreach (var candidate in Entries)
         {
-            if (Entries[i].Species != PreviewTerrainTreeSpecies.Cactus)
+            if (candidate.Species != PreviewTerrainTreeSpecies.Cactus)
             {
-                entry = Entries[i];
+                entry = candidate;
                 return true;
             }
         }

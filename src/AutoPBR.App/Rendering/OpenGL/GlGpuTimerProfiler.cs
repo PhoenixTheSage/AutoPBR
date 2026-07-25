@@ -133,9 +133,7 @@ internal readonly record struct GlGpuTimingSnapshot(
         GlGpuTimingHudLinger? linger,
         double nowSeconds)
     {
-        var show = linger is null
-            ? ms >= GlGpuTimingHudLinger.MinDisplayMs
-            : linger.ShouldShow(passId, ms, nowSeconds);
+        var show = linger?.ShouldShow(passId, ms, nowSeconds) ?? ms >= GlGpuTimingHudLinger.MinDisplayMs;
         if (!show)
         {
             return;

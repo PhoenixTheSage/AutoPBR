@@ -1,6 +1,5 @@
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.Scene;
-using AutoPBR.Preview;
 
 namespace AutoPBR.App.Tests;
 
@@ -135,7 +134,7 @@ public sealed class PreviewTerrainTreePlacementTests
 
         Assert.NotNull(meshWithTrees);
         Assert.Contains(
-            meshWithTrees!.DrawBatches,
+            meshWithTrees.DrawBatches,
             b => b.MaterialIndex is 7 or 8);
     }
 
@@ -152,7 +151,7 @@ public sealed class PreviewTerrainTreePlacementTests
             plan);
         Assert.NotNull(mesh);
         Assert.DoesNotContain(
-            mesh!.DrawBatches,
+            mesh.DrawBatches,
             b => b.MaterialIndex >= PreviewTerrainGrassSlots.VegetationBase);
     }
 
@@ -164,7 +163,7 @@ public sealed class PreviewTerrainTreePlacementTests
         var buckets = new List<float>[9];
         for (var i = 0; i < buckets.Length; i++)
         {
-            buckets[i] = new List<float>();
+            buckets[i] = [];
         }
 
         buckets[7] = sideBucket;
@@ -192,7 +191,7 @@ public sealed class PreviewTerrainTreePlacementTests
         var buckets = new List<float>[9];
         for (var i = 0; i < buckets.Length; i++)
         {
-            buckets[i] = new List<float>();
+            buckets[i] = [];
         }
 
         PreviewTerrainTreeMeshEmitter.EmitCactusBlock(

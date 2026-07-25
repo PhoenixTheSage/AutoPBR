@@ -1,13 +1,12 @@
 using System.Numerics;
 
 using AutoPBR.App.Rendering.OpenGL;
-using AutoPBR.Preview;
 
 namespace AutoPBR.App.Tests;
 
 public class PreviewDrawBatchFrustumCullTests
 {
-    private static (Matrix4x4 ViewProj, Vector3 Eye, Vector4[] Planes) CreateLookingDownNegZFrustum()
+    private static (Vector3 Eye, Vector4[] Planes) CreateLookingDownNegZFrustum()
     {
         var eye = new Vector3(0f, 0f, 5f);
         var view = PreviewGlMatrices.CreateLookAtRhOpenGlRowStorage(eye, Vector3.Zero, Vector3.UnitY);
@@ -19,13 +18,13 @@ public class PreviewDrawBatchFrustumCullTests
         var vp = projection * view;
         var planes = new Vector4[PreviewFrustumPlanes.PlaneCount];
         PreviewFrustumPlanes.Extract(vp, planes);
-        return (vp, eye, planes);
+        return (eye, planes);
     }
 
     [Fact]
     public void IsBatchVisible_False_WhenSphereClearlyOutsideFrustum()
     {
-        var (_, eye, planes) = CreateLookingDownNegZFrustum();
+        var (eye, planes) = CreateLookingDownNegZFrustum();
         var batch = new PreviewDrawBatch(0, 3, 0)
         {
             BoundsCenter = new Vector3(100f, 0f, 0f),
@@ -39,7 +38,7 @@ public class PreviewDrawBatchFrustumCullTests
     [Fact]
     public void IsBatchVisible_True_WhenSphereStraddlesFrustumPlane()
     {
-        var (_, eye, planes) = CreateLookingDownNegZFrustum();
+        var (eye, planes) = CreateLookingDownNegZFrustum();
         // Near the right edge of the frustum at z≈0 (10 units ahead of eye at z=5 → look toward 0).
         var forward = Vector3.Normalize(-Vector3.UnitZ);
         var dist = 10f;
@@ -57,7 +56,7 @@ public class PreviewDrawBatchFrustumCullTests
     [Fact]
     public void IsBatchVisible_True_WhenBoundsUnknown()
     {
-        var (_, eye, planes) = CreateLookingDownNegZFrustum();
+        var (eye, planes) = CreateLookingDownNegZFrustum();
         var batch = new PreviewDrawBatch(0, 3, 0)
         {
             BoundsCenter = new Vector3(1000f, 0f, 0f),
@@ -72,7 +71,7 @@ public class PreviewDrawBatchFrustumCullTests
     [Fact]
     public void IsBatchVisible_ModelTranslationMovesBatchIntoFrustum()
     {
-        var (_, eye, planes) = CreateLookingDownNegZFrustum();
+        var (eye, planes) = CreateLookingDownNegZFrustum();
         var batch = new PreviewDrawBatch(0, 3, 0)
         {
             BoundsCenter = new Vector3(100f, 0f, 0f),
@@ -92,7 +91,7 @@ public class PreviewDrawBatchFrustumCullTests
     [Fact]
     public void IsBatchVisible_False_WhenBeyondLodMaxDistance()
     {
-        var (_, eye, planes) = CreateLookingDownNegZFrustum();
+        var (eye, planes) = CreateLookingDownNegZFrustum();
         var batch = new PreviewDrawBatch(0, 3, 0)
         {
             BoundsCenter = Vector3.Zero,
@@ -107,7 +106,7 @@ public class PreviewDrawBatchFrustumCullTests
     [Fact]
     public void IsSubjectFullyCulled_True_WhenAllBatchesOutside()
     {
-        var (_, eye, planes) = CreateLookingDownNegZFrustum();
+        var (eye, planes) = CreateLookingDownNegZFrustum();
         PreviewDrawBatch[] batches =
         [
             new(0, 3, 0) { BoundsCenter = new Vector3(80f, 0f, 0f), BoundsRadius = 1f },
@@ -121,7 +120,7 @@ public class PreviewDrawBatchFrustumCullTests
     [Fact]
     public void IsSubjectFullyCulled_False_WhenAnyBatchHasUnknownBounds()
     {
-        var (_, eye, planes) = CreateLookingDownNegZFrustum();
+        var (eye, planes) = CreateLookingDownNegZFrustum();
         PreviewDrawBatch[] batches =
         [
             new(0, 3, 0) { BoundsCenter = new Vector3(80f, 0f, 0f), BoundsRadius = 1f },

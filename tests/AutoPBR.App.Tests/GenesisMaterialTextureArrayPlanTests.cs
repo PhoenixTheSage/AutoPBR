@@ -1,7 +1,6 @@
 using AutoPBR.App.Rendering;
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.OpenGL;
-using AutoPBR.Preview;
 
 namespace AutoPBR.App.Tests;
 
@@ -10,11 +9,11 @@ public sealed class GenesisMaterialTextureArrayPlanTests
     [Fact]
     public void TryCreate_AcceptsSameDimensionMaterialSlots()
     {
-        var slots = new[]
-        {
+        PreviewMaterial[] slots =
+        [
             CreateMaterial(2, 2, seed: 1, normal: true, specular: true, heightMap: true),
             CreateMaterial(2, 2, seed: 2, normal: false, specular: true),
-        };
+        ];
 
         var ok = GenesisMaterialTextureArrayPlan.TryCreate(slots, maxTextureArrayLayers: 8, out var plan, out var reason);
 
@@ -28,11 +27,11 @@ public sealed class GenesisMaterialTextureArrayPlanTests
     [Fact]
     public void TryCreate_ResamplesMixedSlotDimensionsToLargestLayer()
     {
-        var slots = new[]
-        {
+        PreviewMaterial[] slots =
+        [
             CreateMaterial(2, 2, seed: 1),
             CreateMaterial(4, 2, seed: 2),
-        };
+        ];
 
         var ok = GenesisMaterialTextureArrayPlan.TryCreate(slots, maxTextureArrayLayers: 8, out var plan, out var reason);
 
@@ -45,12 +44,12 @@ public sealed class GenesisMaterialTextureArrayPlanTests
     [Fact]
     public void TryCreate_RejectsLayerLimitOverflow()
     {
-        var slots = new[]
-        {
+        PreviewMaterial[] slots =
+        [
             CreateMaterial(1, 1, seed: 1),
             CreateMaterial(1, 1, seed: 2),
             CreateMaterial(1, 1, seed: 3),
-        };
+        ];
 
         var ok = GenesisMaterialTextureArrayPlan.TryCreate(slots, maxTextureArrayLayers: 2, out var plan, out var reason);
 
@@ -62,11 +61,11 @@ public sealed class GenesisMaterialTextureArrayPlanTests
     [Fact]
     public void TryCreate_RejectsShortOptionalMapPayload()
     {
-        var slots = new[]
-        {
+        PreviewMaterial[] slots =
+        [
             CreateMaterial(2, 2, seed: 1, normal: true),
             CreateMaterial(2, 2, seed: 2, normal: true, normalBytesOverride: 4),
-        };
+        ];
 
         var ok = GenesisMaterialTextureArrayPlan.TryCreate(slots, maxTextureArrayLayers: 8, out var plan, out var reason);
 
@@ -78,11 +77,11 @@ public sealed class GenesisMaterialTextureArrayPlanTests
     [Fact]
     public void TryCreate_AcceptsMissingOptionalMapsAsNeutralLayers()
     {
-        var slots = new[]
-        {
+        PreviewMaterial[] slots =
+        [
             CreateMaterial(2, 2, seed: 1, normal: true, specular: true, heightMap: true),
             CreateMaterial(2, 2, seed: 2),
-        };
+        ];
 
         var ok = GenesisMaterialTextureArrayPlan.TryCreate(slots, maxTextureArrayLayers: 8, out var plan, out var reason);
 
@@ -145,16 +144,19 @@ public sealed class GenesisMaterialTextureArrayPlanTests
     [Fact]
     public void ContentEquals_TracksTexturePayloadChanges()
     {
-        var first = new[] { CreateMaterial(1, 1, seed: 1) };
-        var same = new[] { CreateMaterial(1, 1, seed: 1) };
-        var changed = new[] { CreateMaterial(1, 1, seed: 2) };
+        PreviewMaterial[] first = [CreateMaterial(1, 1, seed: 1)];
+        PreviewMaterial[] same = [CreateMaterial(1, 1, seed: 1)];
+        PreviewMaterial[] changed = [CreateMaterial(1, 1, seed: 2)];
 
         Assert.True(GenesisMaterialTextureArrayPlan.TryCreate(first, 8, out var firstPlan, out _));
         Assert.True(GenesisMaterialTextureArrayPlan.TryCreate(same, 8, out var samePlan, out _));
         Assert.True(GenesisMaterialTextureArrayPlan.TryCreate(changed, 8, out var changedPlan, out _));
+        Assert.NotNull(firstPlan);
+        Assert.NotNull(samePlan);
+        Assert.NotNull(changedPlan);
 
-        Assert.True(firstPlan!.ContentEquals(samePlan!));
-        Assert.False(firstPlan.ContentEquals(changedPlan!));
+        Assert.True(firstPlan.ContentEquals(samePlan));
+        Assert.False(firstPlan.ContentEquals(changedPlan));
     }
 
     [Fact]
@@ -235,11 +237,11 @@ public sealed class GenesisMaterialTextureArrayPlanTests
     [Fact]
     public void Fixture_EntityEmulatedTessellationGateAllowsTextureArraysWhenEffectiveTessellationIsOff()
     {
-        var subject = CreateSubject(new[]
-        {
+        var subject = CreateSubject(
+        [
             CreateMaps(2, 2, seed: 1, normal: true, specular: true, heightMap: true),
             CreateMaps(2, 2, seed: 2, normal: true)
-        },
+        ],
             entityEmulated: true);
         var slots = MapSubjectMaterials(subject);
         var effectiveTessellation = PreviewEntityEmulatedShaderGating.EffectiveTessellationDisplacement(
@@ -357,17 +359,17 @@ public sealed class GenesisMaterialTextureArrayPlanTests
     }
 
     private static PreviewMaterial[] MapSubjectMaterials(PreviewModelSubject subject) =>
-        subject.Materials.Select(m => PreviewMaterialMapper.FromCoreMaps(m)).ToArray();
+        [.. subject.Materials.Select(m => PreviewMaterialMapper.FromCoreMaps(m))];
 
     private static void AssertDrawBatchesReferenceMaterialSlots(PreviewModelSubject subject)
     {
         Assert.NotEmpty(subject.DrawBatches);
-        Assert.All(subject.DrawBatches, batch =>
+        foreach (var batch in subject.DrawBatches)
         {
             Assert.InRange(batch.FirstIndex, 0, subject.Indices.Length - 1);
             Assert.InRange(batch.IndexCount, 1, subject.Indices.Length - batch.FirstIndex);
             Assert.InRange(batch.MaterialIndex, 0, subject.Materials.Length - 1);
-        });
+        }
     }
 
     private static PreviewTextureMaps CreateMaps(

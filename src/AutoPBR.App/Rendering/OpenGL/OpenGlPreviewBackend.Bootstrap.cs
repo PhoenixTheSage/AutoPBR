@@ -1,4 +1,3 @@
-using AutoPBR.App.Rendering.Scene;
 
 using AutoPBR.App.Lang;
 
@@ -82,7 +81,6 @@ public sealed partial class OpenGlPreviewBackend
         _mesh = null;
         _groundMesh?.Dispose();
         _groundMesh = null;
-        _groundChunkBatches = [];
         DisposeTerrainGpuChunks();
         DisposeTerrainMeshPool();
         DisposeGroundTextureArrays();
@@ -179,14 +177,13 @@ public sealed partial class OpenGlPreviewBackend
                 var bootMask = GenesisShaderFeatureMaskBuilder.Build(_settings, entityEmulatedPreview: false);
                 var bootUseEntitySkinningSsbo = ShouldUseEntitySkinningSsbo();
                 var bootUseMaterialDrawRecordSsbo = ShouldUseMaterialDrawRecordSsbo();
-                var bootUseMaterialTextureArrays = false;
                 var bootUseDrawRecordBaseInstance = bootUseMaterialDrawRecordSsbo && ShouldUseDrawRecordBaseInstance();
                 var bootDefines = BuildGenesisProgramDefines(
                     bootMask,
                     bootUseEntitySkinningSsbo,
                     bootUseMaterialDrawRecordSsbo,
                     materialTextureArrays: false,
-                    drawRecordBaseInstance: false);
+                    drawRecordBaseInstance: bootUseDrawRecordBaseInstance);
                 if (!_useOpenGlEs)
                 {
                     _program = CreatePreviewProgram(
@@ -210,7 +207,7 @@ public sealed partial class OpenGlPreviewBackend
                     }
                 }
 
-                bootUseMaterialTextureArrays = ShouldUseMaterialTextureArrays();
+                var bootUseMaterialTextureArrays = ShouldUseMaterialTextureArrays();
                 bootDefines = BuildGenesisProgramDefines(
                     bootMask,
                     bootUseEntitySkinningSsbo,

@@ -1,7 +1,6 @@
 using AutoPBR.App.Rendering;
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.Core.Models;
-using AutoPBR.Preview;
 
 using Avalonia.Threading;
 
@@ -25,7 +24,10 @@ public partial class MainWindowViewModel
 
     private async Task RefreshPreviewGroundTextureAsync()
     {
-        _previewGroundTextureCts?.Cancel();
+        if (_previewGroundTextureCts is not null)
+        {
+            await _previewGroundTextureCts.CancelAsync().ConfigureAwait(false);
+        }
         _previewGroundTextureCts?.Dispose();
         var cts = new CancellationTokenSource();
         _previewGroundTextureCts = cts;
@@ -156,14 +158,14 @@ public partial class MainWindowViewModel
                     kit.TopArchivePath);
             }
 
-            return bundledFallback!;
+            return bundledFallback;
         }
 
         var grassTop = Fallback();
         var slotCount = Math.Max(
             PreviewTerrainGrassSlots.MaxCount,
             vegetation.HasAny ? vegetation.TotalSlotCount : PreviewTerrainGrassSlots.MaxCount);
-        var slots = new PreviewMaterial[slotCount];
+        var slots = new PreviewMaterial?[slotCount];
         var cutout = new bool[slotCount];
         if (vegetation.CutoutBySlot is { Length: > 0 } vegCutout)
         {
@@ -186,7 +188,7 @@ public partial class MainWindowViewModel
             slots[PreviewTerrainGrassSlots.Sand] = MapOrAlias(kit?.Sand, kit?.SandArchivePath, grassTop);
             slots[PreviewTerrainGrassSlots.Gravel] = MapOrAlias(kit?.Gravel, kit?.GravelArchivePath, grassTop);
             FillVegetationSlots(slots, vegetation, grassTop);
-            return (slots, cutout);
+            return (FinalizeGroundSlots(slots, grassTop), cutout);
         }
 
         if (kit.Top is null || kit.Side is null || kit.Dirt is null)
@@ -202,7 +204,7 @@ public partial class MainWindowViewModel
         slots[PreviewTerrainGrassSlots.Dirt] =
             PreviewMaterialMapper.FromCoreMaps(kit.Dirt, kit.DirtArchivePath);
 
-        if (kit.EmitOverlay && kit.Overlay is not null && kit.OverlayArchivePath is not null)
+        if (kit is { EmitOverlay: true, Overlay: not null, OverlayArchivePath: not null })
         {
             slots[PreviewTerrainGrassSlots.Overlay] = PreviewMaterialMapper.FromCoreMaps(
                 ApplyGrassColormapTintIfNeeded(kit.Overlay, kit.OverlayArchivePath),
@@ -214,19 +216,31 @@ public partial class MainWindowViewModel
             slots[PreviewTerrainGrassSlots.Overlay] = slots[PreviewTerrainGrassSlots.Top];
         }
 
+        var topMaterial = slots[PreviewTerrainGrassSlots.Top]!;
         slots[PreviewTerrainGrassSlots.Stone] =
-            MapOrAlias(kit.Stone, kit.StoneArchivePath, slots[PreviewTerrainGrassSlots.Top]);
+            MapOrAlias(kit.Stone, kit.StoneArchivePath, topMaterial);
         slots[PreviewTerrainGrassSlots.Sand] =
-            MapOrAlias(kit.Sand, kit.SandArchivePath, slots[PreviewTerrainGrassSlots.Top]);
+            MapOrAlias(kit.Sand, kit.SandArchivePath, topMaterial);
         slots[PreviewTerrainGrassSlots.Gravel] =
-            MapOrAlias(kit.Gravel, kit.GravelArchivePath, slots[PreviewTerrainGrassSlots.Top]);
+            MapOrAlias(kit.Gravel, kit.GravelArchivePath, topMaterial);
 
-        FillVegetationSlots(slots, vegetation, slots[PreviewTerrainGrassSlots.Top]);
-        return (slots, cutout);
+        FillVegetationSlots(slots, vegetation, topMaterial);
+        return (FinalizeGroundSlots(slots, topMaterial), cutout);
+    }
+
+    private static PreviewMaterial[] FinalizeGroundSlots(PreviewMaterial?[] slots, PreviewMaterial fallback)
+    {
+        var result = new PreviewMaterial[slots.Length];
+        for (var i = 0; i < result.Length; i++)
+        {
+            result[i] = slots[i] ?? fallback;
+        }
+
+        return result;
     }
 
     private void FillVegetationSlots(
-        PreviewMaterial[] slots,
+        PreviewMaterial?[] slots,
         PreviewTerrainVegetationKit vegetation,
         PreviewMaterial alias)
     {
@@ -261,12 +275,11 @@ public partial class MainWindowViewModel
                     species.LeavesOrTopArchivePath);
             }
 
-            if (species.LogTopSlot is int topSlot &&
-                species.LogTopMaps is not null &&
+            if (species is { LogTopSlot: { } topSlot, LogTopMaps: { } logTopMaps } &&
                 (uint)topSlot < (uint)slots.Length)
             {
                 slots[topSlot] = PreviewMaterialMapper.FromCoreMaps(
-                    species.LogTopMaps,
+                    logTopMaps,
                     species.LogTopArchivePath);
             }
         }
@@ -304,7 +317,7 @@ public partial class MainWindowViewModel
             return true;
         }
 
-        return kit.OverlayArchivePath is not null &&
-               PreviewGrassColormapTint.NeedsGrassColormapTint(kit.OverlayArchivePath);
+        return kit is { OverlayArchivePath: not null and var overlayPath } &&
+               PreviewGrassColormapTint.NeedsGrassColormapTint(overlayPath);
     }
 }

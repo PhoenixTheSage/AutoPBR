@@ -1,23 +1,21 @@
 using System.Diagnostics;
 using System.Numerics;
 using System.Reflection;
+
 using System.Runtime.InteropServices;
-using System.Threading;
 
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.OpenGL;
 using AutoPBR.App.Rendering.Scene;
-using AutoPBR.Core.Models;
-using AutoPBR.Preview;
 
 using Avalonia;
+using JetBrains.Annotations;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.OpenGL;
 using Avalonia.OpenGL.Controls;
-using Avalonia.Platform;
 using Avalonia.Rendering;
 using Avalonia.Threading;
 
@@ -334,6 +332,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
     }
 
     /// <summary>Updates the LabPBR ground plane material (grass_block_top).</summary>
+    [UsedImplicitly]
     public void SetGroundMaterial(PreviewMaterial? material)
     {
         void Core()
@@ -668,19 +667,6 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         }
 
         RequestNextFrameRenderingCore();
-    }
-
-    /// <summary>
-    /// Requests the next OpenGL frame after the current dispatcher turn (Avalonia #17865-safe).
-    /// </summary>
-    private void QueuePreviewFrame()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        Dispatcher.UIThread.Post(RequestNextFrameRenderingCore, DispatcherPriority.Background);
     }
 
     /// <summary>
@@ -1430,14 +1416,15 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
             gl = null;
         }
 
-        if (_hdrPresentPathFailed || !_backend.HdrPresentActive || _nativeHwnd == IntPtr.Zero ||
-            context.GlInterface is null)
+        if (_hdrPresentPathFailed || !_backend.HdrPresentActive || _nativeHwnd == IntPtr.Zero)
         {
-            // DXGI CreateSwapChainForHwnd owns this HWND while alive; WGL SwapBuffers can hang until released.
+            PreviewHdrDisplayInfo display = PreviewHdrDisplayInfo.Unsupported;
+            if (_nativeHwnd != IntPtr.Zero)
+            {
+                display = GetCachedHdrDisplayInfo();
+            }
+
             ReleaseHdrSwapchain(gl);
-            var display = _nativeHwnd != IntPtr.Zero
-                ? GetCachedHdrDisplayInfo()
-                : PreviewHdrDisplayInfo.Unsupported;
             RaiseHdrProbeUpdated(display, nativeWglActive: _nativeWglPresenter is not null, _hdrPresentPathFailed);
             return false;
         }

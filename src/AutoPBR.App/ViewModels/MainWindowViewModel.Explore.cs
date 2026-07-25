@@ -1,10 +1,7 @@
 using System.Collections.ObjectModel;
-using System.Globalization;
 
 using Avalonia.Controls;
 using Avalonia.Input;
-using Avalonia.Media;
-using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -15,10 +12,6 @@ using JetBrains.Annotations;
 using AutoPBR.App.Lang;
 using AutoPBR.App.Models;
 using AutoPBR.App.Services;
-using AutoPBR.App.ViewModels.Rulesets;
-using AutoPBR.Core;
-using AutoPBR.Core.Embeddings;
-using AutoPBR.Core.Models;
 
 namespace AutoPBR.App.ViewModels;
 
@@ -42,7 +35,7 @@ public partial class MainWindowViewModel
     public bool HasScannedArchive => ScannedArchiveRoot != null;
     public bool ShowExploreEmptyMessage => !HasScannedArchive;
 
-    private static readonly ObservableCollection<ArchiveNode> EmptyArchiveNodes = new();
+    private static readonly ObservableCollection<ArchiveNode> EmptyArchiveNodes = [];
 
     public ObservableCollection<ArchiveNode> ScannedArchiveTopLevel =>
         ScannedArchiveRoot?.Children ?? EmptyArchiveNodes;
@@ -54,7 +47,7 @@ public partial class MainWindowViewModel
     public ObservableCollection<ArchiveNode> ExploreViewItems => FocusedArchiveNode?.Children ?? ScannedArchiveTopLevel;
 
     /// <summary>Virtualized Explore list: visible nodes under the focused folder, including expanded descendants.</summary>
-    public ObservableCollection<ExploreListRow> ExploreDisplayItems { get; } = new();
+    public ObservableCollection<ExploreListRow> ExploreDisplayItems { get; } = [];
 
     private int _exploreDisplayRebuildQueued;
     private CancellationTokenSource? _exploreFilterDebounceCts;
@@ -67,9 +60,9 @@ public partial class MainWindowViewModel
         _exploreTagFilterOptions ??= BuildExploreTagFilterOptions();
 
     private IReadOnlyList<ExploreTagFilterOption> BuildExploreTagFilterOptions() =>
-        [new ExploreTagFilterOption { Id = "", DisplayName = LocalizedStrings.ExploreTagFilterAll }, .. GetEffectiveTagRules().Select(r => new ExploreTagFilterOption { Id = r.Id, DisplayName = r.DisplayName })];
+        [new() { Id = "", DisplayName = LocalizedStrings.ExploreTagFilterAll }, .. GetEffectiveTagRules().Select(r => new ExploreTagFilterOption { Id = r.Id, DisplayName = r.DisplayName })];
     /// <summary>Breadcrumb path for Explore (from root to current folder); click to navigate.</summary>
-    public ObservableCollection<ArchiveNode> ExploreBreadcrumb { get; } = new();
+    public ObservableCollection<ArchiveNode> ExploreBreadcrumb { get; } = [];
 
     public bool CanGoBackExplore => FocusedArchiveNode != null;
 
@@ -81,13 +74,11 @@ public partial class MainWindowViewModel
             return;
         }
 
-
-        var path = new List<ArchiveNode>();
+        List<ArchiveNode> path = [];
         for (var n = FocusedArchiveNode; n != null && !string.IsNullOrEmpty(n.Name); n = n.Parent)
         {
             path.Add(n);
         }
-
 
         path.Reverse();
         foreach (var node in path)
@@ -113,7 +104,7 @@ public partial class MainWindowViewModel
 
     private void RebuildExploreDisplayItems()
     {
-        var previousSelected = SelectedExploreNodes.ToList();
+        List<ArchiveNode> previousSelected = [.. SelectedExploreNodes];
         var previousPrimary = SelectedExploreNode;
 
         _exploreSelectionSyncing = true;
@@ -128,9 +119,8 @@ public partial class MainWindowViewModel
 
             ExploreDisplayListBuilder.BuildInto(ExploreDisplayItems, ExploreViewItems);
 
-            var visible = previousSelected
-                .Where(n => ExploreDisplayItems.Any(r => ReferenceEquals(r.Node, n)))
-                .ToList();
+            List<ArchiveNode> visible = [.. previousSelected
+                .Where(n => ExploreDisplayItems.Any(r => ReferenceEquals(r.Node, n)))];
             ReplaceExploreSelection(visible);
             SelectedExploreNode = previousPrimary is not null &&
                                   ExploreDisplayItems.Any(r => ReferenceEquals(r.Node, previousPrimary))
@@ -249,7 +239,6 @@ public partial class MainWindowViewModel
             return;
         }
 
-
         var host = (IArchiveNodeHost)_exploreController;
         var roots = FocusedArchiveNode?.Children ?? ScannedArchiveRoot.Children;
         foreach (var node in roots)
@@ -268,7 +257,6 @@ public partial class MainWindowViewModel
         {
             return;
         }
-
 
         var parent = FocusedArchiveNode.Parent;
         if (parent is null || string.IsNullOrEmpty(parent.Name))
@@ -316,7 +304,6 @@ public partial class MainWindowViewModel
             return;
         }
 
-
         var root = FocusedArchiveNode ?? ScannedArchiveRoot;
         ExpandAllInSubtree(root, true);
         ScheduleRebuildExploreDisplayItems();
@@ -329,7 +316,6 @@ public partial class MainWindowViewModel
         {
             return;
         }
-
 
         var root = FocusedArchiveNode ?? ScannedArchiveRoot;
         ExpandAllInSubtree(root, false);
@@ -371,7 +357,7 @@ public partial class MainWindowViewModel
 
     [ObservableProperty] private ArchiveNode? _selectedExploreNode;
     [ObservableProperty] private ExploreListRow? _selectedExploreRow;
-    public ObservableCollection<ArchiveNode> SelectedExploreNodes { get; } = new();
+    public ObservableCollection<ArchiveNode> SelectedExploreNodes { get; } = [];
     private ArchiveNode? _selectionAnchorExploreNode;
     private bool _exploreSelectionSyncing;
 
@@ -472,10 +458,10 @@ public partial class MainWindowViewModel
     {
         if (ExploreDisplayItems.Count > 0)
         {
-            return ExploreDisplayItems.Select(static r => r.Node).ToList();
+            return [.. ExploreDisplayItems.Select(static r => r.Node)];
         }
 
-        var ordered = new List<ArchiveNode>();
+        List<ArchiveNode> ordered = [];
 
         void Walk(ArchiveNode n)
         {
@@ -504,7 +490,7 @@ public partial class MainWindowViewModel
 
     private void ReplaceExploreSelection(IEnumerable<ArchiveNode> nodes)
     {
-        var desired = nodes.Distinct().ToList();
+        List<ArchiveNode> desired = [.. nodes.Distinct()];
         foreach (var n in SelectedExploreNodes.ToList())
         {
             if (!desired.Contains(n))

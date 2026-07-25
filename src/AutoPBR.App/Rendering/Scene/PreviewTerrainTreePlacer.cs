@@ -1,4 +1,3 @@
-using AutoPBR.Preview;
 
 namespace AutoPBR.App.Rendering.Scene;
 
@@ -28,7 +27,7 @@ public static class PreviewTerrainTreePlacer
         int flatPadHalfExtent = PreviewStageConstants.TerrainFlatPadHalfExtent)
     {
         var result = new List<Placement>(8);
-        if (plan is null || !plan.HasAny)
+        if (!plan.HasAny)
         {
             return result;
         }
@@ -77,7 +76,7 @@ public static class PreviewTerrainTreePlacer
                     (trunkSpan == 0
                         ? 0
                         : HashInt(x, z, gen.Seed ^ 0x51AA51AA) % (trunkSpan + 1));
-                var variant = HashInt(x, z, gen.Seed ^ unchecked((int)0x7E3E7E3E));
+                var variant = HashInt(x, z, gen.Seed ^ 0x7E3E7E3E);
 
                 occupied.Add(PackKey(x, z));
                 result.Add(new Placement(

@@ -1,7 +1,5 @@
-using System.Collections.Concurrent;
 
 using AutoPBR.App.Models;
-using AutoPBR.Core;
 using AutoPBR.Core.Embeddings;
 using AutoPBR.Core.Models;
 
@@ -45,7 +43,7 @@ internal sealed partial class ExploreTreeController
                     var storageKey = ResolveTagStorageKey(archivePath);
                     if (!string.IsNullOrEmpty(storageKey))
                     {
-                        _effectiveTagIdsByStorageKey[storageKey] = computed.Select(static t => t.Id).ToList();
+                        _effectiveTagIdsByStorageKey[storageKey] = [.. computed.Select(static t => t.Id)];
                     }
                     await Dispatcher.UIThread.InvokeAsync(() =>
                     {
@@ -134,7 +132,7 @@ internal sealed partial class ExploreTreeController
                     var storageKey = ResolveTagStorageKey(archivePath);
                     if (!string.IsNullOrEmpty(storageKey))
                     {
-                        _effectiveTagIdsByStorageKey[storageKey] = computed.Select(static t => t.Id).ToList();
+                        _effectiveTagIdsByStorageKey[storageKey] = [.. computed.Select(static t => t.Id)];
                     }
 
                     await Dispatcher.UIThread.InvokeAsync(() =>
@@ -319,7 +317,7 @@ internal sealed partial class ExploreTreeController
                 {
                     await Task.Run(() =>
                     {
-                        for (var i = 0; i < paths.Count; i++)
+                        foreach (var path in paths)
                         {
                             cts.Token.ThrowIfCancellationRequested();
                             if (Volatile.Read(ref _effectiveTagEpoch) != refreshEpoch)
@@ -327,7 +325,6 @@ internal sealed partial class ExploreTreeController
                                 return;
                             }
 
-                            var path = paths[i];
                             // During a full refresh we want final semantic ranking (including fused score), not deferred keyword placeholders.
                             var tags = ComputeEffectiveTags(path, includeDictionaryEvidence: true, deferSemanticMl: false);
                             _effectiveTagCache[path] = tags;

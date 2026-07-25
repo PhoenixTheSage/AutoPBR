@@ -1,7 +1,4 @@
 using System.Numerics;
-using System.Threading.Tasks;
-
-using AutoPBR.Preview;
 
 namespace AutoPBR.App.Rendering.OpenGL;
 
@@ -11,7 +8,7 @@ public sealed partial class OpenGlPreviewBackend
     private const int CpuFrustumCullParallelMinCommands = 64;
 
     private byte[] _cpuCullVisibilityScratch = [];
-    private Vector4[] _cpuCullFrustumPlaneScratch = new Vector4[PreviewFrustumPlanes.PlaneCount];
+    private readonly Vector4[] _cpuCullFrustumPlaneScratch = new Vector4[PreviewFrustumPlanes.PlaneCount];
 
     private bool TryUploadGenesisIndirectDrawCommands(PreviewModelSubject? model)
     {
@@ -158,19 +155,12 @@ public sealed partial class OpenGlPreviewBackend
         var occlusionLabel = useVoxel ? "/DDA" : (useHiZ ? "/Hi-Z" : "");
         if (drawn && !_loggedGpuCompactedDrawSubmission)
         {
-            _gpuCompactedSubmissionGroups++;
-            _gpuCompactedSubmissionSourceCommands += commandCount;
             _loggedGpuCompactedDrawSubmission = true;
             EmitDiagnostic(
                 $"[3D preview] GPU-compacted draw submission enabled: pass={passLabel}, " +
                 $"sourceCommands={commandCount}, apiCalls=1, order={(preserveOrder ? "stable" : "parallel")}; " +
                 "frustum/LOD" + occlusionLabel +
                 " culling feeds indirect-count draws without CPU readback.");
-        }
-        else if (drawn)
-        {
-            _gpuCompactedSubmissionGroups++;
-            _gpuCompactedSubmissionSourceCommands += commandCount;
         }
 
         return drawn;
@@ -415,8 +405,6 @@ public sealed partial class OpenGlPreviewBackend
         _loggedMultiDrawIndirectGroups = false;
         _loggedGpuCompactedDrawSubmission = false;
         _loggedTerrainShadowGpuCull = false;
-        _gpuCompactedSubmissionGroups = 0;
-        _gpuCompactedSubmissionSourceCommands = 0;
         _gpuDrawCommandCompactionCompileDisabled = false;
         _terrainShadowCullCompileDisabled = false;
     }
@@ -432,8 +420,6 @@ public sealed partial class OpenGlPreviewBackend
         _loggedMultiDrawIndirectGroups = false;
         _loggedGpuCompactedDrawSubmission = false;
         _loggedTerrainShadowGpuCull = false;
-        _gpuCompactedSubmissionGroups = 0;
-        _gpuCompactedSubmissionSourceCommands = 0;
         _gpuDrawCommandCompactionCompileDisabled = false;
         _terrainShadowCullCompileDisabled = false;
     }

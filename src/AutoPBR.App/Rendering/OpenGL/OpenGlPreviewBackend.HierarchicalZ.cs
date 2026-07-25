@@ -1,9 +1,5 @@
-using System.Numerics;
-using System.Runtime.InteropServices;
-
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.Scene;
-using AutoPBR.Preview;
 
 using Silk.NET.OpenGL;
 
@@ -18,9 +14,7 @@ public sealed partial class OpenGlPreviewBackend
     private GlHierarchicalZPyramid? _hierarchicalZ;
     private GlTerrainOccluderAtlas? _terrainOccluderAtlas;
     private GlShaderProgram? _hizBuildProgram;
-    private GlShaderProgram? _hizSphereTestProgram;
     private bool _hizBuildCompileDisabled;
-    private bool _hizSphereTestCompileDisabled;
     private bool _loggedHiZOcclusionEnabled;
     private bool _loggedVoxelDdaOcclusionEnabled;
     private bool _loggedVoxelDdaOcclusionPending;
@@ -33,8 +27,6 @@ public sealed partial class OpenGlPreviewBackend
     private long _lastOcclusionDebugSampleUnixMs;
     private bool _occlusionDebugSampleThisFrame;
     private bool _occlusionDebugReadThisFrame;
-    private readonly List<Vector4> _terrainHiZSphereScratch = [];
-    private uint[] _terrainHiZVisibilityScratch = [];
 
     private bool CanUseHiZOcclusionThisFrame =>
         _glCapabilities?.CanUseHierarchicalZOcclusion == true &&
@@ -55,7 +47,7 @@ public sealed partial class OpenGlPreviewBackend
     /// Hi-Z prepass only when the voxel DDA atlas is unavailable. Never run both: TintCulled used to
     /// force Hi-Z alongside DDA and combined with sync counter readbacks collapsed FPS.
     /// </summary>
-    private bool ShouldRunHiZPrepassThisFrame(in PreviewRenderSettingsSnapshot settings) =>
+    private bool ShouldRunHiZPrepassThisFrame(in PreviewRenderSettingsSnapshot _) =>
         CanUseHiZOcclusionThisFrame && !CanUseVoxelDdaOcclusionThisFrame;
 
     private bool TryEnsureHierarchicalZResources(int width, int height)
@@ -96,34 +88,6 @@ public sealed partial class OpenGlPreviewBackend
         return true;
     }
 
-    private bool TryEnsureHiZSphereTestProgram()
-    {
-        if (_hizSphereTestCompileDisabled || _gl is null || _shaderCtx is null)
-        {
-            return false;
-        }
-
-        if (_hizSphereTestProgram is { IsValid: true })
-        {
-            return true;
-        }
-
-        _hizSphereTestProgram = CreatePreviewComputeProgram(
-            "genesis_hiz_sphere_test.comp",
-            out var error,
-            "genesis-hiz-sphere-test");
-        if (_hizSphereTestProgram.IsValid)
-        {
-            return true;
-        }
-
-        EmitDiagnostic("[3D preview] Hi-Z sphere test compute failed: " + (error ?? "link failed"));
-        _hizSphereTestProgram.Dispose();
-        _hizSphereTestProgram = null;
-        _hizSphereTestCompileDisabled = true;
-        return false;
-    }
-
     private bool TryBuildHierarchicalZFromPrepass()
     {
         if (_hierarchicalZ is null ||
@@ -140,8 +104,6 @@ public sealed partial class OpenGlPreviewBackend
     {
         _hizBuildProgram?.Dispose();
         _hizBuildProgram = null;
-        _hizSphereTestProgram?.Dispose();
-        _hizSphereTestProgram = null;
         _hierarchicalZ?.Dispose();
         _hierarchicalZ = null;
         _depthPrepassTarget?.Dispose();
@@ -149,7 +111,6 @@ public sealed partial class OpenGlPreviewBackend
         _terrainOccluderAtlas?.Dispose();
         _terrainOccluderAtlas = null;
         _hizBuildCompileDisabled = false;
-        _hizSphereTestCompileDisabled = false;
         _loggedHiZOcclusionEnabled = false;
         _loggedVoxelDdaOcclusionEnabled = false;
         _loggedVoxelDdaOcclusionPending = false;
@@ -160,12 +121,10 @@ public sealed partial class OpenGlPreviewBackend
     private void AbandonHierarchicalZResources()
     {
         _hizBuildProgram = null;
-        _hizSphereTestProgram = null;
         _hierarchicalZ = null;
         _depthPrepassTarget = null;
         _terrainOccluderAtlas = null;
         _hizBuildCompileDisabled = false;
-        _hizSphereTestCompileDisabled = false;
         _loggedHiZOcclusionEnabled = false;
         _loggedVoxelDdaOcclusionEnabled = false;
         _loggedVoxelDdaOcclusionPending = false;
@@ -329,56 +288,5 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         _terrainOccluderAtlas.PumpUpload();
-    }
-
-    /// <summary>
-    /// After frustum select, drop terrain chunks fully occluded in the Hi-Z pyramid.
-    /// </summary>
-    private void FilterTerrainSelectionByHiZ(
-        List<TerrainChunkDrawCull.Candidate> candidates,
-        List<int> selected,
-        Matrix4x4 viewProj)
-    {
-        if (selected.Count == 0 ||
-            _hierarchicalZ is not { IsValid: true } ||
-            !TryEnsureHiZSphereTestProgram())
-        {
-            return;
-        }
-
-        _terrainHiZSphereScratch.Clear();
-        for (var i = 0; i < selected.Count; i++)
-        {
-            var c = candidates[selected[i]];
-            _terrainHiZSphereScratch.Add(new Vector4(c.BoundsCenter, c.BoundsRadius));
-        }
-
-        if (_terrainHiZVisibilityScratch.Length < _terrainHiZSphereScratch.Count)
-        {
-            _terrainHiZVisibilityScratch = new uint[Math.Max(_terrainHiZSphereScratch.Count, 64)];
-        }
-
-        if (!_hierarchicalZ.TestSpheres(
-                _hizSphereTestProgram!,
-                CollectionsMarshal.AsSpan(_terrainHiZSphereScratch),
-                viewProj,
-                _terrainHiZVisibilityScratch.AsSpan(0, _terrainHiZSphereScratch.Count)))
-        {
-            return;
-        }
-
-        var write = 0;
-        for (var i = 0; i < selected.Count; i++)
-        {
-            if (_terrainHiZVisibilityScratch[i] != 0u)
-            {
-                selected[write++] = selected[i];
-            }
-        }
-
-        if (write < selected.Count)
-        {
-            selected.RemoveRange(write, selected.Count - write);
-        }
     }
 }

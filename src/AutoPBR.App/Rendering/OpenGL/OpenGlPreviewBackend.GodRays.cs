@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Numerics;
 
 using AutoPBR.App.Rendering.Abstractions;
-using AutoPBR.App.Rendering.Scene;
 
 using Silk.NET.OpenGL;
 
@@ -259,12 +258,6 @@ public sealed partial class OpenGlPreviewBackend
         _sceneCapture is not null &&
         _scenePresentProgram is { IsValid: true } &&
         _godRayQuadVao != 0;
-
-    private float ResolvePreviewSceneCaptureScale(in PreviewRenderSettingsSnapshot settings) =>
-        GodRaysPassCoordinator.ResolveSceneCaptureScale(
-            settings,
-            s => IsPreviewTaaActive(s),
-            s => ResolveEffectivePreviewTaa(s));
 
     private void ResolveSceneCaptureSize(ref GlRenderFrame frame, out int captureW, out int captureH, out float captureScale) =>
         GodRaysPassCoordinator.ResolveSceneCaptureSize(
@@ -626,7 +619,6 @@ public sealed partial class OpenGlPreviewBackend
         var shadowTexelSize = new Vector2(1f / shadowFarRes, 1f / shadowFarRes);
         var shadowTexelSizeNear = new Vector2(1f / shadowNearRes, 1f / shadowNearRes);
         var shadowTexelSizeMid = new Vector2(1f / shadowMidRes, 1f / shadowMidRes);
-        var layerWorldY = PreviewStageConstants.CloudLayerBaseWorldY(frame.Settings.CloudLayerHeight);
 
         BindDefaultFramebuffer(ref frame);
         var priorDepthTest = gl.IsEnabled(EnableCap.DepthTest);
@@ -886,15 +878,6 @@ public sealed partial class OpenGlPreviewBackend
         if (!priorBlend)
         {
             gl.Disable(EnableCap.Blend);
-        }
-    }
-
-    private void SetVec2OnProgram(GlShaderProgram program, string name, Vector2 v)
-    {
-        var loc = program.GetUniformLocation(name);
-        if (loc >= 0)
-        {
-            _gl!.Uniform2(loc, v.X, v.Y);
         }
     }
 }

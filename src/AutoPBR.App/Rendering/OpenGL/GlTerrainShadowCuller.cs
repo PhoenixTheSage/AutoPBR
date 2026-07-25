@@ -9,7 +9,7 @@ namespace AutoPBR.App.Rendering.OpenGL;
 /// Desktop compute cull of terrain chunks into near/mid/far MultiDrawIndirect command lists.
 /// Compacted commands + atomic counters feed <c>MultiDrawIndirectCount</c> with no CPU readback.
 /// </summary>
-internal sealed class GlTerrainShadowCuller : IDisposable
+internal sealed class GlTerrainShadowCuller(GL gl) : IDisposable
 {
     private const uint ChunkRecordsBinding = 0;
     private const uint SourceCommandsBinding = 1;
@@ -23,24 +23,15 @@ internal sealed class GlTerrainShadowCuller : IDisposable
     private const int LocalSizeX = 64;
     private const int FloatsPerRecord = 8;
 
-    private readonly GL _gl;
-    private readonly GlIndirectDrawCommandBuffer _nearCommands;
-    private readonly GlIndirectDrawCommandBuffer _midCommands;
-    private readonly GlIndirectDrawCommandBuffer _farCommands;
+    private readonly GlIndirectDrawCommandBuffer _nearCommands = new(gl);
+    private readonly GlIndirectDrawCommandBuffer _midCommands = new(gl);
+    private readonly GlIndirectDrawCommandBuffer _farCommands = new(gl);
     private uint _chunkRecords;
     private uint _counters;
     private int _chunkCapacity;
     private int _commandCapacity;
     private float[] _recordScratch = [];
     private bool _disposed;
-
-    public GlTerrainShadowCuller(GL gl)
-    {
-        _gl = gl;
-        _nearCommands = new GlIndirectDrawCommandBuffer(gl);
-        _midCommands = new GlIndirectDrawCommandBuffer(gl);
-        _farCommands = new GlIndirectDrawCommandBuffer(gl);
-    }
 
     public GlIndirectDrawCommandBuffer NearCommands => _nearCommands;
     public GlIndirectDrawCommandBuffer MidCommands => _midCommands;
@@ -85,12 +76,12 @@ internal sealed class GlTerrainShadowCuller : IDisposable
         UploadChunkRecords(chunks);
         ResetCounters();
 
-        _gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, ChunkRecordsBinding, _chunkRecords);
-        _gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, SourceCommandsBinding, sourceCommands.Handle);
-        _gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, NearCommandsBinding, _nearCommands.Handle);
-        _gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, MidCommandsBinding, _midCommands.Handle);
-        _gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, FarCommandsBinding, _farCommands.Handle);
-        _gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, CountersBinding, _counters);
+        gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, ChunkRecordsBinding, _chunkRecords);
+        gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, SourceCommandsBinding, sourceCommands.Handle);
+        gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, NearCommandsBinding, _nearCommands.Handle);
+        gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, MidCommandsBinding, _midCommands.Handle);
+        gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, FarCommandsBinding, _farCommands.Handle);
+        gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, CountersBinding, _counters);
 
         program.Use();
         SetUint(program, "uChunkCount", (uint)count);
@@ -105,20 +96,20 @@ internal sealed class GlTerrainShadowCuller : IDisposable
         SetPlanes(program, "uMidPlanes", midPlanes);
         SetPlanes(program, "uFarPlanes", farPlanes);
 
-        _gl.DispatchCompute((uint)((count + LocalSizeX - 1) / LocalSizeX), 1, 1);
-        _gl.MemoryBarrier(ShaderStorageBarrierBit | CommandBarrierBit | BufferUpdateBarrierBit);
+        gl.DispatchCompute((uint)((count + LocalSizeX - 1) / LocalSizeX), 1, 1);
+        gl.MemoryBarrier(ShaderStorageBarrierBit | CommandBarrierBit | BufferUpdateBarrierBit);
 
         MaxDrawCount = count;
         _nearCommands.SetCommandCount(count);
         _midCommands.SetCommandCount(count);
         _farCommands.SetCommandCount(count);
 
-        _gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, ChunkRecordsBinding, 0);
-        _gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, SourceCommandsBinding, 0);
-        _gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, NearCommandsBinding, 0);
-        _gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, MidCommandsBinding, 0);
-        _gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, FarCommandsBinding, 0);
-        _gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, CountersBinding, 0);
+        gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, ChunkRecordsBinding, 0);
+        gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, SourceCommandsBinding, 0);
+        gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, NearCommandsBinding, 0);
+        gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, MidCommandsBinding, 0);
+        gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, FarCommandsBinding, 0);
+        gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, CountersBinding, 0);
         return true;
     }
 
@@ -144,17 +135,17 @@ internal sealed class GlTerrainShadowCuller : IDisposable
             _recordScratch[o + 7] = 0f;
         }
 
-        _gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, _chunkRecords);
-        _gl.BufferSubData<float>(BufferTargetARB.ShaderStorageBuffer, 0, _recordScratch.AsSpan(0, floatCount));
-        _gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, 0);
+        gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, _chunkRecords);
+        gl.BufferSubData<float>(BufferTargetARB.ShaderStorageBuffer, 0, _recordScratch.AsSpan(0, floatCount));
+        gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, 0);
     }
 
     private void ResetCounters()
     {
         Span<uint> zeros = stackalloc uint[3];
-        _gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, _counters);
-        _gl.BufferSubData<uint>(BufferTargetARB.ShaderStorageBuffer, 0, zeros);
-        _gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, 0);
+        gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, _counters);
+        gl.BufferSubData<uint>(BufferTargetARB.ShaderStorageBuffer, 0, zeros);
+        gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, 0);
     }
 
     private bool EnsureCapacity(int chunkCount)
@@ -198,18 +189,18 @@ internal sealed class GlTerrainShadowCuller : IDisposable
     {
         if (handle != 0)
         {
-            _gl.DeleteBuffer(handle);
+            gl.DeleteBuffer(handle);
             handle = 0;
         }
 
-        handle = _gl.GenBuffer();
-        _gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, handle);
+        handle = gl.GenBuffer();
+        gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, handle);
         unsafe
         {
-            _gl.BufferData(BufferTargetARB.ShaderStorageBuffer, byteSize, null, BufferUsageARB.DynamicDraw);
+            gl.BufferData(BufferTargetARB.ShaderStorageBuffer, byteSize, null, BufferUsageARB.DynamicDraw);
         }
 
-        _gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, 0);
+        gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, 0);
     }
 
     private void SetUint(GlShaderProgram program, string name, uint value)
@@ -217,7 +208,7 @@ internal sealed class GlTerrainShadowCuller : IDisposable
         var loc = program.GetUniformLocation(name);
         if (loc >= 0)
         {
-            _gl.Uniform1(loc, value);
+            gl.Uniform1(loc, value);
         }
     }
 
@@ -226,7 +217,7 @@ internal sealed class GlTerrainShadowCuller : IDisposable
         var loc = program.GetUniformLocation(name);
         if (loc >= 0)
         {
-            _gl.Uniform1(loc, value);
+            gl.Uniform1(loc, value);
         }
     }
 
@@ -235,7 +226,7 @@ internal sealed class GlTerrainShadowCuller : IDisposable
         var loc = program.GetUniformLocation(name);
         if (loc >= 0)
         {
-            _gl.Uniform1(loc, value);
+            gl.Uniform1(loc, value);
         }
     }
 
@@ -244,7 +235,7 @@ internal sealed class GlTerrainShadowCuller : IDisposable
         var loc = program.GetUniformLocation(name);
         if (loc >= 0)
         {
-            _gl.Uniform3(loc, value.X, value.Y, value.Z);
+            gl.Uniform3(loc, value.X, value.Y, value.Z);
         }
     }
 
@@ -259,7 +250,7 @@ internal sealed class GlTerrainShadowCuller : IDisposable
             }
 
             var p = planes[i];
-            _gl.Uniform4(loc, p.X, p.Y, p.Z, p.W);
+            gl.Uniform4(loc, p.X, p.Y, p.Z, p.W);
         }
     }
 
@@ -286,24 +277,20 @@ internal sealed class GlTerrainShadowCuller : IDisposable
             return;
         }
 
-        _gl.DeleteBuffer(handle);
+        gl.DeleteBuffer(handle);
         handle = 0;
     }
 }
 
 [StructLayout(LayoutKind.Sequential)]
-internal readonly struct TerrainShadowCullRecord
+internal readonly struct TerrainShadowCullRecord(
+    Vector3 center,
+    float radius,
+    bool isFullLod,
+    int candidateIndex)
 {
-    public readonly Vector3 Center;
-    public readonly float Radius;
-    public readonly bool IsFullLod;
-    public readonly float CandidateIndex;
-
-    public TerrainShadowCullRecord(Vector3 center, float radius, bool isFullLod, int candidateIndex)
-    {
-        Center = center;
-        Radius = MathF.Max(0f, radius);
-        IsFullLod = isFullLod;
-        CandidateIndex = candidateIndex;
-    }
+    public readonly Vector3 Center = center;
+    public readonly float Radius = MathF.Max(0f, radius);
+    public readonly bool IsFullLod = isFullLod;
+    public readonly float CandidateIndex = candidateIndex;
 }

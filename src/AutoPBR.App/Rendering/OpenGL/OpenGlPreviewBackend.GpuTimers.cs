@@ -4,49 +4,22 @@ namespace AutoPBR.App.Rendering.OpenGL;
 
 public sealed partial class OpenGlPreviewBackend
 {
-    private readonly struct GpuTimerScopeLease : IDisposable
+    private readonly struct GpuTimerScopeLease(GlGpuTimerProfiler? profiler, GlGpuTimerScope scope) : IDisposable
     {
-        private readonly GlGpuTimerProfiler? _profiler;
-        private readonly GlGpuTimerScope _scope;
-
-        public GpuTimerScopeLease(GlGpuTimerProfiler? profiler, GlGpuTimerScope scope)
-        {
-            _profiler = profiler;
-            _scope = scope;
-        }
-
-        public void Dispose() => _profiler?.EndScope(_scope);
+        public void Dispose() => profiler?.EndScope(scope);
     }
 
-    private readonly struct CpuTimerScopeLease : IDisposable
+    private readonly struct CpuTimerScopeLease(GlCpuTimerProfiler? profiler, GlGpuTimerScope scope) : IDisposable
     {
-        private readonly GlCpuTimerProfiler? _profiler;
-        private readonly GlGpuTimerScope _scope;
-
-        public CpuTimerScopeLease(GlCpuTimerProfiler? profiler, GlGpuTimerScope scope)
-        {
-            _profiler = profiler;
-            _scope = scope;
-        }
-
-        public void Dispose() => _profiler?.EndScope(_scope);
+        public void Dispose() => profiler?.EndScope(scope);
     }
 
-    private readonly struct PassTimerScopeLease : IDisposable
+    private readonly struct PassTimerScopeLease(GpuTimerScopeLease gpu, CpuTimerScopeLease cpu) : IDisposable
     {
-        private readonly GpuTimerScopeLease _gpu;
-        private readonly CpuTimerScopeLease _cpu;
-
-        public PassTimerScopeLease(GpuTimerScopeLease gpu, CpuTimerScopeLease cpu)
-        {
-            _gpu = gpu;
-            _cpu = cpu;
-        }
-
         public void Dispose()
         {
-            _gpu.Dispose();
-            _cpu.Dispose();
+            gpu.Dispose();
+            cpu.Dispose();
         }
     }
 

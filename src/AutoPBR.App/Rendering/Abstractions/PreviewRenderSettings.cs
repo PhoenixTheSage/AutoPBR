@@ -67,7 +67,7 @@ public sealed class PreviewRenderSettings
     public int ChunkViewDistance { get; init; } = 8;
 
     /// <summary>Deterministic world seed for streamed terrain (pad under subject stays flat).</summary>
-    public int TerrainWorldSeed { get; init; } = unchecked((int)0x41504252);
+    public int TerrainWorldSeed { get; init; } = 0x41504252;
 
     /// <summary>Biome region scale (1 = default; larger = bigger biomes).</summary>
     public float TerrainBiomeSize { get; init; } = 1f;

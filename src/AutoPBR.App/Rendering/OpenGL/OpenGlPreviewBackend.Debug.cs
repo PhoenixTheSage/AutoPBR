@@ -88,13 +88,12 @@ public sealed partial class OpenGlPreviewBackend
         var sunRadius = sunDist * (PreviewSunScreenProjection.SunRadius / PreviewSunScreenProjection.SunDistance) *
                         Math.Clamp(frame.Settings.AtmosphereSunDiscSize, 0.05f, 2f);
 
-        MoonBillboardPlacement moonPlacement = default;
         var drawMoonMarker = TryComputeMoonBillboardPlacement(
             frame.Eye,
             frame.WorldLightDir,
             celestialFarPlane,
             frame.Settings.AtmosphereMoonDiscSize,
-            out moonPlacement);
+            out var moonPlacement);
 
         Span<float> verts = stackalloc float[SunDebugFloatCount];
         var i = 0;

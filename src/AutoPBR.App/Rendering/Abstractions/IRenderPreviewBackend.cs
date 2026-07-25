@@ -1,8 +1,5 @@
 using System.Numerics;
 
-using AutoPBR.Core.Models;
-using AutoPBR.Preview;
-
 using JetBrains.Annotations;
 
 namespace AutoPBR.App.Rendering.Abstractions;

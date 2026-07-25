@@ -1,7 +1,5 @@
 using System.Numerics;
 
-using AutoPBR.Preview;
-
 namespace AutoPBR.App.Rendering.Scene;
 
 /// <summary>
@@ -34,10 +32,10 @@ public static class PreviewTerrainTreeMeshEmitter
             : PreviewTerrainVegetationModelTemplates.Empty;
 
         var emittedBlocks = 0;
-        for (var i = 0; i < placements.Count; i++)
+        foreach (var placement in placements)
         {
             emittedBlocks += EmitOne(
-                placements[i],
+                placement,
                 surfaceWorldY,
                 metersPerTile,
                 buckets,
@@ -587,9 +585,9 @@ public static class PreviewTerrainTreeMeshEmitter
 
     private static int ResolveLogSlot(in PreviewTerrainTreePlacer.Placement placement, bool yFace)
     {
-        if (yFace && placement.Materials.LogTopSlot is int top)
+        if (yFace && placement.Materials is { LogTopSlot: not null })
         {
-            return top;
+            return placement.Materials.LogTopSlot.Value;
         }
 
         return placement.Materials.LogSlot;

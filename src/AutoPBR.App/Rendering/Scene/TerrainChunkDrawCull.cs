@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Numerics;
-using System.Threading.Tasks;
 
 using AutoPBR.App.Rendering.OpenGL;
 
@@ -136,8 +135,6 @@ public static class TerrainChunkDrawCull
         return matCmp != 0 ? matCmp : sourceOrderA.CompareTo(sourceOrderB);
     }
 
-    public static int DrawGroupPublic(in Candidate c) => DrawGroup(c);
-
     private static void CollectFrustumHitsSequential(
         IReadOnlyList<Candidate> candidates,
         ReadOnlySpan<Vector4> planes,
@@ -260,12 +257,12 @@ public static class TerrainChunkDrawCull
 
     private static int DrawGroup(in Candidate c)
     {
-        if (c.Lod == TerrainChunkLodKind.Full && c.NearPom)
+        if (c is { Lod: TerrainChunkLodKind.Full, NearPom: true })
         {
             return 0;
         }
 
-        if (c.Lod == TerrainChunkLodKind.Full)
+        if (c is { Lod: TerrainChunkLodKind.Full })
         {
             return 1;
         }

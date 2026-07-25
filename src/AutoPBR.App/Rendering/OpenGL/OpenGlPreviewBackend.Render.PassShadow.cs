@@ -1,9 +1,7 @@
 using System.Numerics;
 
-using AutoPBR.App.Rendering;
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.Scene;
-using AutoPBR.Core.Models;
 
 using Silk.NET.OpenGL;
 
@@ -86,7 +84,7 @@ public sealed partial class OpenGlPreviewBackend
             if (frame.Settings.ShowGroundMesh)
             {
                 PreviewShadowFrustum.SeedTerrainShadowBounds(
-                    focusXz: new Vector3(frame.Eye.X, 0f, frame.Eye.Z),
+                    focusXz: frame.Eye with { Y = 0f },
                     groundFloorY: _terrainEnvFloorY,
                     groundCeilingY: _terrainEnvCeilingY,
                     xzHalfExtent: farHalf,
@@ -193,11 +191,9 @@ public sealed partial class OpenGlPreviewBackend
         BeginShadowCasterPass(ref frame);
         PrepareShadowSubjectGpuUploads(ref frame);
         var entityBoneUniformsApplied = false;
-        try
+        if (frame.ShadowCascadesActive)
         {
-            if (frame.ShadowCascadesActive)
-            {
-                var nearFactor = frame.Settings.ShowGroundMesh ? 0.35f : 1.0f;
+            var nearFactor = frame.Settings.ShowGroundMesh ? 0.35f : 1.0f;
                 var nearUnits = frame.Settings.ShowGroundMesh ? 0.75f : 2.0f;
                 RenderShadowCascadeSlice(
                     ref frame,
@@ -229,27 +225,21 @@ public sealed partial class OpenGlPreviewBackend
                     polygonOffsetUnits: 1.0f * frame.ShadowBiasScale,
                     terrainSelection: _terrainShadowSelectedFar,
                     inclusionPad: farInclusionPad);
-            }
-            else
-            {
-                var factor = frame.Settings.ShowGroundMesh ? 0.5f * frame.ShadowBiasScale : 1.25f;
-                var units = frame.Settings.ShowGroundMesh ? 1.0f * frame.ShadowBiasScale : 2.5f;
-                RenderShadowCascadeSlice(
-                    ref frame,
-                    restore,
-                    frame.ShadowVp,
-                    _shadowTarget!,
-                    ref entityBoneUniformsApplied,
-                    polygonOffsetFactor: factor,
-                    polygonOffsetUnits: units,
-                    terrainSelection: _terrainShadowSelectedFar,
-                    inclusionPad: farInclusionPad);
-            }
         }
-        finally
+        else
         {
-            // Shared subject uploads are submitted after the scene pass consumes them.
-            _shadowSubjectUploadsPrepared = false;
+            var factor = frame.Settings.ShowGroundMesh ? 0.5f * frame.ShadowBiasScale : 1.25f;
+            var units = frame.Settings.ShowGroundMesh ? 1.0f * frame.ShadowBiasScale : 2.5f;
+            RenderShadowCascadeSlice(
+                ref frame,
+                restore,
+                frame.ShadowVp,
+                _shadowTarget!,
+                ref entityBoneUniformsApplied,
+                polygonOffsetFactor: factor,
+                polygonOffsetUnits: units,
+                terrainSelection: _terrainShadowSelectedFar,
+                inclusionPad: farInclusionPad);
         }
     }
 
@@ -279,7 +269,7 @@ public sealed partial class OpenGlPreviewBackend
         if (frame.Settings.ShowGroundMesh)
         {
             PreviewShadowFrustum.SeedTerrainShadowBounds(
-                focusXz: new Vector3(frame.Eye.X, 0f, frame.Eye.Z),
+                focusXz: frame.Eye with { Y = 0f },
                 groundFloorY: _terrainEnvFloorY,
                 groundCeilingY: _terrainEnvCeilingY,
                 xzHalfExtent: xzHalfExtent,
@@ -312,7 +302,7 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         PreviewShadowFrustum.SeedTerrainShadowBounds(
-            focusXz: new Vector3(frame.Eye.X, 0f, frame.Eye.Z),
+            focusXz: frame.Eye with { Y = 0f },
             groundFloorY: -1f,
             groundCeilingY: 1f,
             xzHalfExtent: xzHalfExtent,
@@ -374,7 +364,7 @@ public sealed partial class OpenGlPreviewBackend
             }
 
             PreviewShadowFrustum.SeedTerrainShadowBounds(
-                focusXz: new Vector3(frame.Eye.X, 0f, frame.Eye.Z),
+                focusXz: frame.Eye with { Y = 0f },
                 groundFloorY: PreviewStageConstants.GroundPlaneWorldY +
                               PreviewStageConstants.TerrainSolidFloorRelativeY,
                 groundCeilingY: _terrainEnvCeilingY,
@@ -443,7 +433,7 @@ public sealed partial class OpenGlPreviewBackend
         if (_terrainShadowWorldAabbValid)
         {
             PreviewShadowFrustum.SeedTerrainShadowBounds(
-                focusXz: new Vector3(eye.X, 0f, eye.Z),
+                focusXz: eye with { Y = 0f },
                 groundFloorY: _terrainEnvFloorY,
                 groundCeilingY: _terrainEnvCeilingY,
                 xzHalfExtent: coverage,
@@ -479,7 +469,7 @@ public sealed partial class OpenGlPreviewBackend
         var cacheMax = new Vector3(float.NegativeInfinity);
 
         PreviewShadowFrustum.SeedTerrainShadowBounds(
-            focusXz: new Vector3(eye.X, 0f, eye.Z),
+            focusXz: eye with { Y = 0f },
             groundFloorY: _terrainEnvFloorY,
             groundCeilingY: _terrainEnvCeilingY,
             xzHalfExtent: coverage,
@@ -600,7 +590,6 @@ public sealed partial class OpenGlPreviewBackend
         }
     }
 
-    private bool _shadowSubjectUploadsPrepared;
     private bool _shadowSubjectUseMaterialDrawRecords;
     private bool _shadowSubjectUseIndirectDrawCommands;
     private bool _shadowSubjectUseMaterialTextureArrays;
@@ -611,7 +600,6 @@ public sealed partial class OpenGlPreviewBackend
         _shadowSubjectUseMaterialDrawRecords = _frameSubjectUseMaterialDrawRecords;
         _shadowSubjectUseIndirectDrawCommands = _frameSubjectUseIndirectDrawCommands;
         _shadowSubjectUseMaterialTextureArrays = _frameSubjectUseMaterialTextureArrays;
-        _shadowSubjectUploadsPrepared = _frameSubjectGpuUploadsReady;
     }
 
     private void EnsureFrameSubjectGpuUploads(ref GlRenderFrame frame)
@@ -637,7 +625,7 @@ public sealed partial class OpenGlPreviewBackend
         _frameSubjectUseMaterialDrawRecords = TryUploadGenesisMaterialDrawRecords(ref frame);
         _frameSubjectUseIndirectDrawCommands = TryUploadGenesisIndirectDrawCommands(frame.BlockModel);
         _frameSubjectUseMaterialTextureArrays =
-            TryEnsureMaterialTextureArrays(ref frame, _frameSubjectUseMaterialDrawRecords, out _);
+            TryEnsureMaterialTextureArrays(ref frame, _frameSubjectUseMaterialDrawRecords);
         _frameSubjectGpuUploadsReady = true;
     }
 
@@ -652,7 +640,6 @@ public sealed partial class OpenGlPreviewBackend
         _frameSubjectUseMaterialDrawRecords = false;
         _frameSubjectUseIndirectDrawCommands = false;
         _frameSubjectUseMaterialTextureArrays = false;
-        _shadowSubjectUploadsPrepared = false;
         _shadowSubjectUseMaterialDrawRecords = false;
         _shadowSubjectUseIndirectDrawCommands = false;
         _shadowSubjectUseMaterialTextureArrays = false;

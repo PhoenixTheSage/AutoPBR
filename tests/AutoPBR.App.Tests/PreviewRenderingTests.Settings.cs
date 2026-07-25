@@ -624,12 +624,6 @@ public sealed partial class PreviewRenderingTests
             "AutoPBR.App",
             "Services",
             "UserSettingsSynchronizer.cs");
-        var backend = LoadSource(ThisFilePath(),
-            "src",
-            "AutoPBR.App",
-            "Rendering",
-            "OpenGL",
-            "OpenGlPreviewBackend.cs");
         var render = LoadSource(ThisFilePath(),
             "src",
             "AutoPBR.App",
@@ -929,11 +923,11 @@ public sealed partial class PreviewRenderingTests
             "OpenGL",
             "OpenGlPreviewBackend.Taa.cs");
 
-        Assert.Contains("private void InvalidatePreviewTaaHistory()", taa, StringComparison.Ordinal);
-        Assert.Contains("SetScene(IRenderPreviewScene scene)", backend, StringComparison.Ordinal);
-        Assert.Contains("SetMaterial(PreviewMaterial? material)", backend, StringComparison.Ordinal);
-        Assert.Contains("SetBlockModelPreview(PreviewModelSubject? subject", backend, StringComparison.Ordinal);
-        Assert.True(backend.Split("InvalidatePreviewTaaHistory()", StringSplitOptions.None).Length >= 5);
+        Assert.Contains("private void InvalidatePreviewTaaHistory()", taa);
+        Assert.Contains("SetScene(IRenderPreviewScene scene)", backend);
+        Assert.Contains("SetMaterial(PreviewMaterial? material)", backend);
+        Assert.Contains("SetBlockModelPreview(PreviewModelSubject? subject", backend);
+        Assert.True(backend.Split("InvalidatePreviewTaaHistory()").Length >= 5);
     }
 
     [Fact]

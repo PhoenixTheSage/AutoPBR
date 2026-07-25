@@ -1,15 +1,7 @@
-using System.Buffers.Binary;
-using System.Diagnostics;
 using System.Numerics;
-using System.Runtime.InteropServices;
 
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.Scene;
-using AutoPBR.Core.Models;
-using AutoPBR.Preview;
-
-using Avalonia.OpenGL;
-using Avalonia.Platform;
 
 using Silk.NET.OpenGL;
 

@@ -1,5 +1,4 @@
 using AutoPBR.App.Rendering.Abstractions;
-using AutoPBR.Preview;
 
 using Silk.NET.OpenGL;
 
@@ -38,17 +37,15 @@ public sealed partial class OpenGlPreviewBackend
 
     private bool TryEnsureMaterialTextureArrays(
         ref GlRenderFrame frame,
-        bool materialDrawRecordsUploaded,
-        out GenesisMaterialTextureArrayPlan? plan)
+        bool materialDrawRecordsUploaded)
     {
-        plan = null;
         var slots = frame.BlockSlots;
         if (!GenesisMaterialTextureArrayEligibility.TryResolve(
                 ShouldUseMaterialTextureArrays(),
                 materialDrawRecordsUploaded,
                 frame.BlockModel is not null,
                 slots is { Length: > 0 },
-                out var eligibilityReason))
+                out _))
         {
             return false;
         }
@@ -66,7 +63,7 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         var maxLayers = Math.Max(1, _gl?.GetInteger(GetPName.MaxArrayTextureLayers) ?? 1);
-        if (!GenesisMaterialTextureArrayPlan.TryCreate(slots, maxLayers, out plan, out var reason))
+        if (!GenesisMaterialTextureArrayPlan.TryCreate(slots, maxLayers, out var plan, out var reason))
         {
             LogMaterialTextureArrayFallbackOnce(reason);
             return false;
@@ -150,7 +147,7 @@ public sealed partial class OpenGlPreviewBackend
     /// </summary>
     private void BindFallbackMaterialTextureArraysIfPresent(MainProgramUniformLocs u)
     {
-        if (u.AlbedoArray < 0 && u.NormalArray < 0 && u.SpecularArray < 0 && u.HeightArray < 0)
+        if (u is { AlbedoArray: < 0, NormalArray: < 0, SpecularArray: < 0, HeightArray: < 0 })
         {
             return;
         }

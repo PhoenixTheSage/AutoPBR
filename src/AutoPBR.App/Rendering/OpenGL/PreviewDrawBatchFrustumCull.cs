@@ -1,12 +1,10 @@
 using System.Numerics;
 
-using AutoPBR.Preview;
-
 namespace AutoPBR.App.Rendering.OpenGL;
 
 /// <summary>
 /// CPU frustum / distance visibility for <see cref="PreviewDrawBatch"/> spheres.
-/// Matches <see cref="GlGpuDrawCommandCompactor.WriteCullRecord"/> transform conventions.
+/// Matches <see cref="GlGpuDrawCommandCompactor.WriteCullRecord(Span{float}, PreviewDrawBatch)"/> transform conventions.
 /// </summary>
 internal static class PreviewDrawBatchFrustumCull
 {
@@ -89,14 +87,14 @@ internal static class PreviewDrawBatchFrustumCull
             return false;
         }
 
-        for (var i = 0; i < batches.Count; i++)
+        foreach (var batch in batches)
         {
-            if (!batches[i].HasBounds)
+            if (!batch.HasBounds)
             {
                 return false;
             }
 
-            if (IsBatchVisible(batches[i], frustumPlanes, cameraPosition, modelMatrix, boundsPadding))
+            if (IsBatchVisible(batch, frustumPlanes, cameraPosition, modelMatrix, boundsPadding))
             {
                 return false;
             }

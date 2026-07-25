@@ -29,32 +29,6 @@
         <vm:MainWindowViewModel/>
     </Design.DataContext>
 
-    <Window.Styles>
-        <!-- Long filesystem paths inflate TextBox desired width and stretch parent grids; keep compact until focused. -->
-        <Style Selector="TextBox.path-entry">
-            <Setter Property="MinWidth" Value="0" />
-            <Setter Property="MaxWidth" Value="440" />
-            <Setter Property="HorizontalAlignment" Value="Left" />
-        </Style>
-        <Style Selector="TextBox.path-entry:focus">
-            <Setter Property="MaxWidth" Value="10000" />
-            <Setter Property="HorizontalAlignment" Value="Stretch" />
-        </Style>
-        <Style Selector="Button.preview-help-btn">
-            <Setter Property="Width" Value="28" />
-            <Setter Property="Height" Value="28" />
-            <Setter Property="Padding" Value="0" />
-            <Setter Property="CornerRadius" Value="4" />
-            <Setter Property="HorizontalContentAlignment" Value="Center" />
-            <Setter Property="VerticalContentAlignment" Value="Center" />
-        </Style>
-        <Style Selector="Button.preview-help-btn:pointerover /template/ ContentPresenter">
-            <Setter Property="Opacity" Value="0.92" />
-        </Style>
-        <Style Selector="Button.preview-help-btn:pressed">
-            <Setter Property="Opacity" Value="0.78" />
-        </Style>
-    </Window.Styles>
     <Window.Resources>
         <appConv:ConditionValueOptionsConverter x:Key="ConditionValueOptionsConverter" />
         <appConv:ActionValueOptionsConverter x:Key="ActionValueOptionsConverter" />

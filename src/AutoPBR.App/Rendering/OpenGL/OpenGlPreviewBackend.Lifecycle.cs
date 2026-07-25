@@ -3,10 +3,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 
 using AutoPBR.App.Lang;
-using AutoPBR.App.Rendering;
 using AutoPBR.App.Rendering.Abstractions;
-using AutoPBR.Core.Models;
-using AutoPBR.Preview;
 
 using Avalonia.OpenGL;
 
@@ -779,7 +776,7 @@ public sealed partial class OpenGlPreviewBackend
         }
     }
 
-    private void UploadEntityNormalSkinningBoneMatrices(GL gl, int boneSnapshotCount)
+    private void UploadEntityNormalSkinningBoneMatrices(GL _, int boneSnapshotCount)
     {
         if (_entityNormalBoneUbo == 0)
         {
@@ -803,7 +800,7 @@ public sealed partial class OpenGlPreviewBackend
         _entityBoneUpload?.Upload(_entitySkinningUboScratch.AsSpan(0, EntitySkinningUboMatrixBytes));
     }
 
-    private void UploadPreviousEntitySkinningBoneMatrices(GL gl)
+    private void UploadPreviousEntitySkinningBoneMatrices(GL _)
     {
         if (_entityPrevBoneUbo == 0)
         {
@@ -865,15 +862,7 @@ public sealed partial class OpenGlPreviewBackend
             return;
         }
 
-        string versionStr;
-        if (sidecar is not null)
-        {
-            versionStr = sidecar.VersionString;
-        }
-        else
-        {
-            versionStr = ReadGlVersionString(_gl);
-        }
+        var versionStr = sidecar is not null ? sidecar.VersionString : ReadGlVersionString(_gl);
 
         _glVersionString = versionStr;
         _useOpenGlEs = sidecar is null &&
@@ -1012,7 +1001,6 @@ public sealed partial class OpenGlPreviewBackend
         _mesh = null;
         _groundMesh?.Dispose();
         _groundMesh = null;
-        _groundChunkBatches = [];
         DisposeTerrainGpuChunks();
         DisposeTerrainMeshPool();
         DisposeGroundTextureArrays();
@@ -1081,7 +1069,6 @@ public sealed partial class OpenGlPreviewBackend
         _gl = null;
         _mesh = null;
         _groundMesh = null;
-        _groundChunkBatches = [];
         _terrainGpuChunks.Clear();
         _terrainStreamer?.Dispose();
         _terrainStreamer = null;

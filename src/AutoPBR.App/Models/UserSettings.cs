@@ -222,7 +222,7 @@ public sealed class UserSettings
     public int Preview3DChunkViewDistance { get; set; } = 8;
 
     /// <summary>Deterministic seed for streamed preview terrain.</summary>
-    public int Preview3DWorldSeed { get; set; } = unchecked((int)0x41504252);
+    public int Preview3DWorldSeed { get; set; } = 0x41504252;
 
     /// <summary>Biome region scale (1 = default; larger = bigger biomes).</summary>
     public double Preview3DTerrainBiomeSize { get; set; } = 1.0;

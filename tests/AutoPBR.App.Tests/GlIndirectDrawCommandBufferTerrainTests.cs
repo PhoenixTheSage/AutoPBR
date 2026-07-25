@@ -1,5 +1,4 @@
 using AutoPBR.App.Rendering.OpenGL;
-using AutoPBR.Preview;
 
 namespace AutoPBR.App.Tests;
 

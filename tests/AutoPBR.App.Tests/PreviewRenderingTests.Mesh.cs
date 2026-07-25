@@ -1,8 +1,6 @@
 using AutoPBR.App.Rendering;
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.Scene;
-using AutoPBR.Core.Models;
-using AutoPBR.Preview;
 
 using System.Numerics;
 
@@ -155,9 +153,12 @@ public sealed partial class PreviewRenderingTests
         Assert.Equal(1, mat.Height);
         Assert.True(mat.IsPlantForNoHeight);
         Assert.Equal(10, mat.AlbedoRgba.Span[0]);
-        Assert.Equal(4, mat.NormalRgba!.Value.Span[3]);
-        Assert.Equal(8, mat.SpecularRgba!.Value.Span[3]);
-        Assert.Equal(12, mat.HeightRgba!.Value.Span[3]);
+        Assert.True(mat.NormalRgba.HasValue);
+        Assert.Equal(4, mat.NormalRgba.Value.Span[3]);
+        Assert.True(mat.SpecularRgba.HasValue);
+        Assert.Equal(8, mat.SpecularRgba.Value.Span[3]);
+        Assert.True(mat.HeightRgba.HasValue);
+        Assert.Equal(12, mat.HeightRgba.Value.Span[3]);
     }
 
     [Fact]

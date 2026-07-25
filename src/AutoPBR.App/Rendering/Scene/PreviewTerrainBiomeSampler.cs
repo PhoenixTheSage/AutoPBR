@@ -59,15 +59,7 @@ public static class PreviewTerrainBiomeSampler
         return BuildColumn(height, biome, continental);
     }
 
-    /// <summary>Height-only accessor (wraps <see cref="Sample"/>).</summary>
-    public static int SampleHeight(
-        int x,
-        int z,
-        int flatPadHalfExtent = PreviewStageConstants.TerrainFlatPadHalfExtent,
-        int transitionBlocks = PreviewStageConstants.TerrainTransitionBlocks,
-        int seed = PreviewStageConstants.TerrainHeightSeed) =>
-        Sample(x, z, flatPadHalfExtent, transitionBlocks, seed).Height;
-
+    /// <summary>Height-only accessor (wraps <see cref="Sample(int,int,in PreviewTerrainWorldGenSettings,int,int)"/>).</summary>
     public static int SampleHeight(
         int x,
         int z,
@@ -75,21 +67,6 @@ public static class PreviewTerrainBiomeSampler
         int flatPadHalfExtent = PreviewStageConstants.TerrainFlatPadHalfExtent,
         int transitionBlocks = PreviewStageConstants.TerrainTransitionBlocks) =>
         Sample(x, z, worldGen, flatPadHalfExtent, transitionBlocks).Height;
-
-    public static void SampleClimate(
-        int x,
-        int z,
-        int seed,
-        out float temperature,
-        out float humidity,
-        out float continental) =>
-        SampleClimate(
-            x,
-            z,
-            PreviewTerrainWorldGenSettings.Default with { Seed = seed },
-            out temperature,
-            out humidity,
-            out continental);
 
     public static void SampleClimate(
         int x,
@@ -111,7 +88,7 @@ public static class PreviewTerrainBiomeSampler
         continental = Noise01(
             x * 0.0065f * freq,
             z * 0.0065f * freq,
-            climateSeed ^ unchecked((int)0x3C6EF372));
+            climateSeed ^ 0x3C6EF372);
         // Stretch continental around 0.5 so islands ↔ continents can be biased.
         continental = Math.Clamp((continental - 0.5f) * gen.Continentalness + 0.5f, 0f, 1f);
     }

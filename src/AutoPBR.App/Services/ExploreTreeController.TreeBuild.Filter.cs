@@ -1,5 +1,4 @@
 using AutoPBR.App.Models;
-using AutoPBR.Core;
 
 using Avalonia.Threading;
 

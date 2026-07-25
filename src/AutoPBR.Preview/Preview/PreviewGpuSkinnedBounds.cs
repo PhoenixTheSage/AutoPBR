@@ -1,6 +1,4 @@
 using System.Numerics;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace AutoPBR.Preview;
 
@@ -16,8 +14,6 @@ public sealed class PreviewGpuSkinnedBounds
 
     private PreviewGpuSkinnedBounds(BoneBounds[][] batchBoneBounds) =>
         _batchBoneBounds = batchBoneBounds;
-
-    public int BatchCount => _batchBoneBounds.Length;
 
     public static PreviewGpuSkinnedBounds? TryBuild(
         IReadOnlyList<PreviewDrawBatch> batches,
@@ -75,11 +71,10 @@ public sealed class PreviewGpuSkinnedBounds
                 byBone[boneIndex] = accumulator;
             }
 
-            result[batchIndex] = byBone
+            result[batchIndex] = [.. byBone
                 .Where(pair => pair.Value.IsValid)
                 .OrderBy(pair => pair.Key)
-                .Select(pair => new BoneBounds(pair.Key, pair.Value.Min, pair.Value.Max))
-                .ToArray();
+                .Select(pair => new BoneBounds(pair.Key, pair.Value.Min, pair.Value.Max))];
             anyBounds |= result[batchIndex].Length > 0;
         }
 
@@ -104,7 +99,7 @@ public sealed class PreviewGpuSkinnedBounds
         if (_batchBoneBounds.Length >= ParallelUpdateMinBatches)
         {
             // Copy palette for workers — Span cannot be captured by Parallel.For lambdas.
-            var palette = boneMatrices.Slice(0, boneCount).ToArray();
+            Matrix4x4[] palette = [.. boneMatrices.Slice(0, boneCount)];
             var anyBoundsFlag = 0;
             var batchBoneBounds = _batchBoneBounds;
             var liftY = meshSpaceLiftY;

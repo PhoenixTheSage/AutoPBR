@@ -4,7 +4,6 @@ using AutoPBR.App.Rendering;
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.OpenGL;
 using AutoPBR.App.Rendering.Scene;
-using AutoPBR.Preview;
 
 namespace AutoPBR.App.Tests;
 
@@ -78,7 +77,6 @@ public sealed class PreviewTerrainTests
 
         var topY = PreviewStageConstants.GridWorldY;
         var foundPadTop = false;
-        const int s = PreviewMesh.FloatsPerVertex;
         var v = bake.Mesh.InterleavedVertices;
         var idx = bake.Mesh.Indices;
         for (var t = 0; t + 2 < idx.Length; t += 3)
@@ -165,8 +163,7 @@ public sealed class PreviewTerrainTests
     public void TerrainBake_side_faces_have_outward_geometric_normals()
     {
         // Single column: exposed ±X/±Z sides must wind so Cross(e1,e2) matches attributed normal.
-        var heights = new[] { 0 }; // halfExtent 1 needs 4 — use 2x2 flat
-        heights = [0, 0, 0, 0];
+        int[] heights = [0, 0, 0, 0];
         var bake = PreviewTerrainMeshBaker.Bake(
             heights,
             halfExtent: 1,
@@ -310,7 +307,7 @@ public sealed class PreviewTerrainTests
         }
 
         Assert.True(anyOuterLod, "expected outer chunks to carry LodMaxDistance");
-        Assert.Contains(bake.ChunkBatches, b => b.EnableParallax && b.LodMaxDistance <= 0f);
+        Assert.Contains(bake.ChunkBatches, static b => b is { EnableParallax: true, LodMaxDistance: <= 0f });
     }
 
     [Fact]
@@ -379,7 +376,7 @@ public sealed class PreviewTerrainTests
     {
         var mesh = PreviewTerrainMeshBaker.BakeFullChunk(new TerrainChunkKey(0, 0));
         Assert.NotNull(mesh);
-        Assert.Equal(TerrainChunkLodKind.Full, mesh!.Lod);
+        Assert.Equal(TerrainChunkLodKind.Full, mesh.Lod);
         Assert.True(mesh.Indices.Length >= 6);
         Assert.True(mesh.BoundsRadius > 0f);
     }
@@ -392,9 +389,9 @@ public sealed class PreviewTerrainTests
         var lod = PreviewTerrainLodMeshBaker.BakeLodChunk(key);
         Assert.NotNull(full);
         Assert.NotNull(lod);
-        Assert.Equal(TerrainChunkLodKind.Lod, lod!.Lod);
+        Assert.Equal(TerrainChunkLodKind.Lod, lod.Lod);
         Assert.True(lod.Indices.Length >= 6);
-        Assert.True(lod.Indices.Length <= full!.Indices.Length,
+        Assert.True(lod.Indices.Length <= full.Indices.Length,
             $"lod={lod.Indices.Length} should be <= full={full.Indices.Length}");
     }
 
@@ -406,7 +403,7 @@ public sealed class PreviewTerrainTests
         var b = PreviewTerrainMeshBaker.BakeFullChunk(key);
         Assert.NotNull(a);
         Assert.NotNull(b);
-        Assert.Equal(a!.Indices, b!.Indices);
+        Assert.Equal(a.Indices, b.Indices);
         Assert.Equal(a.InterleavedVertices, b.InterleavedVertices);
         Assert.Equal(a.MinRelativeHeight, b.MinRelativeHeight);
         Assert.Equal(a.MaxRelativeHeight, b.MaxRelativeHeight);
@@ -474,7 +471,7 @@ public sealed class PreviewTerrainTests
             EmitOverlay: true);
         var mesh = PreviewTerrainMeshBaker.BakeFullChunk(new TerrainChunkKey(0, 0), settings);
         Assert.NotNull(mesh);
-        Assert.NotEmpty(mesh!.DrawBatches);
+        Assert.NotEmpty(mesh.DrawBatches);
         Assert.Contains(mesh.DrawBatches, b => b.MaterialIndex == PreviewTerrainGrassSlots.Top);
         Assert.Contains(mesh.DrawBatches, b => b.MaterialIndex == PreviewTerrainGrassSlots.Dirt);
         // Flat pad under subject may still expose side/overlay on relief edges outside pad.
@@ -488,7 +485,7 @@ public sealed class PreviewTerrainTests
     {
         var lod = PreviewTerrainLodMeshBaker.BakeLodChunk(new TerrainChunkKey(0, 0));
         Assert.NotNull(lod);
-        Assert.Single(lod!.DrawBatches);
+        Assert.Single(lod.DrawBatches);
         Assert.Equal(PreviewTerrainGrassSlots.Top, lod.DrawBatches[0].MaterialIndex);
     }
 
@@ -505,15 +502,15 @@ public sealed class PreviewTerrainTests
         Assert.True(desired.TryGetValue(cam, out var camKind));
         Assert.Equal(TerrainChunkLodKind.Full, camKind);
 
-        var edgeFull = new TerrainChunkKey(cam.X + 3, cam.Z);
+        var edgeFull = cam with { X = cam.X + 3 };
         Assert.True(desired.TryGetValue(edgeFull, out var fullKind));
         Assert.Equal(TerrainChunkLodKind.Full, fullKind);
 
-        var lodOnly = new TerrainChunkKey(cam.X + 4, cam.Z);
+        var lodOnly = cam with { X = cam.X + 4 };
         Assert.True(desired.TryGetValue(lodOnly, out var lodKind));
         Assert.Equal(TerrainChunkLodKind.Lod, lodKind);
 
-        var outside = new TerrainChunkKey(cam.X + streamer.UnloadRadiusChunks + 1, cam.Z);
+        var outside = cam with { X = cam.X + streamer.UnloadRadiusChunks + 1 };
         Assert.False(desired.ContainsKey(outside));
         Assert.True(streamer.ShouldUnload(outside));
     }
@@ -854,7 +851,7 @@ public sealed class PreviewTerrainTests
             var nearPom = lod == TerrainChunkLodKind.Full && i % 2 == 0;
             candidates[i] = new TerrainChunkDrawCull.Candidate
             {
-                BoundsCenter = new Vector3((i % 16) * 4f, 0f, (i / 16) * 4f),
+                BoundsCenter = new Vector3((i % 16) * 4f, 0f, (i / 16f) * 4f),
                 BoundsRadius = 6f,
                 Lod = lod,
                 NearPom = nearPom,

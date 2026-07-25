@@ -47,32 +47,21 @@ public static class PreviewColormapLoader
         IDisposable? installLifetime = null;
         try
         {
-            IAssetSource? installSource = null;
-            if (!MinecraftInstallAssetSource.TryOpen(minecraftAssetsDirectory, out installSource, out installLifetime))
-            {
-                installSource = null;
-            }
-
-            IAssetSource? nativeSource = null;
-            if (!string.IsNullOrWhiteSpace(nativeRootDirectory) && Directory.Exists(nativeRootDirectory))
-            {
-                nativeSource = new DirectoryAssetSource(nativeRootDirectory);
-            }
-
             var sources = new List<IAssetSource>();
             if (packSource is not null)
             {
                 sources.Add(packSource);
             }
 
-            if (installSource is not null)
+            if (MinecraftInstallAssetSource.TryOpen(minecraftAssetsDirectory, out var installSource, out installLifetime) &&
+                installSource is not null)
             {
                 sources.Add(installSource);
             }
 
-            if (nativeSource is not null)
+            if (!string.IsNullOrWhiteSpace(nativeRootDirectory) && Directory.Exists(nativeRootDirectory))
             {
-                sources.Add(nativeSource);
+                sources.Add(new DirectoryAssetSource(nativeRootDirectory));
             }
 
             if (sources.Count == 0)
@@ -80,7 +69,7 @@ public static class PreviewColormapLoader
                 return false;
             }
 
-            var composite = sources.Count == 1 ? sources[0] : new CompositeAssetSource(sources.ToArray());
+            var composite = sources.Count == 1 ? sources[0] : new CompositeAssetSource([.. sources]);
             if (!composite.TryReadBytes(archivePath, out var bytes) || bytes.Length == 0)
             {
                 return false;

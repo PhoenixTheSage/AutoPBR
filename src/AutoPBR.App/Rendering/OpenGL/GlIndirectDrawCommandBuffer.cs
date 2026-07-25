@@ -1,21 +1,16 @@
-using AutoPBR.Preview;
-
 using Silk.NET.OpenGL;
 
 namespace AutoPBR.App.Rendering.OpenGL;
 
-internal sealed class GlIndirectDrawCommandBuffer : IDisposable
+internal sealed class GlIndirectDrawCommandBuffer(GL gl) : IDisposable
 {
     public const int CommandDwords = 5;
     public const int CommandByteSize = CommandDwords * sizeof(uint);
 
-    private readonly GL _gl;
     private uint _buffer;
     private int _byteCapacity;
     private uint[] _scratch = [];
     private bool _disposed;
-
-    public GlIndirectDrawCommandBuffer(GL gl) => _gl = gl;
 
     public bool IsValid => !_disposed && _buffer != 0 && CommandCount > 0;
 
@@ -44,20 +39,20 @@ internal sealed class GlIndirectDrawCommandBuffer : IDisposable
             WriteCommandDwords(dst.Slice(i * CommandDwords, CommandDwords), batches[i], (uint)i);
         }
 
-        _buffer = _buffer == 0 ? _gl.GenBuffer() : _buffer;
-        _gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, _buffer);
+        _buffer = _buffer == 0 ? gl.GenBuffer() : _buffer;
+        gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, _buffer);
         var byteCount = dwordCount * sizeof(uint);
         if (byteCount <= _byteCapacity)
         {
-            _gl.BufferSubData<uint>(BufferTargetARB.DrawIndirectBuffer, 0, dst);
+            gl.BufferSubData<uint>(BufferTargetARB.DrawIndirectBuffer, 0, dst);
         }
         else
         {
-            _gl.BufferData<uint>(BufferTargetARB.DrawIndirectBuffer, dst, BufferUsageARB.DynamicDraw);
+            gl.BufferData<uint>(BufferTargetARB.DrawIndirectBuffer, dst, BufferUsageARB.DynamicDraw);
             _byteCapacity = byteCount;
         }
 
-        _gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, 0);
+        gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, 0);
         CommandCount = batches.Count;
         return true;
     }
@@ -70,20 +65,20 @@ internal sealed class GlIndirectDrawCommandBuffer : IDisposable
             return false;
         }
 
-        _buffer = _buffer == 0 ? _gl.GenBuffer() : _buffer;
-        _gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, _buffer);
+        _buffer = _buffer == 0 ? gl.GenBuffer() : _buffer;
+        gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, _buffer);
         var byteCount = checked(commandCount * CommandByteSize);
         if (byteCount > _byteCapacity)
         {
             unsafe
             {
-                _gl.BufferData(BufferTargetARB.DrawIndirectBuffer, (nuint)byteCount, null, BufferUsageARB.DynamicDraw);
+                gl.BufferData(BufferTargetARB.DrawIndirectBuffer, (nuint)byteCount, null, BufferUsageARB.DynamicDraw);
             }
 
             _byteCapacity = byteCount;
         }
 
-        _gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, 0);
+        gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, 0);
         CommandCount = commandCount;
         return true;
     }
@@ -105,11 +100,11 @@ internal sealed class GlIndirectDrawCommandBuffer : IDisposable
     {
         if (!_disposed && _buffer != 0)
         {
-            _gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, _buffer);
+            gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, _buffer);
         }
     }
 
-    public void Unbind() => _gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, 0);
+    public void Unbind() => gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, 0);
 
     internal static void WriteCommandDwords(Span<uint> destination, PreviewDrawBatch batch, uint baseInstance)
     {
@@ -136,21 +131,21 @@ internal sealed class GlIndirectDrawCommandBuffer : IDisposable
         }
 
         var dwordCount = commandCount * CommandDwords;
-        _buffer = _buffer == 0 ? _gl.GenBuffer() : _buffer;
-        _gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, _buffer);
+        _buffer = _buffer == 0 ? gl.GenBuffer() : _buffer;
+        gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, _buffer);
         var byteCount = dwordCount * sizeof(uint);
         var span = commandDwords[..dwordCount];
         if (byteCount <= _byteCapacity)
         {
-            _gl.BufferSubData<uint>(BufferTargetARB.DrawIndirectBuffer, 0, span);
+            gl.BufferSubData(BufferTargetARB.DrawIndirectBuffer, 0, span);
         }
         else
         {
-            _gl.BufferData<uint>(BufferTargetARB.DrawIndirectBuffer, span, BufferUsageARB.DynamicDraw);
+            gl.BufferData(BufferTargetARB.DrawIndirectBuffer, span, BufferUsageARB.DynamicDraw);
             _byteCapacity = byteCount;
         }
 
-        _gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, 0);
+        gl.BindBuffer(BufferTargetARB.DrawIndirectBuffer, 0);
         CommandCount = commandCount;
         return true;
     }
@@ -183,7 +178,7 @@ internal sealed class GlIndirectDrawCommandBuffer : IDisposable
         _disposed = true;
         if (_buffer != 0)
         {
-            _gl.DeleteBuffer(_buffer);
+            gl.DeleteBuffer(_buffer);
             _buffer = 0;
         }
 

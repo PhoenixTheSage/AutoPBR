@@ -6,39 +6,26 @@ namespace AutoPBR.App.Rendering.OpenGL;
 /// Explicit GL state restored after a shadow depth pass. Callers must supply this instead of
 /// querying the driver (<c>glGet*</c>) so cascade slices stay zero-sync.
 /// </summary>
-internal readonly struct GlShadowPassRestoreState
+internal readonly struct GlShadowPassRestoreState(
+    int drawFbo,
+    int viewportX,
+    int viewportY,
+    int viewportWidth,
+    int viewportHeight,
+    bool colorWriteR = true,
+    bool colorWriteG = true,
+    bool colorWriteB = true,
+    bool colorWriteA = true)
 {
-    public readonly int DrawFbo;
-    public readonly int ViewportX;
-    public readonly int ViewportY;
-    public readonly int ViewportWidth;
-    public readonly int ViewportHeight;
-    public readonly bool ColorWriteR;
-    public readonly bool ColorWriteG;
-    public readonly bool ColorWriteB;
-    public readonly bool ColorWriteA;
-
-    public GlShadowPassRestoreState(
-        int drawFbo,
-        int viewportX,
-        int viewportY,
-        int viewportWidth,
-        int viewportHeight,
-        bool colorWriteR = true,
-        bool colorWriteG = true,
-        bool colorWriteB = true,
-        bool colorWriteA = true)
-    {
-        DrawFbo = Math.Max(0, drawFbo);
-        ViewportX = viewportX;
-        ViewportY = viewportY;
-        ViewportWidth = Math.Max(1, viewportWidth);
-        ViewportHeight = Math.Max(1, viewportHeight);
-        ColorWriteR = colorWriteR;
-        ColorWriteG = colorWriteG;
-        ColorWriteB = colorWriteB;
-        ColorWriteA = colorWriteA;
-    }
+    public readonly int DrawFbo = Math.Max(0, drawFbo);
+    public readonly int ViewportX = viewportX;
+    public readonly int ViewportY = viewportY;
+    public readonly int ViewportWidth = Math.Max(1, viewportWidth);
+    public readonly int ViewportHeight = Math.Max(1, viewportHeight);
+    public readonly bool ColorWriteR = colorWriteR;
+    public readonly bool ColorWriteG = colorWriteG;
+    public readonly bool ColorWriteB = colorWriteB;
+    public readonly bool ColorWriteA = colorWriteA;
 
     public static GlShadowPassRestoreState FromFrame(in GlRenderFrame frame) =>
         new(

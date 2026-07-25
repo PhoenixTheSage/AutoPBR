@@ -1,14 +1,13 @@
 using System.Numerics;
 
 using AutoPBR.App.Rendering.Abstractions;
-using AutoPBR.Preview;
 
 namespace AutoPBR.App.Rendering.Scene;
 
 /// <summary>
 /// Builds Minecraft-style 1m cuboid terrain from column heights with neighbor face occlusion,
 /// greedy coplanar merges, and world-tiled UVs. Supports legacy multi-chunk bake and streaming
-/// per-chunk Full bakes against infinite <see cref="PreviewTerrainHeightfield.SampleColumn"/>.
+/// per-chunk Full bakes against infinite <see cref="PreviewTerrainHeightfield.SampleColumn(int,int,in PreviewTerrainWorldGenSettings,int,int,int)"/>.
 /// </summary>
 public static class PreviewTerrainMeshBaker
 {
@@ -72,9 +71,9 @@ public static class PreviewTerrainMeshBaker
             {
                 var cx1 = Math.Min(cx0 + chunkSize, halfExtent);
                 var cz1 = Math.Min(cz0 + chunkSize, halfExtent);
-                for (var i = 0; i < buckets.Length; i++)
+                foreach (var bucket in buckets)
                 {
-                    buckets[i].Clear();
+                    bucket.Clear();
                 }
 
                 PreviewTerrainColumnSample ColumnAt(int x, int z)
@@ -117,9 +116,9 @@ public static class PreviewTerrainMeshBaker
                 var indexCount = allIndices.Count - indexStart;
                 var centerX = (cx0 + cx1) * 0.5f;
                 var centerZ = (cz0 + cz1) * 0.5f;
-                var padXZ = Math.Max(Math.Abs(centerX), Math.Abs(centerZ));
-                var enablePom = padXZ <= nearPomRadius;
-                var lod = lodMaxDistance <= 0f || padXZ <= nearPomRadius ? 0f : lodMaxDistance;
+                var padXz = Math.Max(Math.Abs(centerX), Math.Abs(centerZ));
+                var enablePom = padXz <= nearPomRadius;
+                var lod = lodMaxDistance <= 0f || padXz <= nearPomRadius ? 0f : lodMaxDistance;
                 var minY = surfaceWorldY + layerMin - 1;
                 var maxY = surfaceWorldY + layerMax;
                 var boundsMin = new Vector3(cx0, minY, cz0);
@@ -142,10 +141,10 @@ public static class PreviewTerrainMeshBaker
             Mesh = new PreviewMesh
             {
                 Name = name,
-                InterleavedVertices = allVerts.ToArray(),
-                Indices = allIndices.ToArray()
+                InterleavedVertices = [.. allVerts],
+                Indices = [.. allIndices]
             },
-            ChunkBatches = batches.ToArray(),
+            ChunkBatches = [.. batches],
             MinRelativeHeight = layerMin,
             MaxRelativeHeight = maxH
         };
@@ -153,7 +152,7 @@ public static class PreviewTerrainMeshBaker
 
     /// <summary>
     /// Full-detail greedy bake for one streaming chunk. Neighbor occlusion uses infinite
-    /// <see cref="PreviewTerrainHeightfield.SampleColumn"/> (1-column halo, no resident neighbors required).
+    /// <see cref="PreviewTerrainHeightfield.SampleColumn(int,int,in PreviewTerrainWorldGenSettings,int,int,int)"/> (1-column halo, no resident neighbors required).
     /// </summary>
     public static PreviewTerrainChunkMesh? BakeFullChunk(
         TerrainChunkKey key,
@@ -171,10 +170,13 @@ public static class PreviewTerrainMeshBaker
     {
         // default(grassSettings) looks like BuiltIn for Mode/flags (BuiltInSingleTop == 0).
         // Preserve an explicit VegetationIdentity so tree bakes are not silently disabled.
-        if (grassSettings.Mode == default &&
-            !grassSettings.BetterGrassEnabled &&
-            !grassSettings.EmitOverlay &&
-            string.IsNullOrEmpty(grassSettings.VegetationIdentity))
+        if (grassSettings is
+            {
+                Mode: PreviewTerrainGrassMode.BuiltInSingleTop,
+                BetterGrassEnabled: false,
+                EmitOverlay: false,
+                VegetationIdentity: ""
+            })
         {
             grassSettings = PreviewTerrainGrassBakeSettings.BuiltIn;
         }
@@ -312,9 +314,9 @@ public static class PreviewTerrainMeshBaker
         out PreviewDrawBatch[] batches)
     {
         var totalFloats = 0;
-        for (var i = 0; i < buckets.Length; i++)
+        foreach (var bucket in buckets)
         {
-            totalFloats += buckets[i].Count;
+            totalFloats += bucket.Count;
         }
 
         if (totalFloats == 0)
@@ -354,9 +356,9 @@ public static class PreviewTerrainMeshBaker
             batchList.Add(new PreviewDrawBatch(indexStart, indexList.Count - indexStart, slot));
         }
 
-        verts = vertList.ToArray();
-        indices = indexList.ToArray();
-        batches = batchList.ToArray();
+        verts = [.. vertList];
+        indices = [.. indexList];
+        batches = [.. batchList];
         return true;
     }
 
@@ -886,24 +888,6 @@ public static class PreviewTerrainMeshBaker
         Math.Min(
             columnHeight - Math.Max(1, fillDepth) + 1,
             PreviewStageConstants.TerrainSolidFloorRelativeY);
-
-    internal static bool IsSolid(
-        ReadOnlySpan<int> heights,
-        int halfExtent,
-        int fillDepth,
-        int bx,
-        int by,
-        int bz)
-    {
-        var h = PreviewTerrainHeightfield.GetHeight(heights, bx, bz, halfExtent);
-        if (h == int.MinValue)
-        {
-            return false;
-        }
-
-        var bottom = SolidBottomY(h, fillDepth);
-        return by >= bottom && by <= h;
-    }
 
     internal static bool IsSolid(Func<int, int, int> heightAt, int fillDepth, int bx, int by, int bz)
     {

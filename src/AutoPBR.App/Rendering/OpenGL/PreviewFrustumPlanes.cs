@@ -44,9 +44,8 @@ internal static class PreviewFrustumPlanes
     public static bool SphereIntersects(ReadOnlySpan<Vector4> planes, Vector3 center, float radius)
     {
         var r = Math.Max(0f, radius);
-        for (var i = 0; i < planes.Length; i++)
+        foreach (var p in planes)
         {
-            var p = planes[i];
             var dist = p.X * center.X + p.Y * center.Y + p.Z * center.Z + p.W;
             if (dist < -r)
             {

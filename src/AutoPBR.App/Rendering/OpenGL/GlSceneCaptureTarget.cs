@@ -22,7 +22,6 @@ internal sealed class GlSceneCaptureTarget(GL gl, bool useOpenGlEs, bool useFloa
     public int Width => _width;
     public int Height => _height;
     public bool IsValid => _fbo != 0 && _colorTexture != 0 && _taaSignalTexture != 0 && _depthTexture != 0;
-    public bool UsesFloatColor => _useFloatColor;
 
     public bool EnsureSize(int width, int height, bool? useFloatColor = null)
     {
@@ -147,19 +146,6 @@ internal sealed class GlSceneCaptureTarget(GL gl, bool useOpenGlEs, bool useFloa
         gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
     }
 
-    /// <summary>Bind capture FBO for compositing into the existing color buffer (no clear).</summary>
-    public void BindComposite(int width, int height)
-    {
-        if (!IsValid)
-        {
-            return;
-        }
-
-        gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
-        ConfigureColorAttachment0();
-        gl.Viewport(0, 0, (uint)Math.Max(1, width), (uint)Math.Max(1, height));
-    }
-
     public uint ColorTextureHandle => _colorTexture;
     public bool BlitColorToDefault(int defaultFbo, int vpX, int vpY, int destW, int destH)
     {
@@ -207,22 +193,6 @@ internal sealed class GlSceneCaptureTarget(GL gl, bool useOpenGlEs, bool useFloa
             {
                 gl.DrawBuffers((uint)bufs.Length, ptr);
             }
-        }
-    }
-
-    private void ConfigureColorAttachment0()
-    {
-        if (useOpenGlEs)
-        {
-            unsafe
-            {
-                var buf = DrawBufferMode.ColorAttachment0;
-                gl.DrawBuffers(1, &buf);
-            }
-        }
-        else
-        {
-            gl.DrawBuffer(DrawBufferMode.ColorAttachment0);
         }
     }
 

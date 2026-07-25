@@ -3,7 +3,6 @@ using System.Numerics;
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.Scene;
 using AutoPBR.Core.Models;
-using AutoPBR.Preview;
 
 using Silk.NET.OpenGL;
 
@@ -132,442 +131,442 @@ public sealed partial class OpenGlPreviewBackend
 
         using (BeginPassTimerScope(GlGpuTimerScope.Scene))
         {
-        // Sun disc + aureole are rendered by the sky shader (skySunDiscAureole); only the moon
-        // remains a billboard, drawn before opaque geometry so depth testing hides it.
-        frame.Gl.Enable(EnableCap.DepthTest);
-        frame.Gl.DepthFunc(GLEnum.Lequal);
-        DrawMoonBillboard(frame.Gl, frame.Proj, frame.View, frame.Eye, frame.WorldLightDir,
-            farPlane,
-            frame.Settings.AtmosphereMoonDiscStrength,
-            frame.Settings.AtmosphereMoonDiscSize,
-            frame.Settings.AtmosphereMoonGlowStrength,
-            frame.Settings.AtmosphereMoonTextureSharpness,
-            ShouldCullSolidBackFaces(frame.Scene.SceneKind, frame.BlockModel, frame.Settings));
+            // Sun disc + aureole are rendered by the sky shader (skySunDiscAureole); only the moon
+            // remains a billboard, drawn before opaque geometry so depth testing hides it.
+            frame.Gl.Enable(EnableCap.DepthTest);
+            frame.Gl.DepthFunc(GLEnum.Lequal);
+            DrawMoonBillboard(frame.Gl, frame.Proj, frame.View, frame.Eye, frame.WorldLightDir,
+                farPlane,
+                frame.Settings.AtmosphereMoonDiscStrength,
+                frame.Settings.AtmosphereMoonDiscSize,
+                frame.Settings.AtmosphereMoonGlowStrength,
+                frame.Settings.AtmosphereMoonTextureSharpness,
+                ShouldCullSolidBackFaces(frame.Scene.SceneKind, frame.BlockModel, frame.Settings));
 
-        _program.Use();
-        var u = _mainUniformLocs;
-        if (frame.SettingsRevision != _lastMainPassAppliedSettingsRevision)
-        {
-            ApplyMainPassPerSettingsUniforms(ref frame, u);
-            _lastMainPassAppliedSettingsRevision = frame.SettingsRevision;
-        }
-
-        var taaCurrentViewProj = frame.UnjitteredProj * frame.View;
-        SetMatrixLoc(u.TaaCurrViewProj, taaCurrentViewProj);
-        SetMatrixLoc(u.PrevViewProj, ResolvePreviewTaaPrevViewProj(taaCurrentViewProj));
-        SetMatrixLoc(u.View, frame.View);
-        SetMatrixLoc(u.Proj, frame.Proj);
-        ApplyTerrainAerialFogUniforms(ref frame, u);
-        SetMatrixLoc(u.LightViewProj, frame.ShadowVp);
-        SetMatrixLoc(u.LightViewProjNear, frame.ShadowVpNear);
-        SetMatrixLoc(u.LightViewProjMid, frame.ShadowVpMid);
-
-        SetVec3Loc(u.CameraPos, frame.Eye);
-        SetVec3Loc(u.LightDir, frame.LightDir);
-        SetVec3Loc(u.LightColor, PreviewLightMath.SceneLightColorFromCelestialCycle(
-            frame.WorldLightDir,
-            frame.Scene.Light.Color,
-            frame.Settings.MoonWorldLightIntensity));
-
-        // genesis.frag always declares shadow + sky samplers; pin unique units every main-pass bind so
-        // GLES/ANGLE never leaves sampler2DShadow on unit 0 alongside uAlbedo.
-        var shadowEnabledForShader = frame.ShadowAvailable;
-        SetIntLoc(u.EnableShadowMap, shadowEnabledForShader ? 1 : 0);
-        SetIntLoc(u.EnableShadowCascades, frame.ShadowCascadesActive ? 1 : 0);
-        SetFloatLoc(u.CascadeSplitDistance, frame.CascadeSplitWorldDistance);
-        SetFloatLoc(u.CascadeMidSplitDistance, frame.CascadeMidSplitWorldDistance);
-        SetFloatLoc(u.CascadeBlendWidth, frame.CascadeBlendWorldWidth);
-        SetFloatLoc(u.ShadowDistance, frame.ShadowDistance);
-        SetFloatLoc(u.ShadowFadeStart, frame.ShadowFadeStart);
-        BindAndPinMainPassGlobalTextures(ref frame, u);
-
-        // LabPBR grass plane under the grid; one texture tile per world unit (nearest + repeat).
-        if (frame.Settings.ShowGroundMesh &&
-            _grassGroundReady && _grassGroundAlbedo is not null)
-        {
-            using (BeginCpuTimerScope(GlGpuTimerScope.TerrainStream))
-            {
-                TickTerrainStreaming(ref frame);
-            }
-        }
-
-        if (frame.Settings.ShowGroundMesh &&
-            _grassGroundReady && _grassGroundAlbedo is not null && HasTerrainChunksToDraw)
-        {
-            using (BeginCpuTimerScope(GlGpuTimerScope.TerrainDraw))
-            {
-            var restoreCull = frame.Gl.IsEnabled(EnableCap.CullFace);
-            frame.Gl.Enable(EnableCap.CullFace);
-            frame.Gl.CullFace(TriangleFace.Back);
-            SetMatrixLoc(u.Model, Matrix4x4.Identity);
-            SetMatrixLoc(u.PrevModel, Matrix4x4.Identity);
-            var groundParallax = frame.Settings.EnableParallax && _grassGroundHasHeight;
-            var groundNormal = frame.Settings.EnableNormalMap && _grassGroundHasNormal;
-            var groundSpec = frame.Settings.EnableSpecularMap && _grassGroundHasSpecular;
-            SetIntLoc(u.EnableParallax, groundParallax ? 1 : 0);
-            SetFloatLoc(u.ParallaxUvScale, 1f);
-            SetVec2Loc(u.TextureAtlasScale, Vector2.One);
-            SetIntLoc(u.EnableParallaxAo, groundParallax && frame.Settings.EnableParallaxAo ? 1 : 0);
-            SetIntLoc(u.EnableParallaxShadow, groundParallax && frame.Settings.EnableParallaxShadow ? 1 : 0);
-            SetIntLoc(u.EnableNormalMap, groundNormal ? 1 : 0);
-            SetIntLoc(u.EnableSpecularMap, groundSpec ? 1 : 0);
-            SetIntLoc(u.EnableTessellationDisplacement, 0);
-            SetIntLoc(u.SceneKind, 0);
-            SetIntLoc(u.IsGroundPass, 1);
-            SetIntLoc(u.EntityAlphaMode, 0);
-            SetIntLoc(u.GenesisUseMaterialDrawRecord, 0);
-            SetIntLoc(u.GenesisUseMaterialTextureArray, 0);
-            SetIntLoc(u.GenesisDrawRecordIndex, 0);
-            ApplyEntitySkinningUniforms(_program, 0, 0, 0f);
-            SetIntLoc(u.HasNormal, _grassGroundHasNormal ? 1 : 0);
-            SetIntLoc(u.HasSpecular, _grassGroundHasSpecular ? 1 : 0);
-            SetIntLoc(u.HasHeight, _grassGroundHasHeight ? 1 : 0);
-            SetVec2Loc(u.ParallaxHeightTexSize, _grassGroundHasHeight && _grassGroundMaterial is not null
-                ? new Vector2(Math.Max(1, _grassGroundMaterial.Width), Math.Max(1, _grassGroundMaterial.Height))
-                : Vector2.One);
-            _grassGroundAlbedo.Bind(0);
-            _grassGroundNormal!.Bind(1);
-            _grassGroundSpec!.Bind(2);
-            _grassGroundHeight!.Bind(3);
-            SetIntLoc(u.Albedo, 0);
-            SetIntLoc(u.Normal, 1);
-            SetIntLoc(u.Specular, 2);
-            SetIntLoc(u.Height, 3);
-            TryEnsureGroundTextureArrays(frame.Gl);
-            if (_groundTextureArraysReady && _activeGenesisProgramKey.MaterialTextureArrays)
-            {
-                SetIntLoc(u.GenesisUseMaterialTextureArray, 1);
-                SetIntLoc(u.GenesisUseMaterialDrawRecord, 1);
-                BindGroundMaterialTextureArrays();
-            }
-            else
-            {
-                // Idle/non-array draws still need complete sampler2DArray units when the active
-                // Genesis program was compiled with GENESIS_MATERIAL_TEXTURE_ARRAYS.
-                BindFallbackMaterialTextureArraysIfPresent(u);
-            }
-            var viewProjection = frame.UnjitteredProj * frame.View;
-            var enableParallaxAo = frame.Settings.EnableParallaxAo;
-            var enableParallaxShadow = frame.Settings.EnableParallaxShadow;
-            // Tessellation programs require patch primitives; PatchParameter is set once inside the draw path.
-            DrawGroundTerrainChunks(
-                frame.Gl,
-                viewProjection,
-                frame.Eye,
-                patches: _mainProgramUsesTessellation,
-                enableParallaxSetting: groundParallax,
-                setParallaxEnabled: pom =>
-                {
-                    SetIntLoc(u.EnableParallax, pom ? 1 : 0);
-                    SetIntLoc(u.EnableParallaxAo, pom && enableParallaxAo ? 1 : 0);
-                    SetIntLoc(u.EnableParallaxShadow, pom && enableParallaxShadow ? 1 : 0);
-                });
-            SetIntLoc(u.IsGroundPass, 0);
-            if (!restoreCull)
-            {
-                frame.Gl.Disable(EnableCap.CullFace);
-            }
-            }
-        }
-
-        if (frame.Settings.ShowBackgroundGrid && _lineProgram?.IsValid == true &&
-            _gridVertexCount > 0)
-        {
-            DrawBackgroundGrid(frame.Gl, frame.Proj, frame.View, frame.Settings);
-            // DrawBackgroundGrid binds the line program; restore main frame.Material program before mesh uniforms.
             _program.Use();
+            var u = _mainUniformLocs;
+            if (frame.SettingsRevision != _lastMainPassAppliedSettingsRevision)
+            {
+                ApplyMainPassPerSettingsUniforms(ref frame, u);
+                _lastMainPassAppliedSettingsRevision = frame.SettingsRevision;
+            }
+
+            var taaCurrentViewProj = frame.UnjitteredProj * frame.View;
+            SetMatrixLoc(u.TaaCurrViewProj, taaCurrentViewProj);
+            SetMatrixLoc(u.PrevViewProj, ResolvePreviewTaaPrevViewProj(taaCurrentViewProj));
+            SetMatrixLoc(u.View, frame.View);
+            SetMatrixLoc(u.Proj, frame.Proj);
+            ApplyTerrainAerialFogUniforms(ref frame, u);
+            SetMatrixLoc(u.LightViewProj, frame.ShadowVp);
+            SetMatrixLoc(u.LightViewProjNear, frame.ShadowVpNear);
+            SetMatrixLoc(u.LightViewProjMid, frame.ShadowVpMid);
+
+            SetVec3Loc(u.CameraPos, frame.Eye);
+            SetVec3Loc(u.LightDir, frame.LightDir);
+            SetVec3Loc(u.LightColor, PreviewLightMath.SceneLightColorFromCelestialCycle(
+                frame.WorldLightDir,
+                frame.Scene.Light.Color,
+                frame.Settings.MoonWorldLightIntensity));
+
+            // genesis.frag always declares shadow + sky samplers; pin unique units every main-pass bind so
+            // GLES/ANGLE never leaves sampler2DShadow on unit 0 alongside uAlbedo.
+            var shadowEnabledForShader = frame.ShadowAvailable;
+            SetIntLoc(u.EnableShadowMap, shadowEnabledForShader ? 1 : 0);
+            SetIntLoc(u.EnableShadowCascades, frame.ShadowCascadesActive ? 1 : 0);
+            SetFloatLoc(u.CascadeSplitDistance, frame.CascadeSplitWorldDistance);
+            SetFloatLoc(u.CascadeMidSplitDistance, frame.CascadeMidSplitWorldDistance);
+            SetFloatLoc(u.CascadeBlendWidth, frame.CascadeBlendWorldWidth);
+            SetFloatLoc(u.ShadowDistance, frame.ShadowDistance);
+            SetFloatLoc(u.ShadowFadeStart, frame.ShadowFadeStart);
             BindAndPinMainPassGlobalTextures(ref frame, u);
-        }
 
-        SetMatrixLoc(u.Model, frame.ModelMatrix);
-        SetMatrixLoc(u.PrevModel, ResolvePreviewTaaPrevSubjectModel(frame.ModelMatrix));
-        SetFloatLoc(u.ParallaxUvScale, 1f);
-        SetVec2Loc(u.ParallaxHeightTexSize, Vector2.One);
-        SetVec2Loc(u.TextureAtlasScale, Vector2.One);
-        SetIntLoc(u.EnableParallax, frame.EnableParallaxEff ? 1 : 0);
-        SetIntLoc(u.EnableParallaxAo, frame.EnableParallaxAoEff ? 1 : 0);
-        SetIntLoc(u.EnableParallaxShadow, frame.EnableParallaxShadowEff ? 1 : 0);
-        SetIntLoc(u.EnableNormalMap, frame.EnableNormalMapEff ? 1 : 0);
-        SetIntLoc(u.EnableSpecularMap, frame.EnableSpecularMapEff ? 1 : 0);
-        SetIntLoc(u.SceneKind, frame.Scene.SceneKind == PreviewSceneKind.ItemPlane ? 1 : 0);
-        SetIntLoc(u.IsGroundPass, 0);
-        SetIntLoc(u.EntityAlphaMode, frame.EntityAlphaModeUniform);
-        SetIntLoc(u.GenesisUseMaterialDrawRecord, 0);
-        SetIntLoc(u.GenesisUseMaterialTextureArray, 0);
-        SetIntLoc(u.GenesisDrawRecordIndex, 0);
-
-        if (!frame.Settings.DrawPreviewSubject || _mesh.IndexCount <= 0)
-        {
-            if (!_loggedZeroIndex && frame.Settings.DrawPreviewSubject && _mesh.IndexCount <= 0)
+            // LabPBR grass plane under the grid; one texture tile per world unit (nearest + repeat).
+            if (frame.Settings.ShowGroundMesh &&
+                _grassGroundReady && _grassGroundAlbedo is not null)
             {
-                EmitDiagnostic(
-                    $"[3D preview] Draw skipped: index buffer empty (frame.Scene={frame.Scene.SceneKind}, sceneMeshCount={frame.Scene.Meshes.Count}, frame.MeshDirty={frame.MeshDirty}).");
-                _loggedZeroIndex = true;
-            }
-        }
-        else
-        {
-        using (BeginCpuTimerScope(GlGpuTimerScope.SubjectDraw))
-        {
-        if (frame.BlockModel is not null && frame.BlockSlots is { Length: > 0 })
-        {
-            if (!_loggedMeshReady)
-            {
-                var subjectTag = frame.BlockModel.EmulatedRebake is not null
-                    ? frame.BlockModel.EntityGpuVerticesInPreviewSpace ? "parity-cpu-rebake" : "entity"
-                    : "block-model";
-                EmitDiagnostic(
-                    $"[3D preview] Draw ready: indexCount={_mesh.IndexCount}, subject={subjectTag}, frame.Scene={frame.Scene.SceneKind}, lightYaw={frame.Settings.LightYawDegrees:F1}, lightPitch={frame.Settings.LightPitchDegrees:F1}.");
-                _loggedMeshReady = true;
-                EmitDepthLayerDiagnostic(frame.BlockModel, nearPlane, farPlane, frame.Gl);
-            }
-            var blendWasEnabled = frame.Gl.IsEnabled(EnableCap.Blend);
-            var activeBatchBlend = blendWasEnabled;
-            var uploadedMaterialIndex = -1;
-            var entityBoneUniformsApplied = false;
-            var blockModel = frame.BlockModel;
-            var blockSlots = frame.BlockSlots;
-            EnsureFrameSubjectGpuUploads(ref frame);
-            var useMaterialDrawRecords = _frameSubjectUseMaterialDrawRecords;
-            var useIndirectDrawCommands = _frameSubjectUseIndirectDrawCommands;
-            var useMaterialTextureArrays = _frameSubjectUseMaterialTextureArrays;
-            if (useMaterialDrawRecords)
-            {
-                BindGenesisMaterialDrawRecordBuffer();
-            }
-
-            SetIntLoc(u.GenesisUseMaterialDrawRecord, useMaterialDrawRecords ? 1 : 0);
-            SetIntLoc(u.GenesisUseMaterialTextureArray, useMaterialTextureArrays ? 1 : 0);
-            if (useMaterialTextureArrays)
-            {
-                BindMainPassMaterialTextureArrays(u);
-                // Array programs still declare sampler2D materials. Keep units 0–3 complete even when
-                // the fragment path samples arrays — otherwise subject/terrain draws can be dropped
-                // when the ground pass did not run this frame (no chunks / ground not ready).
-                var primary = Math.Clamp(blockModel.PrimaryMaterialIndex, 0, blockSlots.Length - 1);
-                UploadMaterial(frame.Gl, blockSlots[primary], nearest: true);
-                BindSubjectMaterialTextures();
-                PinMainPassMaterialSamplerUniforms(u);
-                uploadedMaterialIndex = primary;
-            }
-            if (frame.EntityBonePaletteUploaded)
-            {
-                BindEntityBoneSkinningUboBlocks();
-            }
-
-            ReadOnlySpan<Vector4> cameraFrustum = frame.CameraFrustumPlanes;
-            var subjectBoundsPadding = _mainProgramUsesTessellation
-                ? Math.Clamp(frame.Settings.TessellationDisplacementStrength, 0f, 0.20f)
-                : 0f;
-            var subjectFullyCulled = frame.CameraFrustumValid &&
-                PreviewDrawBatchFrustumCull.IsSubjectFullyCulled(
-                    blockModel.DrawBatches,
-                    cameraFrustum,
-                    frame.Eye,
-                    frame.ModelMatrix,
-                    subjectBoundsPadding);
-
-            if (!subjectFullyCulled)
-            {
-            _mesh.BindVertexArray();
-            for (var batchIndex = 0; batchIndex < blockModel.DrawBatches.Length; batchIndex++)
-            {
-                var batch = blockModel.DrawBatches[batchIndex];
-                if ((uint)batch.MaterialIndex >= (uint)blockSlots.Length)
+                using (BeginCpuTimerScope(GlGpuTimerScope.TerrainStream))
                 {
-                    continue;
+                    TickTerrainStreaming(ref frame);
                 }
+            }
 
-                var batchUsesTranslucentOverlay =
-                    batch.LayerPolicy.Kind == PreviewDepthLayerKind.TranslucentOverlay;
-                var batchAlphaMode = batchUsesTranslucentOverlay
-                    ? (int)PreviewEntityAlphaMode.Blend
-                    : frame.EntityAlphaModeUniform;
-                var batchBlend = frame.EntityBlendDraw || batchUsesTranslucentOverlay;
-                if (batchBlend)
+            if (frame.Settings.ShowGroundMesh &&
+                _grassGroundReady && _grassGroundAlbedo is not null && HasTerrainChunksToDraw)
+            {
+                using (BeginCpuTimerScope(GlGpuTimerScope.TerrainDraw))
                 {
-                    if (!activeBatchBlend)
+                    var restoreCull = frame.Gl.IsEnabled(EnableCap.CullFace);
+                    frame.Gl.Enable(EnableCap.CullFace);
+                    frame.Gl.CullFace(TriangleFace.Back);
+                    SetMatrixLoc(u.Model, Matrix4x4.Identity);
+                    SetMatrixLoc(u.PrevModel, Matrix4x4.Identity);
+                    var groundParallax = frame.Settings.EnableParallax && _grassGroundHasHeight;
+                    var groundNormal = frame.Settings.EnableNormalMap && _grassGroundHasNormal;
+                    var groundSpec = frame.Settings.EnableSpecularMap && _grassGroundHasSpecular;
+                    SetIntLoc(u.EnableParallax, groundParallax ? 1 : 0);
+                    SetFloatLoc(u.ParallaxUvScale, 1f);
+                    SetVec2Loc(u.TextureAtlasScale, Vector2.One);
+                    SetIntLoc(u.EnableParallaxAo, groundParallax && frame.Settings.EnableParallaxAo ? 1 : 0);
+                    SetIntLoc(u.EnableParallaxShadow, groundParallax && frame.Settings.EnableParallaxShadow ? 1 : 0);
+                    SetIntLoc(u.EnableNormalMap, groundNormal ? 1 : 0);
+                    SetIntLoc(u.EnableSpecularMap, groundSpec ? 1 : 0);
+                    SetIntLoc(u.EnableTessellationDisplacement, 0);
+                    SetIntLoc(u.SceneKind, 0);
+                    SetIntLoc(u.IsGroundPass, 1);
+                    SetIntLoc(u.EntityAlphaMode, 0);
+                    SetIntLoc(u.GenesisUseMaterialDrawRecord, 0);
+                    SetIntLoc(u.GenesisUseMaterialTextureArray, 0);
+                    SetIntLoc(u.GenesisDrawRecordIndex, 0);
+                    ApplyEntitySkinningUniforms(_program, 0, 0, 0f);
+                    SetIntLoc(u.HasNormal, _grassGroundHasNormal ? 1 : 0);
+                    SetIntLoc(u.HasSpecular, _grassGroundHasSpecular ? 1 : 0);
+                    SetIntLoc(u.HasHeight, _grassGroundHasHeight ? 1 : 0);
+                    SetVec2Loc(u.ParallaxHeightTexSize, _grassGroundHasHeight && _grassGroundMaterial is not null
+                        ? new Vector2(Math.Max(1, _grassGroundMaterial.Width), Math.Max(1, _grassGroundMaterial.Height))
+                        : Vector2.One);
+                    _grassGroundAlbedo.Bind(0);
+                    _grassGroundNormal!.Bind(1);
+                    _grassGroundSpec!.Bind(2);
+                    _grassGroundHeight!.Bind(3);
+                    SetIntLoc(u.Albedo, 0);
+                    SetIntLoc(u.Normal, 1);
+                    SetIntLoc(u.Specular, 2);
+                    SetIntLoc(u.Height, 3);
+                    TryEnsureGroundTextureArrays(frame.Gl);
+                    if (_groundTextureArraysReady && _activeGenesisProgramKey.MaterialTextureArrays)
                     {
-                        frame.Gl.Enable(EnableCap.Blend);
-                        frame.Gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+                        SetIntLoc(u.GenesisUseMaterialTextureArray, 1);
+                        SetIntLoc(u.GenesisUseMaterialDrawRecord, 1);
+                        BindGroundMaterialTextureArrays();
                     }
-
-                    activeBatchBlend = true;
-                }
-                else if (activeBatchBlend)
-                {
-                    frame.Gl.Disable(EnableCap.Blend);
-                    activeBatchBlend = false;
-                }
-
-                SetIntLoc(u.EntityAlphaMode, batchAlphaMode);
-                SetIntLoc(u.GenesisDrawRecordIndex, useMaterialDrawRecords ? batchIndex : 0);
-
-                var slot = blockSlots[batch.MaterialIndex];
-                var materialChanged = batch.MaterialIndex != uploadedMaterialIndex;
-                if (materialChanged && !useMaterialTextureArrays)
-                {
-                    UploadMaterial(frame.Gl, slot, nearest: true);
-                    uploadedMaterialIndex = batch.MaterialIndex;
-                    BindSubjectMaterialTextures();
-                    PinMainPassMaterialSamplerUniforms(u);
-                }
-
-                var bHasN = slot.NormalRgba is { Length: > 0 };
-                var bHasS = slot.SpecularRgba is { Length: > 0 };
-                var bHasH = slot.HeightRgba is { Length: > 0 };
-                var batchAllowsParallax = !frame.EntityEmulatedPreview || batch.EnableParallax;
-                var batchParallax = frame.EnableParallaxEff && batchAllowsParallax && bHasH;
-                SetIntLoc(u.EnableParallax, batchParallax ? 1 : 0);
-                SetIntLoc(u.EnableParallaxAo, batchParallax && frame.EnableParallaxAoEff ? 1 : 0);
-                SetIntLoc(u.EnableParallaxShadow, batchParallax && frame.EnableParallaxShadowEff ? 1 : 0);
-                // Entity atlas UV remapping is handled by TextureAtlasScale; do not attenuate POM UV travel.
-                SetFloatLoc(u.ParallaxUvScale, 1f);
-                SetVec2Loc(u.TextureAtlasScale, frame.EntityEmulatedPreview
-                    ? EntityTextureAtlasScale(slot)
-                    : Vector2.One);
-                SetIntLoc(u.EnableTessellationDisplacement,
-                    _mainProgramUsesTessellation &&
-                    frame.EnableTessellationDisplacementEff &&
-                    batchAllowsParallax &&
-                    bHasH
-                        ? 1
-                        : 0);
-                SetIntLoc(u.HasNormal, bHasN ? 1 : 0);
-                SetIntLoc(u.HasSpecular, bHasS ? 1 : 0);
-                SetIntLoc(u.HasHeight, bHasH ? 1 : 0);
-                SetVec2Loc(u.ParallaxHeightTexSize, bHasH
-                    ? new Vector2(Math.Max(1, slot.Width), Math.Max(1, slot.Height))
-                    : Vector2.One);
-                if (!entityBoneUniformsApplied)
-                {
-                    ApplyEntityBoneSkinningUniformsBeforeDraw(
-                        _program,
-                        _mainEntityUniformLocs,
-                        blockModel,
-                        blockModel.EntityGpuMeshSpaceLiftY,
-                        frame.EntityBoneSnapshotValid,
-                        frame.EntityBoneSnapshotCount,
-                        frame.Settings.EnableEntityAnimation,
-                        frame.EntityBonePaletteUploaded,
-                        "main",
-                        bindBoneUboBlocks: !frame.EntityBonePaletteUploaded);
-                    entityBoneUniformsApplied = true;
-                }
-
-                var batchGroupCount = CountMainPassMultiDrawGroup(
-                    blockModel.DrawBatches,
-                    batchIndex,
-                    blockSlots.Length,
-                    frame.EntityBlendDraw,
-                    useIndirectDrawCommands &&
-                    CanUseGenesisMultiDrawGroups(useMaterialDrawRecords),
-                    allowMaterialChanges: useMaterialTextureArrays);
-
-                using (OpenGlPreviewLayerDepthState.Apply(frame.Gl, batch.LayerPolicy))
-                {
-                    if (EntityPreviewDebugSettings.ShowDepthLayerDebug)
+                    else
                     {
-                        SetVec3Loc(
-                            u.PreviewLayerDebugTint,
-                            PreviewDrawLayerPolicy.GetDebugTint(batch.LayerPolicy.Kind));
+                        // Idle/non-array draws still need complete sampler2DArray units when the active
+                        // Genesis program was compiled with GENESIS_MATERIAL_TEXTURE_ARRAYS.
+                        BindFallbackMaterialTextureArraysIfPresent(u);
                     }
-
-                    var gpuCulledDrawn =
-                        batchGroupCount > 1 &&
-                        TryDrawGpuCulledBatchGroup(
-                            blockModel,
-                            batchIndex,
-                            batchGroupCount,
-                            frame.CameraViewProj,
-                            frame.Eye,
-                            frame.ModelMatrix,
-                            _program!,
-                            batchBlend ? "main-alpha" : "main",
-                            patches: _mainProgramUsesTessellation,
-                            preserveOrder: batchBlend,
-                            boundsPadding: subjectBoundsPadding,
-                            enableHiZ: frame.HiZReady && !batchBlend,
-                            hiZViewProj: frame.RasterViewProj,
-                            enableVoxelOcclusion: _voxelDdaReadyThisFrame && !batchBlend);
-                    if (!gpuCulledDrawn)
+                    var viewProjection = frame.UnjitteredProj * frame.View;
+                    var enableParallaxAo = frame.Settings.EnableParallaxAo;
+                    var enableParallaxShadow = frame.Settings.EnableParallaxShadow;
+                    // Tessellation programs require patch primitives; PatchParameter is set once inside the draw path.
+                    DrawGroundTerrainChunks(
+                        frame.Gl,
+                        viewProjection,
+                        frame.Eye,
+                        patches: _mainProgramUsesTessellation,
+                        enableParallaxSetting: groundParallax,
+                        setParallaxEnabled: pom =>
+                        {
+                            SetIntLoc(u.EnableParallax, pom ? 1 : 0);
+                            SetIntLoc(u.EnableParallaxAo, pom && enableParallaxAo ? 1 : 0);
+                            SetIntLoc(u.EnableParallaxShadow, pom && enableParallaxShadow ? 1 : 0);
+                        });
+                    SetIntLoc(u.IsGroundPass, 0);
+                    if (!restoreCull)
                     {
-                        DrawCpuFrustumCulledBatchGroup(
-                            blockModel,
-                            batchIndex,
-                            batchGroupCount,
-                            cameraFrustum,
-                            frame.Eye,
-                            frame.ModelMatrix,
-                            patches: _mainProgramUsesTessellation,
-                            useIndirectDrawCommands,
-                            boundsPadding: subjectBoundsPadding);
+                        frame.Gl.Disable(EnableCap.CullFace);
                     }
                 }
-
-                batchIndex += batchGroupCount - 1;
             }
 
-            _mesh.UnbindVertexArray();
-            }
-
-            if (frame.EntityBonePaletteUploaded)
+            if (frame.Settings.ShowBackgroundGrid && _lineProgram?.IsValid == true &&
+                _gridVertexCount > 0)
             {
-                _entityBoneUpload?.MarkSubmitted();
-                _entityPrevBoneUpload?.MarkSubmitted();
-                _entityNormalBoneUpload?.MarkSubmitted();
+                DrawBackgroundGrid(frame.Gl, frame.Proj, frame.View, frame.Settings);
+                // DrawBackgroundGrid binds the line program; restore main frame.Material program before mesh uniforms.
+                _program.Use();
+                BindAndPinMainPassGlobalTextures(ref frame, u);
             }
 
-            if (!blendWasEnabled)
-            {
-                frame.Gl.Disable(EnableCap.Blend);
-            }
-            else
-            {
-                frame.Gl.Enable(EnableCap.Blend);
-            }
-
+            SetMatrixLoc(u.Model, frame.ModelMatrix);
+            SetMatrixLoc(u.PrevModel, ResolvePreviewTaaPrevSubjectModel(frame.ModelMatrix));
+            SetFloatLoc(u.ParallaxUvScale, 1f);
+            SetVec2Loc(u.ParallaxHeightTexSize, Vector2.One);
+            SetVec2Loc(u.TextureAtlasScale, Vector2.One);
+            SetIntLoc(u.EnableParallax, frame.EnableParallaxEff ? 1 : 0);
+            SetIntLoc(u.EnableParallaxAo, frame.EnableParallaxAoEff ? 1 : 0);
+            SetIntLoc(u.EnableParallaxShadow, frame.EnableParallaxShadowEff ? 1 : 0);
+            SetIntLoc(u.EnableNormalMap, frame.EnableNormalMapEff ? 1 : 0);
+            SetIntLoc(u.EnableSpecularMap, frame.EnableSpecularMapEff ? 1 : 0);
+            SetIntLoc(u.SceneKind, frame.Scene.SceneKind == PreviewSceneKind.ItemPlane ? 1 : 0);
+            SetIntLoc(u.IsGroundPass, 0);
             SetIntLoc(u.EntityAlphaMode, frame.EntityAlphaModeUniform);
             SetIntLoc(u.GenesisUseMaterialDrawRecord, 0);
             SetIntLoc(u.GenesisUseMaterialTextureArray, 0);
             SetIntLoc(u.GenesisDrawRecordIndex, 0);
-        }
-        else
-        {
-            var hasN = frame.Material?.NormalRgba is { Length: > 0 };
-            var hasS = frame.Material?.SpecularRgba is { Length: > 0 };
-            var hasH = frame.Material?.HeightRgba is { Length: > 0 };
-            SetFloatLoc(u.ParallaxUvScale, 1f);
-            SetVec2Loc(u.TextureAtlasScale, Vector2.One);
-            SetIntLoc(u.EnableTessellationDisplacement,
-                _mainProgramUsesTessellation && frame.EnableTessellationDisplacementEff && hasH ? 1 : 0);
-            SetIntLoc(u.HasNormal, hasN ? 1 : 0);
-            SetIntLoc(u.HasSpecular, hasS ? 1 : 0);
-            SetIntLoc(u.HasHeight, hasH ? 1 : 0);
-            SetVec2Loc(u.ParallaxHeightTexSize, hasH && frame.Material is not null
-                ? new Vector2(Math.Max(1, frame.Material.Width), Math.Max(1, frame.Material.Height))
-                : Vector2.One);
-            _albedo.Bind(0);
-            _normal.Bind(1);
-            _spec.Bind(2);
-            _height.Bind(3);
-            SetIntLoc(u.Albedo, 0);
-            SetIntLoc(u.Normal, 1);
-            SetIntLoc(u.Specular, 2);
-            SetIntLoc(u.Height, 3);
-            SetIntLoc(u.GenesisUseMaterialTextureArray, 0);
-            if (!_loggedMeshReady)
-            {
-                EmitDiagnostic(
-                    $"[3D preview] Draw ready: indexCount={_mesh.IndexCount}, frame.Scene={frame.Scene.SceneKind}, lightYaw={frame.Settings.LightYawDegrees:F1}, lightPitch={frame.Settings.LightPitchDegrees:F1}.");
-                _loggedMeshReady = true;
-            }
 
-            ApplyEntitySkinningUniforms(_program, 0, 0, 0f);
-            _mesh.Draw(_mainProgramUsesTessellation);
-        }
-        }
-        }
+            if (!frame.Settings.DrawPreviewSubject || _mesh.IndexCount <= 0)
+            {
+                if (!_loggedZeroIndex && frame.Settings.DrawPreviewSubject && _mesh.IndexCount <= 0)
+                {
+                    EmitDiagnostic(
+                        $"[3D preview] Draw skipped: index buffer empty (frame.Scene={frame.Scene.SceneKind}, sceneMeshCount={frame.Scene.Meshes.Count}, frame.MeshDirty={frame.MeshDirty}).");
+                    _loggedZeroIndex = true;
+                }
+            }
+            else
+            {
+                using (BeginCpuTimerScope(GlGpuTimerScope.SubjectDraw))
+                {
+                    if (frame.BlockModel is not null && frame.BlockSlots is { Length: > 0 })
+                    {
+                        if (!_loggedMeshReady)
+                        {
+                            var subjectTag = frame.BlockModel.EmulatedRebake is not null
+                                ? frame.BlockModel.EntityGpuVerticesInPreviewSpace ? "parity-cpu-rebake" : "entity"
+                                : "block-model";
+                            EmitDiagnostic(
+                                $"[3D preview] Draw ready: indexCount={_mesh.IndexCount}, subject={subjectTag}, frame.Scene={frame.Scene.SceneKind}, lightYaw={frame.Settings.LightYawDegrees:F1}, lightPitch={frame.Settings.LightPitchDegrees:F1}.");
+                            _loggedMeshReady = true;
+                            EmitDepthLayerDiagnostic(frame.BlockModel, nearPlane, farPlane, frame.Gl);
+                        }
+                        var blendWasEnabled = frame.Gl.IsEnabled(EnableCap.Blend);
+                        var activeBatchBlend = blendWasEnabled;
+                        var uploadedMaterialIndex = -1;
+                        var entityBoneUniformsApplied = false;
+                        var blockModel = frame.BlockModel;
+                        var blockSlots = frame.BlockSlots;
+                        EnsureFrameSubjectGpuUploads(ref frame);
+                        var useMaterialDrawRecords = _frameSubjectUseMaterialDrawRecords;
+                        var useIndirectDrawCommands = _frameSubjectUseIndirectDrawCommands;
+                        var useMaterialTextureArrays = _frameSubjectUseMaterialTextureArrays;
+                        if (useMaterialDrawRecords)
+                        {
+                            BindGenesisMaterialDrawRecordBuffer();
+                        }
+
+                        SetIntLoc(u.GenesisUseMaterialDrawRecord, useMaterialDrawRecords ? 1 : 0);
+                        SetIntLoc(u.GenesisUseMaterialTextureArray, useMaterialTextureArrays ? 1 : 0);
+                        if (useMaterialTextureArrays)
+                        {
+                            BindMainPassMaterialTextureArrays(u);
+                            // Array programs still declare sampler2D materials. Keep units 0–3 complete even when
+                            // the fragment path samples arrays — otherwise subject/terrain draws can be dropped
+                            // when the ground pass did not run this frame (no chunks / ground not ready).
+                            var primary = Math.Clamp(blockModel.PrimaryMaterialIndex, 0, blockSlots.Length - 1);
+                            UploadMaterial(frame.Gl, blockSlots[primary], nearest: true);
+                            BindSubjectMaterialTextures();
+                            PinMainPassMaterialSamplerUniforms(u);
+                            uploadedMaterialIndex = primary;
+                        }
+                        if (frame.EntityBonePaletteUploaded)
+                        {
+                            BindEntityBoneSkinningUboBlocks();
+                        }
+
+                        ReadOnlySpan<Vector4> cameraFrustum = frame.CameraFrustumPlanes;
+                        var subjectBoundsPadding = _mainProgramUsesTessellation
+                            ? Math.Clamp(frame.Settings.TessellationDisplacementStrength, 0f, 0.20f)
+                            : 0f;
+                        var subjectFullyCulled = frame.CameraFrustumValid &&
+                            PreviewDrawBatchFrustumCull.IsSubjectFullyCulled(
+                                blockModel.DrawBatches,
+                                cameraFrustum,
+                                frame.Eye,
+                                frame.ModelMatrix,
+                                subjectBoundsPadding);
+
+                        if (!subjectFullyCulled)
+                        {
+                            _mesh.BindVertexArray();
+                            for (var batchIndex = 0; batchIndex < blockModel.DrawBatches.Length; batchIndex++)
+                            {
+                                var batch = blockModel.DrawBatches[batchIndex];
+                                if ((uint)batch.MaterialIndex >= (uint)blockSlots.Length)
+                                {
+                                    continue;
+                                }
+
+                                var batchUsesTranslucentOverlay =
+                                    batch.LayerPolicy.Kind == PreviewDepthLayerKind.TranslucentOverlay;
+                                var batchAlphaMode = batchUsesTranslucentOverlay
+                                    ? (int)PreviewEntityAlphaMode.Blend
+                                    : frame.EntityAlphaModeUniform;
+                                var batchBlend = frame.EntityBlendDraw || batchUsesTranslucentOverlay;
+                                if (batchBlend)
+                                {
+                                    if (!activeBatchBlend)
+                                    {
+                                        frame.Gl.Enable(EnableCap.Blend);
+                                        frame.Gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+                                    }
+
+                                    activeBatchBlend = true;
+                                }
+                                else if (activeBatchBlend)
+                                {
+                                    frame.Gl.Disable(EnableCap.Blend);
+                                    activeBatchBlend = false;
+                                }
+
+                                SetIntLoc(u.EntityAlphaMode, batchAlphaMode);
+                                SetIntLoc(u.GenesisDrawRecordIndex, useMaterialDrawRecords ? batchIndex : 0);
+
+                                var slot = blockSlots[batch.MaterialIndex];
+                                var materialChanged = batch.MaterialIndex != uploadedMaterialIndex;
+                                if (materialChanged && !useMaterialTextureArrays)
+                                {
+                                    UploadMaterial(frame.Gl, slot, nearest: true);
+                                    uploadedMaterialIndex = batch.MaterialIndex;
+                                    BindSubjectMaterialTextures();
+                                    PinMainPassMaterialSamplerUniforms(u);
+                                }
+
+                                var bHasN = slot.NormalRgba is { Length: > 0 };
+                                var bHasS = slot.SpecularRgba is { Length: > 0 };
+                                var bHasH = slot.HeightRgba is { Length: > 0 };
+                                var batchAllowsParallax = !frame.EntityEmulatedPreview || batch.EnableParallax;
+                                var batchParallax = frame.EnableParallaxEff && batchAllowsParallax && bHasH;
+                                SetIntLoc(u.EnableParallax, batchParallax ? 1 : 0);
+                                SetIntLoc(u.EnableParallaxAo, batchParallax && frame.EnableParallaxAoEff ? 1 : 0);
+                                SetIntLoc(u.EnableParallaxShadow, batchParallax && frame.EnableParallaxShadowEff ? 1 : 0);
+                                // Entity atlas UV remapping is handled by TextureAtlasScale; do not attenuate POM UV travel.
+                                SetFloatLoc(u.ParallaxUvScale, 1f);
+                                SetVec2Loc(u.TextureAtlasScale, frame.EntityEmulatedPreview
+                                    ? EntityTextureAtlasScale(slot)
+                                    : Vector2.One);
+                                SetIntLoc(u.EnableTessellationDisplacement,
+                                    _mainProgramUsesTessellation &&
+                                    frame.EnableTessellationDisplacementEff &&
+                                    batchAllowsParallax &&
+                                    bHasH
+                                        ? 1
+                                        : 0);
+                                SetIntLoc(u.HasNormal, bHasN ? 1 : 0);
+                                SetIntLoc(u.HasSpecular, bHasS ? 1 : 0);
+                                SetIntLoc(u.HasHeight, bHasH ? 1 : 0);
+                                SetVec2Loc(u.ParallaxHeightTexSize, bHasH
+                                    ? new Vector2(Math.Max(1, slot.Width), Math.Max(1, slot.Height))
+                                    : Vector2.One);
+                                if (!entityBoneUniformsApplied)
+                                {
+                                    ApplyEntityBoneSkinningUniformsBeforeDraw(
+                                        _program,
+                                        _mainEntityUniformLocs,
+                                        blockModel,
+                                        blockModel.EntityGpuMeshSpaceLiftY,
+                                        frame.EntityBoneSnapshotValid,
+                                        frame.EntityBoneSnapshotCount,
+                                        frame.Settings.EnableEntityAnimation,
+                                        frame.EntityBonePaletteUploaded,
+                                        "main",
+                                        bindBoneUboBlocks: !frame.EntityBonePaletteUploaded);
+                                    entityBoneUniformsApplied = true;
+                                }
+
+                                var batchGroupCount = CountMainPassMultiDrawGroup(
+                                    blockModel.DrawBatches,
+                                    batchIndex,
+                                    blockSlots.Length,
+                                    frame.EntityBlendDraw,
+                                    useIndirectDrawCommands &&
+                                    CanUseGenesisMultiDrawGroups(useMaterialDrawRecords),
+                                    allowMaterialChanges: useMaterialTextureArrays);
+
+                                using (OpenGlPreviewLayerDepthState.Apply(frame.Gl, batch.LayerPolicy))
+                                {
+                                    if (EntityPreviewDebugSettings.ShowDepthLayerDebug)
+                                    {
+                                        SetVec3Loc(
+                                            u.PreviewLayerDebugTint,
+                                            PreviewDrawLayerPolicy.GetDebugTint(batch.LayerPolicy.Kind));
+                                    }
+
+                                    var gpuCulledDrawn =
+                                        batchGroupCount > 1 &&
+                                        TryDrawGpuCulledBatchGroup(
+                                            blockModel,
+                                            batchIndex,
+                                            batchGroupCount,
+                                            frame.CameraViewProj,
+                                            frame.Eye,
+                                            frame.ModelMatrix,
+                                            _program!,
+                                            batchBlend ? "main-alpha" : "main",
+                                            patches: _mainProgramUsesTessellation,
+                                            preserveOrder: batchBlend,
+                                            boundsPadding: subjectBoundsPadding,
+                                            enableHiZ: frame.HiZReady && !batchBlend,
+                                            hiZViewProj: frame.RasterViewProj,
+                                            enableVoxelOcclusion: _voxelDdaReadyThisFrame && !batchBlend);
+                                    if (!gpuCulledDrawn)
+                                    {
+                                        DrawCpuFrustumCulledBatchGroup(
+                                            blockModel,
+                                            batchIndex,
+                                            batchGroupCount,
+                                            cameraFrustum,
+                                            frame.Eye,
+                                            frame.ModelMatrix,
+                                            patches: _mainProgramUsesTessellation,
+                                            useIndirectDrawCommands,
+                                            boundsPadding: subjectBoundsPadding);
+                                    }
+                                }
+
+                                batchIndex += batchGroupCount - 1;
+                            }
+
+                            _mesh.UnbindVertexArray();
+                        }
+
+                        if (frame.EntityBonePaletteUploaded)
+                        {
+                            _entityBoneUpload?.MarkSubmitted();
+                            _entityPrevBoneUpload?.MarkSubmitted();
+                            _entityNormalBoneUpload?.MarkSubmitted();
+                        }
+
+                        if (!blendWasEnabled)
+                        {
+                            frame.Gl.Disable(EnableCap.Blend);
+                        }
+                        else
+                        {
+                            frame.Gl.Enable(EnableCap.Blend);
+                        }
+
+                        SetIntLoc(u.EntityAlphaMode, frame.EntityAlphaModeUniform);
+                        SetIntLoc(u.GenesisUseMaterialDrawRecord, 0);
+                        SetIntLoc(u.GenesisUseMaterialTextureArray, 0);
+                        SetIntLoc(u.GenesisDrawRecordIndex, 0);
+                    }
+                    else
+                    {
+                        var hasN = frame.Material?.NormalRgba is { Length: > 0 };
+                        var hasS = frame.Material?.SpecularRgba is { Length: > 0 };
+                        var hasH = frame.Material?.HeightRgba is { Length: > 0 };
+                        SetFloatLoc(u.ParallaxUvScale, 1f);
+                        SetVec2Loc(u.TextureAtlasScale, Vector2.One);
+                        SetIntLoc(u.EnableTessellationDisplacement,
+                            _mainProgramUsesTessellation && frame.EnableTessellationDisplacementEff && hasH ? 1 : 0);
+                        SetIntLoc(u.HasNormal, hasN ? 1 : 0);
+                        SetIntLoc(u.HasSpecular, hasS ? 1 : 0);
+                        SetIntLoc(u.HasHeight, hasH ? 1 : 0);
+                        SetVec2Loc(u.ParallaxHeightTexSize, hasH && frame.Material is not null
+                            ? new Vector2(Math.Max(1, frame.Material.Width), Math.Max(1, frame.Material.Height))
+                            : Vector2.One);
+                        _albedo.Bind(0);
+                        _normal.Bind(1);
+                        _spec.Bind(2);
+                        _height.Bind(3);
+                        SetIntLoc(u.Albedo, 0);
+                        SetIntLoc(u.Normal, 1);
+                        SetIntLoc(u.Specular, 2);
+                        SetIntLoc(u.Height, 3);
+                        SetIntLoc(u.GenesisUseMaterialTextureArray, 0);
+                        if (!_loggedMeshReady)
+                        {
+                            EmitDiagnostic(
+                                $"[3D preview] Draw ready: indexCount={_mesh.IndexCount}, frame.Scene={frame.Scene.SceneKind}, lightYaw={frame.Settings.LightYawDegrees:F1}, lightPitch={frame.Settings.LightPitchDegrees:F1}.");
+                            _loggedMeshReady = true;
+                        }
+
+                        ApplyEntitySkinningUniforms(_program, 0, 0, 0f);
+                        _mesh.Draw(_mainProgramUsesTessellation);
+                    }
+                }
+            }
 
         } // Scene timer scope
 

@@ -69,7 +69,7 @@ public static class PreviewGridLinesFactory
             AddThickLine(new Vector3(x, y, -halfExtent), new Vector3(x, y, halfExtent));
         }
 
-        return list.ToArray();
+        return [.. list];
     }
 
     /// <summary>Three axis segments from origin along +X,+Y,+Z (model space).</summary>
@@ -86,6 +86,6 @@ public static class PreviewGridLinesFactory
         o.AddRange(Seg(0, 0, 0, halfLen, 0, 0, rX, gX, bX));
         o.AddRange(Seg(0, 0, 0, 0, halfLen, 0, rY, gY, bY));
         o.AddRange(Seg(0, 0, 0, 0, 0, halfLen, rZ, gZ, bZ));
-        return o.ToArray();
+        return [.. o];
     }
 }

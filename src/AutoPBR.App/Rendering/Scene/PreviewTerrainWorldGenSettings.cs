@@ -41,11 +41,14 @@ public readonly record struct PreviewTerrainWorldGenSettings(
     /// <summary>Replace zeroed / incomplete defaults with <see cref="Default"/> then clamp.</summary>
     public static PreviewTerrainWorldGenSettings Resolve(in PreviewTerrainWorldGenSettings value)
     {
-        if (value.BiomeSize <= 0f &&
-            value.Amplification <= 0f &&
-            value.ErosionStrength <= 0f &&
-            value.Continentalness <= 0f &&
-            value.Seed == 0)
+        if (value is
+            {
+                BiomeSize: <= 0f,
+                Amplification: <= 0f,
+                ErosionStrength: <= 0f,
+                Continentalness: <= 0f,
+                Seed: 0
+            })
         {
             return Default;
         }

@@ -1,5 +1,6 @@
+using System.Numerics;
+
 using AutoPBR.App.Rendering.Scene;
-using AutoPBR.Preview;
 
 namespace AutoPBR.App.Tests;
 
@@ -52,7 +53,7 @@ public sealed class PreviewTerrainBiomeTests
             out var b,
             out var p);
         Assert.InRange(m + d + b + p, 0.999f, 1.001f);
-        Assert.True(m > 0.05f && m < 0.95f, $"expected soft mountain weight near threshold, got {m}");
+        Assert.True(m is > 0.05f and < 0.95f, $"expected soft mountain weight near threshold, got {m}");
         Assert.True(p > 0.05f, $"expected plains to share the border, got {p}");
     }
 
@@ -141,13 +142,13 @@ public sealed class PreviewTerrainBiomeTests
         Assert.InRange(a, -1f, 1f);
 
         var baseH = PreviewTerrainAdvancedErosion.Fbm(
-            new System.Numerics.Vector2(0.42f, 0.31f),
+            new Vector2(0.42f, 0.31f),
             frequency: 2.4f,
             octaves: 3,
             lacunarity: 2f,
             gain: 0.18f);
         var filtered = PreviewTerrainAdvancedErosion.ErosionFilter(
-            new System.Numerics.Vector2(0.42f, 0.31f),
+            new Vector2(0.42f, 0.31f),
             baseH,
             fadeTargetIn: 0f,
             PreviewTerrainAdvancedErosion.MountainParams);
@@ -281,7 +282,7 @@ public sealed class PreviewTerrainBiomeTests
             HasGravel: true);
         var mesh = PreviewTerrainMeshBaker.BakeFullChunk(new TerrainChunkKey(3, -2), settings);
         Assert.NotNull(mesh);
-        Assert.NotEmpty(mesh!.DrawBatches);
+        Assert.NotEmpty(mesh.DrawBatches);
         Assert.True(mesh.DrawBatches.All(b => b.MaterialIndex is >= 0 and < PreviewTerrainGrassSlots.MaxCount));
     }
 }

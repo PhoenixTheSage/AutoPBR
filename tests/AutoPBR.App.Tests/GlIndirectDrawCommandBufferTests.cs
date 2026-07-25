@@ -1,7 +1,6 @@
 using System.Numerics;
 
 using AutoPBR.App.Rendering.OpenGL;
-using AutoPBR.Preview;
 
 namespace AutoPBR.App.Tests;
 
@@ -128,7 +127,7 @@ public sealed class GlIndirectDrawCommandBufferTests
 
         Assert.Single(withBounds);
         Assert.True(withBounds[0].HasBounds);
-        Assert.Equal(new System.Numerics.Vector3(0f, 0f, 0f), withBounds[0].BoundsCenter);
+        Assert.Equal(new Vector3(0f, 0f, 0f), withBounds[0].BoundsCenter);
         Assert.InRange(withBounds[0].BoundsRadius, 1.4141f, 1.4143f);
     }
 
@@ -138,7 +137,7 @@ public sealed class GlIndirectDrawCommandBufferTests
         Span<float> record = stackalloc float[8];
         var batch = new PreviewDrawBatch(0, 3, 0)
         {
-            BoundsCenter = new System.Numerics.Vector3(1f, 2f, 3f),
+            BoundsCenter = new Vector3(1f, 2f, 3f),
             BoundsRadius = 4f,
             LodMaxDistance = 12f,
         };
@@ -215,8 +214,8 @@ public sealed class GlIndirectDrawCommandBufferTests
 
         PreviewFrustumPlanes.Extract(vp, planes);
 
-        Assert.All(planes.ToArray(), plane => Assert.True(SignedDistance(plane, Vector3.Zero) >= 0f));
-        Assert.Contains(planes.ToArray(), plane => SignedDistance(plane, new Vector3(100f, 0f, 0f)) < 0f);
+        Assert.All([.. planes], plane => Assert.True(SignedDistance(plane, Vector3.Zero) >= 0f));
+        Assert.Contains([.. planes], plane => SignedDistance(plane, new Vector3(100f, 0f, 0f)) < 0f);
 
         // Screen-edge point must stay inside (column clip = vp * world matches GL upload path).
         var forward = Vector3.Normalize(-Vector3.UnitZ);
@@ -245,7 +244,7 @@ public sealed class GlIndirectDrawCommandBufferTests
         ];
 
         Assert.NotNull(cached);
-        Assert.True(cached!.UpdateDrawBatchBounds(batches, bones, bones.Length, meshSpaceLiftY: 0.25f));
+        Assert.True(cached.UpdateDrawBatchBounds(batches, bones, bones.Length, meshSpaceLiftY: 0.25f));
         Assert.True(batches[0].HasBounds);
         Assert.Equal(new Vector3(0.5f, 0.25f, 0f), batches[0].BoundsCenter);
         Assert.Equal(1f, batches[0].BoundsRadius, 5);
@@ -264,7 +263,7 @@ public sealed class GlIndirectDrawCommandBufferTests
         var cached = PreviewGpuSkinnedBounds.TryBuild(batches, vertices, indices, vertexStrideFloats: 13);
 
         Assert.NotNull(cached);
-        Assert.False(cached!.UpdateDrawBatchBounds(batches, [], boneCount: 0, meshSpaceLiftY: 0f));
+        Assert.False(cached.UpdateDrawBatchBounds(batches, [], boneCount: 0, meshSpaceLiftY: 0f));
         Assert.False(batches[0].HasBounds);
     }
 

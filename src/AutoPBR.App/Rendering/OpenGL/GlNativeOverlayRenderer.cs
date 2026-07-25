@@ -133,6 +133,12 @@ void main()
 
     internal bool UsesPersistentVertexUpload => _vertexUpload?.UsesPersistentMapping == true;
 
+    /// <param name="viewportWidth">Viewport width in pixels.</param>
+    /// <param name="viewportHeight">Viewport height in pixels.</param>
+    /// <param name="marginPixels">Screen margin in pixels for overlay placement.</param>
+    /// <param name="debug">Optional debug overlay bitmap.</param>
+    /// <param name="fps">Optional FPS overlay bitmap.</param>
+    /// <param name="cpu">Optional CPU timing overlay bitmap.</param>
     /// <param name="hdrScRgbScale">
     /// Paper-white scRGB scale (<c>nits/80</c>) when compositing into an HDR linear target; 0 for SDR.
     /// </param>

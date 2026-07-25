@@ -1,7 +1,3 @@
-using System.IO.Compression;
-
-using AutoPBR.Core.Models;
-using AutoPBR.Preview;
 
 namespace AutoPBR.Preview.Tests;
 
@@ -46,8 +42,8 @@ public sealed class PreviewTerrainSpruceJarDiagnosticsTests
 
         Assert.NotNull(templates.LogOrCactus);
         Assert.NotNull(templates.Leaves);
-        Assert.Contains("spruce_log", templates.LogOrCactus!.ProvenanceDetail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("spruce_leaves", templates.Leaves!.ProvenanceDetail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("spruce_log", templates.LogOrCactus.ProvenanceDetail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("spruce_leaves", templates.Leaves.ProvenanceDetail, StringComparison.OrdinalIgnoreCase);
 
         Assert.True(
             templates.LogOrCactus.VerticesBySlot.ContainsKey(spruce.LogSlot),
@@ -60,11 +56,11 @@ public sealed class PreviewTerrainSpruceJarDiagnosticsTests
         Assert.False(templates.LogOrCactus.VerticesBySlot.ContainsKey(spruce.LeavesOrTopSlot));
         Assert.False(templates.Leaves.VerticesBySlot.ContainsKey(spruce.LogSlot));
 
-        if (spruce.LogTopSlot is int top)
+        if (spruce.LogTopSlot is not null)
         {
             Assert.True(
-                templates.LogOrCactus.VerticesBySlot.ContainsKey(top),
-                $"expected log_top faces in slot {top}");
+                templates.LogOrCactus.VerticesBySlot.ContainsKey(spruce.LogTopSlot.Value),
+                $"expected log_top faces in slot {spruce.LogTopSlot.Value}");
         }
 
         // Stamp into buckets and ensure only spruce slots receive geometry.
@@ -79,9 +75,9 @@ public sealed class PreviewTerrainSpruceJarDiagnosticsTests
 
         Assert.True(buckets[spruce.LogSlot].Count > 0);
         Assert.True(buckets[spruce.LeavesOrTopSlot].Count > 0);
-        if (spruce.LogTopSlot is int topSlot)
+        if (spruce.LogTopSlot is not null)
         {
-            Assert.True(buckets[topSlot].Count > 0);
+            Assert.True(buckets[spruce.LogTopSlot.Value].Count > 0);
         }
 
         // Each stamped face must keep four distinct corners (reverse-winding bug made i3==i1).

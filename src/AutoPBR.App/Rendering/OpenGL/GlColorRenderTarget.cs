@@ -16,7 +16,6 @@ internal sealed class GlColorRenderTarget(GL gl, bool useOpenGlEs, bool useFloat
     public int Width => _width;
     public int Height => _height;
     public bool IsValid => _fbo != 0 && _colorTexture != 0;
-    public bool UsesFloatColor => _useFloatColor;
 
     public bool EnsureSize(int width, int height, bool? useFloatColor = null)
     {
@@ -162,11 +161,6 @@ internal sealed class GlColorRenderTarget(GL gl, bool useOpenGlEs, bool useFloat
         gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, (uint)Math.Max(0, priorRead));
         gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, (uint)Math.Max(0, priorDraw));
         return err == GLEnum.NoError;
-    }
-
-    public byte[]? TryReadRgb8(int x, int y, int width, int height)
-    {
-        return TryReadRgb8(x, y, width, height, out _);
     }
 
     public byte[]? TryReadRgb8(int x, int y, int width, int height, out GLEnum error)

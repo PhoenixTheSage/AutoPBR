@@ -1,7 +1,5 @@
 using System.IO.Compression;
 
-using AutoPBR.Preview;
-
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 
@@ -106,9 +104,9 @@ public sealed class PreviewTerrainVegetationKitTests
     public async Task TryResolveAsync_without_sources_returns_empty()
     {
         var dataPath = Path.Combine(AppContext.BaseDirectory, "Data", "textures_data.json");
-        var options = new AutoPBR.Core.Models.AutoPBROptions
+        var options = new AutoPBROptions
         {
-            SpecularData = AutoPBR.Core.Models.SpecularData.LoadFromFile(dataPath),
+            SpecularData = SpecularData.LoadFromFile(dataPath),
             FastSpecular = true,
             FoliageMode = "No Height",
         };
@@ -139,9 +137,9 @@ public sealed class PreviewTerrainVegetationKitTests
             }
 
             var dataPath = Path.Combine(AppContext.BaseDirectory, "Data", "textures_data.json");
-            var options = new AutoPBR.Core.Models.AutoPBROptions
+            var options = new AutoPBROptions
             {
-                SpecularData = AutoPBR.Core.Models.SpecularData.LoadFromFile(dataPath),
+                SpecularData = SpecularData.LoadFromFile(dataPath),
                 FastSpecular = true,
                 FoliageMode = "No Height",
             };
@@ -215,9 +213,9 @@ public sealed class PreviewTerrainVegetationKitTests
                 alpha: 200);
 
             var dataPath = Path.Combine(AppContext.BaseDirectory, "Data", "textures_data.json");
-            var options = new AutoPBR.Core.Models.AutoPBROptions
+            var options = new AutoPBROptions
             {
-                SpecularData = AutoPBR.Core.Models.SpecularData.LoadFromFile(dataPath),
+                SpecularData = SpecularData.LoadFromFile(dataPath),
                 FastSpecular = true,
                 FoliageMode = "No Height",
             };
@@ -231,7 +229,7 @@ public sealed class PreviewTerrainVegetationKitTests
             Assert.True(kit.HasAny);
             Assert.True(kit.TryGet(PreviewTerrainTreeSpecies.Oak, out var oak));
             Assert.NotNull(oak.LeavesOrTopMaps.DiffuseRgba);
-            Assert.True(oak.LeavesOrTopMaps.DiffuseRgba!.Length >= 4);
+            Assert.True(oak.LeavesOrTopMaps.DiffuseRgba.Length >= 4);
             // Pack leaf color must win over install green leaves.
             Assert.Equal(packLeafR, oak.LeavesOrTopMaps.DiffuseRgba[0]);
             Assert.Equal(packLeafG, oak.LeavesOrTopMaps.DiffuseRgba[1]);
@@ -258,7 +256,7 @@ public sealed class PreviewTerrainVegetationKitTests
         var install = new RecordingAssetSource("install");
         var composite = PreviewTerrainVegetationKitResolver.BuildResolveSource(pack, install);
         Assert.NotNull(composite);
-        Assert.True(composite!.TryReadBytes("assets/minecraft/textures/block/oak_leaves.png", out var bytes));
+        Assert.True(composite.TryReadBytes("assets/minecraft/textures/block/oak_leaves.png", out var bytes));
         Assert.Equal("pack"u8.ToArray(), bytes);
         Assert.Same(pack, PreviewTerrainVegetationKitResolver.BuildResolveSource(pack, null));
         Assert.Same(install, PreviewTerrainVegetationKitResolver.BuildResolveSource(null, install));

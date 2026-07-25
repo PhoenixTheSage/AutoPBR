@@ -1,5 +1,3 @@
-using System.Numerics;
-
 using Silk.NET.OpenGL;
 
 namespace AutoPBR.App.Rendering.OpenGL;
@@ -12,27 +10,18 @@ internal sealed class GlHierarchicalZPyramid(GL gl) : IDisposable
     private const int LocalSize = 8;
     private const uint TextureFetchBarrierBit = 0x00000008;
     private const uint ShaderImageAccessBarrierBit = 0x00000020;
-    private const uint ShaderStorageBarrierBit = 0x00002000;
-    private const uint BufferUpdateBarrierBit = 0x00000200;
 
     private uint _hizTexture;
     private int _width;
     private int _height;
     private int _levels;
-    private uint _sphereBuffer;
-    private uint _visibilityBuffer;
-    private int _sphereCapacityBytes;
-    private int _visibilityCapacityBytes;
-    private float[] _sphereScratch = [];
-    private uint[] _visibilityScratch = [];
     private bool _disposed;
 
-    public uint TextureHandle => _hizTexture;
+    public bool IsValid => _hizTexture != 0 && _levels > 0;
     public int Width => _width;
     public int Height => _height;
     public int Levels => _levels;
     public int MaxLevel => Math.Max(0, _levels - 1);
-    public bool IsValid => _hizTexture != 0 && _levels > 0;
 
     public bool EnsureSize(int width, int height)
     {
@@ -117,72 +106,6 @@ internal sealed class GlHierarchicalZPyramid(GL gl) : IDisposable
         gl.BindTexture(TextureTarget.Texture2D, _hizTexture);
     }
 
-    /// <summary>
-    /// GPU-tests spheres against the Hi-Z pyramid and readbacks visibility (1=visible, 0=occluded).
-    /// </summary>
-    public bool TestSpheres(
-        GlShaderProgram program,
-        ReadOnlySpan<Vector4> centerRadius,
-        Matrix4x4 viewProj,
-        Span<uint> visibilityOut)
-    {
-        if (_disposed ||
-            !IsValid ||
-            !program.IsValid ||
-            centerRadius.Length == 0 ||
-            visibilityOut.Length < centerRadius.Length)
-        {
-            return false;
-        }
-
-        var count = centerRadius.Length;
-        if (_sphereScratch.Length < count * 4)
-        {
-            _sphereScratch = new float[Math.Max(count * 4, 64)];
-        }
-
-        for (var i = 0; i < count; i++)
-        {
-            var s = centerRadius[i];
-            _sphereScratch[i * 4] = s.X;
-            _sphereScratch[i * 4 + 1] = s.Y;
-            _sphereScratch[i * 4 + 2] = s.Z;
-            _sphereScratch[i * 4 + 3] = s.W;
-        }
-
-        EnsureBuffer(ref _sphereBuffer, ref _sphereCapacityBytes, count * 4 * sizeof(float));
-        EnsureBuffer(ref _visibilityBuffer, ref _visibilityCapacityBytes, count * sizeof(uint));
-        gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, _sphereBuffer);
-        gl.BufferSubData<float>(BufferTargetARB.ShaderStorageBuffer, 0, _sphereScratch.AsSpan(0, count * 4));
-        gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 0, _sphereBuffer);
-        gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 1, _visibilityBuffer);
-
-        program.Use();
-        Bind(TextureUnit.Texture0);
-        SetUniform1(program, "uHiZ", 0);
-        SetUniformMatrix(program, "uViewProj", viewProj);
-        SetUniform2(program, "uHiZSize", _width, _height);
-        SetUniform1(program, "uHiZMaxLevel", MaxLevel);
-        SetUniform1(program, "uSphereCount", (uint)count);
-        SetUniform1(program, "uDepthEpsilon", PreviewHierarchicalZMath.DepthEpsilon);
-        gl.DispatchCompute((uint)((count + 63) / 64), 1, 1);
-        gl.MemoryBarrier(ShaderStorageBarrierBit | BufferUpdateBarrierBit);
-
-        if (_visibilityScratch.Length < count)
-        {
-            _visibilityScratch = new uint[Math.Max(count, 64)];
-        }
-
-        gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, _visibilityBuffer);
-        gl.GetBufferSubData<uint>(BufferTargetARB.ShaderStorageBuffer, 0, _visibilityScratch.AsSpan(0, count));
-        _visibilityScratch.AsSpan(0, count).CopyTo(visibilityOut);
-        gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 0, 0);
-        gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 1, 0);
-        gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, 0);
-        gl.BindTexture(TextureTarget.Texture2D, 0);
-        return true;
-    }
-
     public void Dispose()
     {
         if (_disposed)
@@ -192,17 +115,6 @@ internal sealed class GlHierarchicalZPyramid(GL gl) : IDisposable
 
         _disposed = true;
         DestroyTexture();
-        if (_sphereBuffer != 0)
-        {
-            gl.DeleteBuffer(_sphereBuffer);
-            _sphereBuffer = 0;
-        }
-
-        if (_visibilityBuffer != 0)
-        {
-            gl.DeleteBuffer(_visibilityBuffer);
-            _visibilityBuffer = 0;
-        }
     }
 
     private void Dispatch(int width, int height)
@@ -211,24 +123,6 @@ internal sealed class GlHierarchicalZPyramid(GL gl) : IDisposable
             (uint)((width + LocalSize - 1) / LocalSize),
             (uint)((height + LocalSize - 1) / LocalSize),
             1);
-    }
-
-    private void EnsureBuffer(ref uint buffer, ref int capacityBytes, int requiredBytes)
-    {
-        buffer = buffer == 0 ? gl.GenBuffer() : buffer;
-        if (requiredBytes <= capacityBytes)
-        {
-            return;
-        }
-
-        gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, buffer);
-        unsafe
-        {
-            gl.BufferData(BufferTargetARB.ShaderStorageBuffer, (nuint)requiredBytes, null, BufferUsageARB.DynamicDraw);
-        }
-
-        capacityBytes = requiredBytes;
-        gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, 0);
     }
 
     private void DestroyTexture()
@@ -253,24 +147,6 @@ internal sealed class GlHierarchicalZPyramid(GL gl) : IDisposable
         }
     }
 
-    private void SetUniform1(GlShaderProgram program, string name, uint value)
-    {
-        var loc = program.GetUniformLocation(name);
-        if (loc >= 0)
-        {
-            gl.Uniform1(loc, value);
-        }
-    }
-
-    private void SetUniform1(GlShaderProgram program, string name, float value)
-    {
-        var loc = program.GetUniformLocation(name);
-        if (loc >= 0)
-        {
-            gl.Uniform1(loc, value);
-        }
-    }
-
     private void SetUniform2(GlShaderProgram program, string name, int x, int y)
     {
         var loc = program.GetUniformLocation(name);
@@ -278,18 +154,5 @@ internal sealed class GlHierarchicalZPyramid(GL gl) : IDisposable
         {
             gl.Uniform2(loc, x, y);
         }
-    }
-
-    private void SetUniformMatrix(GlShaderProgram program, string name, Matrix4x4 matrix)
-    {
-        var loc = program.GetUniformLocation(name);
-        if (loc < 0)
-        {
-            return;
-        }
-
-        // Match OpenGlPreviewBackend matrix upload: row-stored Numerics → transpose → column-major GLSL.
-        var mt = Matrix4x4.Transpose(matrix);
-        gl.UniformMatrix4(loc, 1, false, in mt.M11);
     }
 }

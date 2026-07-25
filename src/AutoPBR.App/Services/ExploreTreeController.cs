@@ -1,8 +1,5 @@
 using System.Collections.Concurrent;
-using System.IO.Compression;
-
 using AutoPBR.App.Models;
-using AutoPBR.Core;
 using AutoPBR.Core.Embeddings;
 using AutoPBR.Core.Models;
 

@@ -3,7 +3,7 @@ namespace AutoPBR.App.Rendering.Scene;
 /// <summary>
 /// Seeded Minecraft-style column heights: flat pad under the subject, blended noise hills beyond.
 /// Heights are relative block offsets from the pad surface (<see cref="PreviewStageConstants.GroundPlaneWorldY"/>).
-/// Infinite world: any integer XZ is valid via <see cref="SampleColumn"/>.
+/// Infinite world: any integer XZ is valid via <see cref="SampleColumn(int,int,in PreviewTerrainWorldGenSettings,int,int,int)"/>.
 /// </summary>
 public static class PreviewTerrainHeightfield
 {

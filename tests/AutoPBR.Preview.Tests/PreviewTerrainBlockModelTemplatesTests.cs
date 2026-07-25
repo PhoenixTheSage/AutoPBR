@@ -1,8 +1,5 @@
 using System.IO.Compression;
 
-using AutoPBR.Core.Models;
-using AutoPBR.Preview;
-
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 
@@ -36,7 +33,7 @@ public sealed class PreviewTerrainBlockModelTemplatesTests
             Assert.True(kit.ModelTemplates.HasAny);
             Assert.True(kit.ModelTemplates.TryGet(PreviewTerrainTreeSpecies.Cactus, out var cactus));
             Assert.NotNull(cactus.LogOrCactus);
-            Assert.Contains("cactus", cactus.LogOrCactus!.ProvenanceDetail, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("cactus", cactus.LogOrCactus.ProvenanceDetail, StringComparison.OrdinalIgnoreCase);
 
             // Origin-centered: side faces should sit near ±7/16, not ±0.5.
             var sawInset = false;

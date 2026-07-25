@@ -6,7 +6,7 @@ namespace AutoPBR.App.Rendering.OpenGL;
 
 /// <summary>
 /// CPU mirror of heightfield occupancy + Amanatides–Woo DDA used by genesis_indirect_compact.
-/// Column solids match <see cref="PreviewTerrainMeshBaker.IsSolid"/>.
+/// Column solids match <see cref="PreviewTerrainMeshBaker.IsSolid(System.Func{int,int,int},int,int,int,int)"/>.
 /// </summary>
 internal static class PreviewVoxelDdaMath
 {
@@ -136,9 +136,8 @@ internal static class PreviewVoxelDdaMath
         samples[3] = samples[0] + orthoB * (radius * 0.65f);
         samples[4] = samples[0] - orthoB * (radius * 0.65f);
 
-        for (var i = 0; i < samples.Length; i++)
+        foreach (var sample in samples)
         {
-            var sample = samples[i];
             var delta = sample - camera;
             var sampleDist = delta.Length();
             if (sampleDist < 1e-4f)

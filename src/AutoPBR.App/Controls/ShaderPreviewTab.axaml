@@ -384,7 +384,7 @@
                                                                   ToolTip.Tip="{Binding Strings.Preview3DShowFpsCounterTooltip}"
                                                                   IsEnabled="{Binding IsPreview3D}" />
                                                         <CheckBox Content="{Binding Strings.Preview3DVSync}"
-                                                                  IsChecked="{Binding Preview3DVSyncEnabled, Mode=TwoWay}"
+                                                                  IsChecked="{Binding Preview3DvSyncEnabled, Mode=TwoWay}"
                                                                   ToolTip.Tip="{Binding Strings.Preview3DVSyncTooltip}"
                                                                   IsEnabled="{Binding IsPreview3D}" />
                                                         <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">

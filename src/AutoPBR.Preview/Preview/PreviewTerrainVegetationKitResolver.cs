@@ -200,7 +200,7 @@ public static class PreviewTerrainVegetationKitResolver
                 .ConfigureAwait(false);
             var topMaps = await ResolveSlotMapsAsync(source, CactusTopArchivePath, options, cancellationToken)
                 .ConfigureAwait(false);
-            if (sideMaps is not null && topMaps is not null)
+            if ((sideMaps, topMaps) is (not null, not null))
             {
                 var sideSlot = nextSlot++;
                 cutout.Add(true); // cactus_side needs alpha cutout for notch holes
@@ -237,7 +237,7 @@ public static class PreviewTerrainVegetationKitResolver
             Identity = identityString,
             Species = speciesKits,
             TotalSlotCount = nextSlot,
-            CutoutBySlot = cutout.ToArray(),
+            CutoutBySlot = [.. cutout],
             ModelTemplates = modelTemplates,
         };
     }
