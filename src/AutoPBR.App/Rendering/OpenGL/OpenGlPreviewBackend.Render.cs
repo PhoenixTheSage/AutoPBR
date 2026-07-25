@@ -337,6 +337,8 @@ public sealed partial class OpenGlPreviewBackend
 
         if (drawBootstrapOnly)
         {
+            // Multi-frame bootstrap: drain any completed occluder bake between steps.
+            PumpTerrainOccluderAtlasBootstrap();
             gl.ClearColor(0.01f, 0.012f, 0.02f, 1f);
             gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
             return;

@@ -354,9 +354,10 @@ public sealed partial class PreviewRenderingTests
         Assert.Contains("var batchParallax = frame.EnableParallaxEff && batchAllowsParallax && bHasH;", source, StringComparison.Ordinal);
         Assert.Contains("SetIntLoc(u.EnableParallax, batchParallax ? 1 : 0);", source, StringComparison.Ordinal);
         Assert.Contains("UploadMaterial(frame.Gl, slot, nearest: true);", source, StringComparison.Ordinal);
-        Assert.Contains("? EntityParallaxUvScale(slot)", source, StringComparison.Ordinal);
+        Assert.Contains("SetFloatLoc(u.ParallaxUvScale, 1f);", source, StringComparison.Ordinal);
         Assert.Contains("? EntityTextureAtlasScale(slot)", source, StringComparison.Ordinal);
-        Assert.Contains("return Math.Clamp(16f / atlasMax, 0.02f, 1f);", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("EntityParallaxUvScale", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("16f / atlasMax", source, StringComparison.Ordinal);
         Assert.Contains("SetIntLoc(u.EnableTessellationDisplacement,", source, StringComparison.Ordinal);
         Assert.Contains("batchAllowsParallax &&", source, StringComparison.Ordinal);
     }

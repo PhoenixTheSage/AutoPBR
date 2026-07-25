@@ -421,9 +421,8 @@ public sealed partial class OpenGlPreviewBackend
                 SetIntLoc(u.EnableParallax, batchParallax ? 1 : 0);
                 SetIntLoc(u.EnableParallaxAo, batchParallax && frame.EnableParallaxAoEff ? 1 : 0);
                 SetIntLoc(u.EnableParallaxShadow, batchParallax && frame.EnableParallaxShadowEff ? 1 : 0);
-                SetFloatLoc(u.ParallaxUvScale, frame.EntityEmulatedPreview
-                    ? EntityParallaxUvScale(slot)
-                    : 1f);
+                // Entity atlas UV remapping is handled by TextureAtlasScale; do not attenuate POM UV travel.
+                SetFloatLoc(u.ParallaxUvScale, 1f);
                 SetVec2Loc(u.TextureAtlasScale, frame.EntityEmulatedPreview
                     ? EntityTextureAtlasScale(slot)
                     : Vector2.One);
@@ -574,17 +573,6 @@ public sealed partial class OpenGlPreviewBackend
 
         FinishOcclusionDebugFrame(frame.Settings);
         FinishGodRaySceneRender(ref frame);
-    }
-
-    private static float EntityParallaxUvScale(PreviewMaterial slot)
-    {
-        var atlasMax = Math.Max(slot.Width, slot.Height);
-        if (atlasMax <= 16)
-        {
-            return 1f;
-        }
-
-        return Math.Clamp(16f / atlasMax, 0.02f, 1f);
     }
 
     private static Vector2 EntityTextureAtlasScale(PreviewMaterial slot) =>

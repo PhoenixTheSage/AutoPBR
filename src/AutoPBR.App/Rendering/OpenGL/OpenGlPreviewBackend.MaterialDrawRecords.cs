@@ -117,7 +117,8 @@ public sealed partial class OpenGlPreviewBackend
             ? new Vector2(Math.Max(1, slot.Width), Math.Max(1, slot.Height))
             : Vector2.One;
 
-        record[0] = frame.EntityEmulatedPreview ? EntityParallaxUvScale(slot) : 1f;
+        // POM UV travel stays full-strength; entity atlas mapping uses params0.yz (TextureAtlasScale).
+        record[0] = 1f;
         record[1] = textureAtlasScale.X;
         record[2] = textureAtlasScale.Y;
         record[3] = heightTexSize.X;

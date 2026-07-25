@@ -584,7 +584,8 @@ public class PreviewGlslEsAdaptTests
         Assert.Contains("textureLod(\n                uHeightArray", evaluation, StringComparison.Ordinal);
         Assert.Contains("genesisMaterialTextureLayer(0)", evaluation, StringComparison.Ordinal);
         Assert.Contains("max(rawHeight - 0.5, 0.0) * 2.0", evaluation, StringComparison.Ordinal);
-        Assert.Contains("uTessellationDisplacementStrength", evaluation, StringComparison.Ordinal);
+        Assert.Contains("clamp(uTessellationDisplacementStrength, 0.0, 0.20)", evaluation, StringComparison.Ordinal);
+        Assert.DoesNotContain("uHeightStrength", evaluation, StringComparison.Ordinal);
         Assert.Contains("uLightViewProj * vec4(worldPos, 1.0)", evaluation, StringComparison.Ordinal);
     }
 

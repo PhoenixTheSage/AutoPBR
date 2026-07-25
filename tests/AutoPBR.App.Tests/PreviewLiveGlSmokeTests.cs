@@ -735,6 +735,12 @@ public sealed class PreviewLiveGlSmokeTests
         {
             Thread.Sleep(10);
             atlas.PumpUpload();
+            // Match production Tick: keep requesting so a stuck bake latch can recover.
+            atlas.EnsureFilled(
+                cameraChunk,
+                chunkViewDistance: 2,
+                PreviewTerrainWorldGenSettings.Default,
+                worldGenRevision: 1);
         }
 
         Assert.True(atlas.IsValid, "Timed out waiting for async voxel occluder atlas bake.");

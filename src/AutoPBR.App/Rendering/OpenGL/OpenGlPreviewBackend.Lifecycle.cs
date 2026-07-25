@@ -19,6 +19,29 @@ public sealed partial class OpenGlPreviewBackend
 {
     private bool TryUploadBundledGroundFallback(GL gl)
     {
+        // Prefer the cached kit/biome palette across GPU reload (shader cache invalidate).
+        // Bundled single-slot grass must not overwrite multi-slot materials already pushed by the VM.
+        PreviewMaterial[]? cachedSlots;
+        bool overlayCutout;
+        bool[]? cutoutBySlot;
+        lock (_sync)
+        {
+            cachedSlots = _grassGroundSlotMaterials;
+            overlayCutout = _grassGroundOverlayCutout;
+            cutoutBySlot = _grassGroundSlotCutout;
+        }
+
+        if (cachedSlots is { Length: > 0 })
+        {
+            UploadGroundMaterials(gl, cachedSlots, overlayCutout, nearest: true, cutoutBySlot);
+            lock (_sync)
+            {
+                _grassGroundMaterialDirty = false;
+            }
+
+            return _grassGroundReady;
+        }
+
         if (!PreviewBundledGroundMapsLoader.TryLoad(out var material))
         {
             EmitDiagnostic("[3D preview] Bundled grass ground fallback missing or invalid.");
@@ -995,6 +1018,10 @@ public sealed partial class OpenGlPreviewBackend
         DisposeGroundTextureArrays();
         _terrainStreamer?.Dispose();
         _terrainStreamer = null;
+        // Same as shader-reload release: new streamer must re-apply cached grass/veg/world-gen rules.
+        _terrainGrassBakeSettingsDirty = true;
+        _terrainVegetationBakePlanDirty = true;
+        _terrainWorldGenSettingsDirty = true;
         DisposeGroundGpuResources();
         _neutralNormal?.Dispose();
         _neutralNormal = null;

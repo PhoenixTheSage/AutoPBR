@@ -79,11 +79,18 @@ public sealed partial class OpenGlPreviewBackend
     private void ApplyTerrainWorldGenSettings(PreviewTerrainWorldGenSettings settings)
     {
         EnsureTerrainStreamer();
-        _terrainStreamer!.WorldGenSettings = settings;
+        var previous = _terrainStreamer!.WorldGenSettings;
+        _terrainStreamer.WorldGenSettings = settings;
         // Clear streamed chunks and rebake; flat pad regenerates as height-0 Plains.
         DisposeTerrainGpuChunks();
         _terrainStreamer.InvalidateAll();
-        _terrainOccluderWorldGenRevision++;
+        // Only invalidate the DDA atlas when resolved world-gen actually changed; otherwise a
+        // startup dirty apply would discard the bootstrap prefetch and leave DDA racing again.
+        if (!previous.Equals(_terrainStreamer.WorldGenSettings))
+        {
+            _terrainOccluderWorldGenRevision++;
+        }
+
         lock (_sync)
         {
             _terrainStreamingNeedsFrames = true;
@@ -169,6 +176,8 @@ public sealed partial class OpenGlPreviewBackend
                             PreviewStageConstants.TerrainSolidFloorRelativeY;
         _terrainEnvCeilingY = PreviewStageConstants.GroundPlaneWorldY +
                               PreviewStageConstants.TerrainMountainMaxReliefBlocks;
+        // Start the DDA height atlas bake now so it can finish during later bootstrap steps.
+        PrefetchTerrainOccluderAtlas(gl);
     }
 
     private void EnsureTerrainMeshPool(GL gl)

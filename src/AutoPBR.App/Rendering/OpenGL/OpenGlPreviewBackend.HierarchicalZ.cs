@@ -23,6 +23,7 @@ public sealed partial class OpenGlPreviewBackend
     private bool _hizSphereTestCompileDisabled;
     private bool _loggedHiZOcclusionEnabled;
     private bool _loggedVoxelDdaOcclusionEnabled;
+    private bool _loggedVoxelDdaOcclusionPending;
     private bool _hiZReadyThisFrame;
     private bool _voxelDdaReadyThisFrame;
     private int _terrainOccluderWorldGenRevision;
@@ -151,6 +152,7 @@ public sealed partial class OpenGlPreviewBackend
         _hizSphereTestCompileDisabled = false;
         _loggedHiZOcclusionEnabled = false;
         _loggedVoxelDdaOcclusionEnabled = false;
+        _loggedVoxelDdaOcclusionPending = false;
         _voxelDdaReadyThisFrame = false;
         _latestOcclusionDebugHudText = null;
     }
@@ -166,6 +168,7 @@ public sealed partial class OpenGlPreviewBackend
         _hizSphereTestCompileDisabled = false;
         _loggedHiZOcclusionEnabled = false;
         _loggedVoxelDdaOcclusionEnabled = false;
+        _loggedVoxelDdaOcclusionPending = false;
         _voxelDdaReadyThisFrame = false;
         _latestOcclusionDebugHudText = null;
     }
@@ -227,20 +230,23 @@ public sealed partial class OpenGlPreviewBackend
         _voxelDdaReadyThisFrame = false;
         if (_gl is null ||
             _glCapabilities?.CanUseGpuCompactedDrawSubmission != true ||
-            !frame.Settings.ShowGroundMesh ||
-            _terrainStreamer is null)
+            !frame.Settings.ShowGroundMesh)
         {
+            // Still drain a completed bake so a prior prefetch/reload is not left latched.
+            _terrainOccluderAtlas?.PumpUpload();
             return;
         }
 
         _terrainOccluderAtlas ??= new GlTerrainOccluderAtlas(_gl);
         // Apply any completed off-thread bake, then request a rebuild if the camera ring moved.
         _terrainOccluderAtlas.PumpUpload();
+        EnsureTerrainStreamer();
         var cameraChunk = TerrainChunkKey.FromWorld(frame.Eye.X, frame.Eye.Z);
+        var worldGen = _terrainStreamer!.WorldGenSettings;
         _terrainOccluderAtlas.EnsureFilled(
             cameraChunk,
             frame.Settings.ChunkViewDistance,
-            _terrainStreamer.WorldGenSettings,
+            worldGen,
             _terrainOccluderWorldGenRevision);
         _terrainOccluderAtlas.PumpUpload();
         if (_terrainOccluderAtlas.IsValid)
@@ -255,6 +261,74 @@ public sealed partial class OpenGlPreviewBackend
                     "Hi-Z prepass skipped while DDA atlas is valid; atlas bakes off the GL thread.");
             }
         }
+        else if (_terrainOccluderAtlas.IsBakeInFlight && !_loggedVoxelDdaOcclusionPending)
+        {
+            // One-shot so the log shows why Hi-Z is still primary during the first bake.
+            _loggedVoxelDdaOcclusionPending = true;
+            EmitDiagnostic(
+                "[3D preview] P5.4 voxel DDA occlusion pending: heightfield atlas bake in flight; " +
+                "Hi-Z remains primary until the first atlas upload completes.");
+        }
+    }
+
+    /// <summary>
+    /// Kick the heightfield atlas bake as soon as terrain streaming exists so worker time overlaps
+    /// remaining GPU bootstrap steps (atmosphere, prewarm) instead of waiting for the first scene frame.
+    /// </summary>
+    private void PrefetchTerrainOccluderAtlas(GL gl)
+    {
+        if (_glCapabilities?.CanUseGpuCompactedDrawSubmission != true)
+        {
+            return;
+        }
+
+        EnsureTerrainStreamer();
+        _terrainOccluderAtlas ??= new GlTerrainOccluderAtlas(gl);
+        PreviewTerrainWorldGenSettings worldGen;
+        int viewDistance;
+        float eyeX;
+        float eyeZ;
+        lock (_sync)
+        {
+            worldGen = _terrainWorldGenSettings;
+            viewDistance = _settings.ChunkViewDistance;
+            if (_flyEngaged)
+            {
+                eyeX = _flyPosition.X;
+                eyeZ = _flyPosition.Z;
+            }
+            else
+            {
+                // Orbit eye is not stored as a world position here; origin is fine for the first atlas.
+                eyeX = 0f;
+                eyeZ = 0f;
+            }
+        }
+
+        // Keep streamer settings aligned so the first Setup dirty-apply does not bump the atlas revision.
+        _terrainStreamer!.WorldGenSettings = worldGen;
+        var cameraChunk = TerrainChunkKey.FromWorld(eyeX, eyeZ);
+        _terrainOccluderAtlas.EnsureFilled(
+            cameraChunk,
+            viewDistance,
+            _terrainStreamer.WorldGenSettings,
+            _terrainOccluderWorldGenRevision);
+        _terrainOccluderAtlas.PumpUpload();
+    }
+
+    /// <summary>
+    /// Upload a completed prefetch bake during bootstrap frames (PassScene does not run yet).
+    /// </summary>
+    private void PumpTerrainOccluderAtlasBootstrap()
+    {
+        if (_gl is null ||
+            _glCapabilities?.CanUseGpuCompactedDrawSubmission != true ||
+            _terrainOccluderAtlas is null)
+        {
+            return;
+        }
+
+        _terrainOccluderAtlas.PumpUpload();
     }
 
     /// <summary>

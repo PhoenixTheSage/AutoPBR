@@ -35,6 +35,12 @@ public sealed partial class OpenGlPreviewBackend
                 }
 
                 _step++;
+                // Terrain streaming (step 3) starts the occluder bake; pump uploads while later
+                // steps run so DDA can be valid on the first real scene frame.
+                if (_step > 3)
+                {
+                    backend.PumpTerrainOccluderAtlasBootstrap();
+                }
             }
         }
     }
@@ -82,6 +88,10 @@ public sealed partial class OpenGlPreviewBackend
         DisposeGroundTextureArrays();
         _terrainStreamer?.Dispose();
         _terrainStreamer = null;
+        // Streamer recreate starts with BuiltIn defaults; re-apply cached bake rules on next PassSetup.
+        _terrainGrassBakeSettingsDirty = true;
+        _terrainVegetationBakePlanDirty = true;
+        _terrainWorldGenSettingsDirty = true;
         DisposeGroundGpuResources();
         _neutralNormal?.Dispose();
         _neutralNormal = null;
@@ -135,6 +145,12 @@ public sealed partial class OpenGlPreviewBackend
         _gpuInitTier = PreviewGpuInitTier.None;
         _shadowAwareGodRayInitAttempted = false;
         _atmoLutsValid = false;
+        // Atlas may survive reload; re-emit the enable diagnostic when DDA comes back.
+        _loggedVoxelDdaOcclusionEnabled = false;
+        _loggedVoxelDdaOcclusionPending = false;
+        _loggedHiZOcclusionEnabled = false;
+        _voxelDdaReadyThisFrame = false;
+        _hiZReadyThisFrame = false;
     }
 
     private bool RunGpuBootstrapStep(int step)

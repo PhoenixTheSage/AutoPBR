@@ -42,6 +42,15 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
     public const int RebuildDebounceMs = 400;
 
     /// <summary>
+    /// If a bake latch stays set without producing a payload (thread-pool delay / abandoned worker),
+    /// allow a retry so DDA is not stuck off after startup.
+    /// </summary>
+    public const int BakeStuckTimeoutMs = 3000;
+
+    /// <summary>True while a CPU bake worker holds the single-flight latch.</summary>
+    public bool IsBakeInFlight => Volatile.Read(ref _bakeInFlight) != 0;
+
+    /// <summary>
     /// Request a rebuild when the camera nears the atlas edge, or view distance / world-gen changes.
     /// Never blocks on biome sampling; call <see cref="PumpUpload"/> each frame on the GL thread.
     /// </summary>
@@ -185,6 +194,7 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
         }
 
         DestroyTexture();
+        Interlocked.Exchange(ref _bakeInFlight, 0);
     }
 
     private bool CameraInsideAtlasWithMargin(TerrainChunkKey cameraChunk, int marginChunks)
@@ -227,7 +237,20 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
 
         if (Interlocked.CompareExchange(ref _bakeInFlight, 1, 0) != 0)
         {
-            return;
+            // Worker published a payload but PumpUpload has not run yet, or a prior bake stalled.
+            // Unstick after timeout so startup/reload cannot leave DDA permanently unavailable.
+            if (now - _lastRebuildRequestUnixMs >= BakeStuckTimeoutMs)
+            {
+                Interlocked.Exchange(ref _bakeInFlight, 0);
+                if (Interlocked.CompareExchange(ref _bakeInFlight, 1, 0) != 0)
+                {
+                    return;
+                }
+            }
+            else
+            {
+                return;
+            }
         }
 
         _lastRebuildRequestUnixMs = now;
@@ -244,6 +267,7 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
             {
                 if (_disposed)
                 {
+                    Interlocked.Exchange(ref _bakeInFlight, 0);
                     return;
                 }
 
@@ -266,6 +290,7 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
 
                 if (_disposed)
                 {
+                    Interlocked.Exchange(ref _bakeInFlight, 0);
                     return;
                 }
 
@@ -273,6 +298,8 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
                 {
                     _readyPayload = new BakePayload(ox, oz, size, ver, settingsVer, data);
                 }
+
+                // Latch stays set until PumpUpload (or Dispose) so a second bake cannot race the payload.
             }
             catch
             {
