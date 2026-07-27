@@ -6,6 +6,7 @@
 //!include "common.glsl"
 //!include "sky_view_lut.glsl"
 //!include "atmosphere.glsl"
+//!include "sky_radiance.glsl"
 
 const float SKY_PI = 3.14159265358979323846;
 
@@ -14,84 +15,6 @@ float skyHash31(vec3 p)
     p = fract(p * 0.3183099 + vec3(0.17, 0.31, 0.47));
     p += dot(p, p.yzx + 33.33);
     return fract((p.x + p.y) * p.z);
-}
-
-// lightPropagationDir: direction the directional light travels (away from the sun/moon).
-float skyDayFactor(vec3 lightPropagationDir, float sunIntensity)
-{
-    vec3 towardLight = normalize(-lightPropagationDir);
-    float sunElev = towardLight.y;
-    float dayFromSun = smoothstep(-0.04, 0.22, sunElev);
-    float dayFromIntensity = smoothstep(0.08, 2.0, sunIntensity);
-    return clamp(dayFromSun * dayFromIntensity, 0.0, 1.0);
-}
-
-// View-anchored horizon haze is correct at ground level but washes the lower viewport
-// when the camera climbs; fade it with altitude above the ground plane.
-float skyHorizonAltitudeFade(float camY, float groundY)
-{
-    float alt = max(camY - groundY, 0.0);
-    return 1.0 - smoothstep(8.0, 56.0, alt);
-}
-
-// Daytime sky: saturated Rayleigh blue gradient + warm horizon band near the sun.
-// Output is normalized linear RGB (~0..1.3); tone-map with skyTonemapLum, never a
-// per-channel x/(x+k) knee (that compresses every channel toward 1 = grey/white sky).
-// horizonBandScale: 1 at ground level, 0 high above (see skyHorizonAltitudeFade).
-vec3 skyDayRadiance(vec3 viewDir, vec3 lightPropagationDir, float sunIntensity, float turbidity, float horizonFalloff,
-    float horizonBandScale)
-{
-    float bandScale = clamp(horizonBandScale, 0.0, 1.0);
-    float mu = clamp(viewDir.y, -1.0, 1.0);
-    vec3 towardSun = normalize(-lightPropagationDir);
-    float cosSun = dot(viewDir, towardSun);
-    float sunElev = max(towardSun.y, 0.0);
-
-    // Sky brightness tracks sun intensity only gently (perceptual auto-exposure).
-    float illum = 0.8 + 0.2 * smoothstep(1.0, 12.0, max(sunIntensity, 0.0));
-
-    // Rayleigh blue: saturated zenith, paler toward horizon (linear RGB targets).
-    vec3 zenithBlue = vec3(0.052, 0.22, 0.74);
-    vec3 horizonBlue = vec3(0.38, 0.62, 0.98);
-    float gradT = pow(1.0 - max(mu, 0.0), 2.4);
-    vec3 sky = mix(zenithBlue, horizonBlue, gradT * mix(0.7, 1.0, bandScale));
-
-    // Haze band hugging the horizon only (high exponent = tight band).
-    float bandExp = mix(9.0, 3.5, clamp(horizonFalloff, 0.0, 1.0));
-    float horizonBand = pow(1.0 - max(mu, 0.0), bandExp);
-
-    float turbidityT = clamp((turbidity - 1.0) / 9.0, 0.0, 1.0);
-    vec3 hazeCol = mix(vec3(0.80, 0.90, 1.0), vec3(0.92, 0.88, 0.82), turbidityT);
-    sky = mix(sky, hazeCol, horizonBand * mix(0.25, 0.55, turbidityT) * bandScale);
-
-    // Warm sunrise/sunset band: strongest at low sun, biased toward the sun azimuth.
-    // Use a smooth sun-facing weight (never max(cosSun,0)): a hard hemisphere cut leaves a
-    // C1 crease on the sky dome that tracks the sun as a visible world-space line.
-    float lowSun = 1.0 - smoothstep(0.04, 0.42, sunElev);
-    float sunFacing = clamp(cosSun * 0.5 + 0.5, 0.0, 1.0);
-    float sunBias = pow(sunFacing, 3.0);
-    vec3 warmCol = vec3(1.0, 0.46, 0.18);
-    sky = mix(sky, warmCol, horizonBand * lowSun * sunBias * 0.85 * bandScale);
-
-    // Forward Mie halo around the sun (warmer when the sun is low).
-    vec3 mieTint = mix(vec3(1.0, 0.95, 0.85), warmCol, lowSun);
-    float mieAmt = atmosphereMiePhase(cosSun) * mix(0.05, 0.4, turbidityT);
-    sky += mieTint * mieAmt * 0.4;
-
-    return max(sky * illum, vec3(0.0));
-}
-
-// Luminance-preserving Reinhard: compresses brightness while keeping hue ratios,
-// so the blue sky stays blue instead of washing out to white.
-vec3 skyTonemapLum(vec3 c)
-{
-    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-    if (l <= 1e-5)
-    {
-        return c;
-    }
-
-    return c * ((l / (1.0 + l)) / l);
 }
 
 // Sun disc + aureole in angular space; add to sky radiance before skyTonemapLum.
@@ -148,10 +71,21 @@ vec3 skySunDiscAureole(vec3 viewDir, vec3 lightPropagationDir, float cosDiscEdge
     return (discCol * disc * 34.0 * discBright + glow) * bloom;
 }
 
-vec3 skyNightZenith(vec3 viewDir)
+// Atmospheric scintillation: stable per-star magnitude with a small multi-frequency
+// wobble. Avoid large single-sine gains - those read as whole-sky exposure pulsing.
+float skyStarTwinkle(float timeSec, float seed)
 {
-    float t = clamp(viewDir.y * 0.5 + 0.5, 0.0, 1.0);
-    return mix(vec3(0.01, 0.012, 0.02), vec3(0.02, 0.035, 0.07), t);
+    float phase = seed * 6.2831853;
+    float rate = mix(1.7, 5.5, fract(seed * 17.13));
+    float scint =
+        0.50 * sin(timeSec * rate + phase) +
+        0.32 * sin(timeSec * rate * 1.73 + phase * 1.9) +
+        0.18 * sin(timeSec * rate * 3.11 + phase * 2.7);
+    // Keep ~+/-10% of base brightness so individual stars twinkle without sky-wide pulse.
+    float twinkle = 1.0 + 0.10 * scint;
+    // Occasional brief sparkle (pow keeps duty cycle low).
+    float sparkle = pow(max(sin(timeSec * rate * 0.41 + phase * 3.7), 0.0), 28.0);
+    return twinkle + sparkle * mix(0.08, 0.22, seed);
 }
 
 vec3 skyStars(vec3 viewDir, float timeSec)
@@ -162,12 +96,38 @@ vec3 skyStars(vec3 viewDir, float timeSec)
     }
 
     vec3 p = normalize(viewDir) * 140.0;
-    vec3 cell = floor(p * 6.5);
+    float grid = 6.5;
+    vec3 cell = floor(p * grid);
+    vec3 local = fract(p * grid) - 0.5;
+    // Soft disc covering most of the hash cell (old path filled the whole cell).
+    // A tight gaussian (~exp(-r^2*72)) crushed stars to subpixel dots under TAA.
+    float r = length(local);
+    float core = 1.0 - smoothstep(0.18, 0.52, r);
+    float spike = exp(-r * r * 14.0);
+    float shape = max(core, spike);
+
     float h = skyHash31(cell);
-    float twinkle = 0.55 + 0.45 * sin(timeSec * 1.8 + h * 52.0);
-    float star = step(0.9935, h) * twinkle;
-    star += step(0.9985, skyHash31(cell + vec3(17.0, 3.0, 11.0))) * twinkle * 0.65;
-    return vec3(star * 0.95);
+    float primary = 0.0;
+    if (h > 0.9935)
+    {
+        float mag = (h - 0.9935) / 0.0065;
+        float base = mix(0.75, 1.35, pow(clamp(mag, 0.0, 1.0), 0.65));
+        primary = base * skyStarTwinkle(timeSec, h) * shape;
+    }
+
+    float h2 = skyHash31(cell + vec3(17.0, 3.0, 11.0));
+    float secondary = 0.0;
+    if (h2 > 0.9985)
+    {
+        float mag2 = (h2 - 0.9985) / 0.0015;
+        float base2 = mix(0.45, 0.95, pow(clamp(mag2, 0.0, 1.0), 0.65));
+        secondary = base2 * skyStarTwinkle(timeSec, h2) * shape;
+    }
+
+    float star = primary + secondary;
+    // Cool/warm tint variation so the field feels less like a flat exposure plane.
+    vec3 tint = mix(vec3(0.82, 0.90, 1.0), vec3(1.0, 0.92, 0.82), fract(h * 7.91));
+    return tint * star;
 }
 
 vec3 skyHorizonGlow(vec3 viewDir, float dayAmt, vec3 sunTint, float horizonBandScale)
@@ -243,16 +203,22 @@ vec3 skyMoonDiscShading(vec3 viewDir, vec3 lightPropagationDir, float cosDiscEdg
     return moonCol * disc;
 }
 
-// Reconstruct a unit view direction from sky-view LUT UV (matches atmo_skyview.frag).
-// Edge columns share azimuth = π so texel 0 and texel W-1 bake identical radiance for Repeat.
-vec3 skyViewDirFromLutUv(vec2 uv)
+// Reconstruct a unit view direction from sky-view LUT texel UV (matches atmo_skyview.frag).
+// Fullscreen bake UVs are texel centers; convert to unit [0,1] so edge columns share
+// azimuth = pi (identical radiance) and Repeat sampling stays continuous at the -Z meridian.
+vec3 skyViewDirFromLutUv(vec2 texelUv)
 {
-    float viewZenith = uv.y;
-    float u = uv.x;
-    float azimuth = ATM_PI;
-    if (u > 1.0 / SKY_VIEW_LUT_WIDTH && u < 1.0 - 1.0 / SKY_VIEW_LUT_WIDTH)
+    vec2 unitUv = clamp(
+        skyViewLutTexelToUnitUv(texelUv, vec2(SKY_VIEW_LUT_WIDTH, SKY_VIEW_LUT_HEIGHT)),
+        vec2(0.0),
+        vec2(1.0));
+    float viewZenith = unitUv.y;
+    float u = unitUv.x;
+    // Both u=0 and u=1 map to the -Z meridian so the wrapped edge columns match.
+    float azimuth = (u - 0.5) * 2.0 * ATM_PI;
+    if (u <= 0.0 || u >= 1.0)
     {
-        azimuth = (u - 0.5) * 2.0 * ATM_PI;
+        azimuth = ATM_PI;
     }
 
     float sinTheta = sin(viewZenith * ATM_PI);

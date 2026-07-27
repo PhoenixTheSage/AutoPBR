@@ -24,7 +24,7 @@ public sealed partial class OpenGlPreviewBackend
         _cloudDeferredCompositeRetries = 4;
         _loggedCloudDraw = false;
         _loggedCloudDeferredCompositeMiss = 0;
-        TryWarmCloudOffscreenTargets(viewportWidth, viewportHeight);
+        TryWarmCloudOffscreenTargets(viewportWidth, viewportHeight, settings.VolumetricQuality);
         EmitDiagnostic(
             "[3D preview] Volumetric cloud GPU tier ready; temporal histories invalidated " +
             $"(warmupDraws={CloudTierReadyWarmupDraws}).");
@@ -72,7 +72,7 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         RaiseGpuInitProgress(PreviewGpuInitPhases.LoadingClouds, settings);
-        TryInitVolumetricClouds(_gl, _useOpenGlEs);
+        TryInitVolumetricClouds(_gl, _useOpenGlEs, settings.VolumetricQuality);
         if (CanDrawVolumetricClouds(settings))
         {
             OnLazyCloudGpuTierReady(settings, viewportWidth, viewportHeight);

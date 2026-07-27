@@ -199,7 +199,7 @@ public sealed partial class OpenGlPreviewBackend
 
         EnsureTerrainStreamer();
         var viewDist = frame.Settings.ChunkViewDistance;
-        _terrainStreamer!.Tick(frame.Eye, viewDist);
+        _terrainStreamer!.Tick(frame.Eye, viewDist, frame.Settings.LodRingChunks);
 
         // Rebuilds when desired LOD differs from resident.
         var desired = _terrainStreamer.SnapshotDesired();

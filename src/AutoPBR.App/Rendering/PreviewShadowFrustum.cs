@@ -23,7 +23,7 @@ internal static class PreviewShadowFrustum
     public const float TerrainShadowMinXzHalfExtent = 48f;
 
     /// <summary>Upper clamp for far-cascade half-extent covering the streamed terrain ring.</summary>
-    public const float TerrainShadowFarMaxHalfExtent = 256f;
+    public const float TerrainShadowFarMaxHalfExtent = 512f;
 
     public static Matrix4x4 BuildDirectionalViewProj(
         Vector3 worldLightDir,

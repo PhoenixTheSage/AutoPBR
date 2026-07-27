@@ -1,6 +1,6 @@
 namespace AutoPBR.Preview;
 
-/// <summary>CPU bake flags for Full terrain chunks (LOD always uses Top-only).</summary>
+/// <summary>CPU bake flags for Full and distant LOD terrain chunks.</summary>
 public readonly record struct PreviewTerrainGrassBakeSettings(
     PreviewTerrainGrassMode Mode,
     bool BetterGrassEnabled,

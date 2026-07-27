@@ -285,4 +285,42 @@ public sealed class PreviewTerrainBiomeTests
         Assert.NotEmpty(mesh.DrawBatches);
         Assert.True(mesh.DrawBatches.All(b => b.MaterialIndex is >= 0 and < PreviewTerrainGrassSlots.MaxCount));
     }
+
+    [Fact]
+    public void BakeLodChunk_matches_full_surface_material_on_desert_column()
+    {
+        // Find a desert column outside the flat pad and assert LOD top uses Sand like Full.
+        PreviewTerrainColumnSample? desert = null;
+        var desertX = 0;
+        var desertZ = 0;
+        for (var z = 24; z < 96 && desert is null; z++)
+        {
+            for (var x = 24; x < 96; x++)
+            {
+                var sample = PreviewTerrainBiomeSampler.Sample(x, z);
+                if (sample.Biome == PreviewTerrainBiomeId.Desert &&
+                    sample.Surface == PreviewTerrainBlockKind.Sand)
+                {
+                    desert = sample;
+                    desertX = x;
+                    desertZ = z;
+                    break;
+                }
+            }
+        }
+
+        Assert.NotNull(desert);
+        var chunkSize = PreviewStageConstants.TerrainChunkSize;
+        var key = new TerrainChunkKey(
+            (int)Math.Floor(desertX / (double)chunkSize),
+            (int)Math.Floor(desertZ / (double)chunkSize));
+        var settings = new PreviewTerrainGrassBakeSettings(
+            PreviewTerrainGrassMode.BlockModelFaces,
+            BetterGrassEnabled: false,
+            EmitOverlay: false,
+            HasSand: true);
+        var lod = PreviewTerrainLodMeshBaker.BakeLodChunk(key, grassSettings: settings);
+        Assert.NotNull(lod);
+        Assert.Contains(lod.DrawBatches, b => b.MaterialIndex == PreviewTerrainGrassSlots.Sand);
+    }
 }

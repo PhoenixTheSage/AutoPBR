@@ -112,6 +112,18 @@ public static class PreviewStageConstants
     /// </summary>
     public const float TerrainNearPomFadeWidth = 8f;
 
+    /// <summary>Genesis POM displacement slider / <c>uHeightStrength</c> minimum.</summary>
+    public const double ParallaxHeightStrengthMin = 0.0;
+
+    /// <summary>Genesis POM displacement slider / <c>uHeightStrength</c> maximum (UV scale ≈ value × 0.92).</summary>
+    public const double ParallaxHeightStrengthMax = 4.0;
+
+    /// <summary>Genesis POM max UV-shift soft-cap minimum.</summary>
+    public const double ParallaxMaxUvShiftMin = 0.05;
+
+    /// <summary>Genesis POM max UV-shift soft-cap maximum (multi-tile travel on continuous ground UVs).</summary>
+    public const double ParallaxMaxUvShiftMax = 4.0;
+
     /// <summary>
     /// Legacy bake LOD stamp. Streaming uses <see cref="TerrainLodRingChunks"/> instead.
     /// </summary>
@@ -123,8 +135,14 @@ public static class PreviewStageConstants
     public const int TerrainMinChunkViewDistance = 2;
     public const int TerrainMaxChunkViewDistance = 24;
 
-    /// <summary>Extra Chebyshev chunks beyond hard view distance kept as merged LOD meshes.</summary>
-    public const int TerrainLodRingChunks = 6;
+    /// <summary>Default extra Chebyshev chunks beyond hard view distance kept as merged LOD meshes.</summary>
+    public const int TerrainDefaultLodRingChunks = 16;
+
+    public const int TerrainMinLodRingChunks = 2;
+    public const int TerrainMaxLodRingChunks = 32;
+
+    /// <summary>Legacy alias for <see cref="TerrainDefaultLodRingChunks"/>.</summary>
+    public const int TerrainLodRingChunks = TerrainDefaultLodRingChunks;
 
     /// <summary>Unload hysteresis past LOD radius (chunks).</summary>
     public const int TerrainUnloadHysteresisChunks = 1;

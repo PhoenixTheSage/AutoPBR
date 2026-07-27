@@ -12,13 +12,15 @@ internal sealed class GlGpuTimingWindow(int capacity = 120)
 
     public void Add(in GlGpuTimingSnapshot snapshot)
     {
-        if (snapshot is not { CloudTraceMs: > 0.0 } and not { CloudUpsampleMs: > 0.0 })
+        if (snapshot is not { CloudTraceMs: > 0.0 } and
+            not { CloudRepairMs: > 0.0 } and
+            not { CloudUpsampleMs: > 0.0 })
         {
             return;
         }
 
         AddBounded(_cloudTrace, snapshot.CloudTraceMs);
-        AddBounded(_cloudComposite, snapshot.CloudUpsampleMs);
+        AddBounded(_cloudComposite, snapshot.CloudRepairMs + snapshot.CloudUpsampleMs);
     }
 
     public string FormatCloudDiagnostic()

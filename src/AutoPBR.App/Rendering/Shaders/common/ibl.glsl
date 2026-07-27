@@ -8,6 +8,7 @@
 //!include "common.glsl"
 //!include "brdf.glsl"
 //!include "sky_view_lut.glsl"
+//!include "sky_radiance.glsl"
 
 struct PreviewEnvCtx
 {
@@ -171,39 +172,27 @@ vec3 fakeIblSpecularWithProbe(PreviewEnvCtx ctx, vec3 probe, vec3 N, vec3 V, vec
     return specular * (dielectricWt + metalWt);
 }
 
-// LOD-ring aerial fog: sky-lit haze with celestial inscatter so night is not full-bright.
-// Intentionally avoids per-fragment sky-view LUT sampling (IBL/specular still uses the LUT). Soft
-// haze only needs day/night tint + light inscatter; that cut is the main shadows-off GPU win.
+// LOD-ring aerial fog: same procedural atmosphere as the sky dome (not the LUT), along a
+// seam-facing view so distant terrain unloads into horizon sky. Returns linear radiance;
+// caller applies sky exposure and SDR/HDR present tonemap before mixing.
 vec3 previewAerialFogRadiance(vec3 worldPos, vec3 cameraPos, vec3 lightPropagationDir, vec3 lightColor,
-    float sunIntensity, vec3 skyTint, vec3 groundTint, int enableAtmoSky, sampler2D atmoSkyViewLut)
+    float sunIntensity, vec3 skyTint, vec3 groundTint, int enableAtmoSky, float turbidity, float horizonFalloff,
+    float groundWorldY, sampler2D atmoSkyViewLut)
 {
-    // enableAtmoSky / atmoSkyViewLut kept for call-site parity with IBL; fog uses tint haze only.
+    // atmoSkyViewLut kept for call-site parity with IBL; fog uses procedural sky.
     PreviewEnvCtx ctx = buildPreviewEnvCtx(lightPropagationDir, lightColor, sunIntensity, skyTint, groundTint);
     vec3 toFrag = worldPos - cameraPos;
     float len2 = dot(toFrag, toFrag);
     vec3 viewDir = len2 > GEN_EPS * GEN_EPS ? toFrag * inversesqrt(len2) : vec3(0.0, 0.0, 1.0);
-    // Bias toward the low horizon so distant LOD haze matches aerial perspective.
-    vec3 fogDir = normalize(vec3(viewDir.x, clamp(viewDir.y * 0.35 + 0.10, 0.06, 0.45), viewDir.z));
+    vec3 fogDir = skySeamFogDir(viewDir);
+    if (enableAtmoSky > 0)
+    {
+        float horizonBandScale = skyHorizonAltitudeFade(cameraPos.y, groundWorldY);
+        return skyProceduralRadiance(fogDir, lightPropagationDir, sunIntensity, turbidity, horizonFalloff,
+            horizonBandScale);
+    }
 
-    float h = clamp(fogDir.y * 0.5 + 0.5, 0.0, 1.0);
-    // Post-ACES fog colors: keep night near tonemapped sky zenith so the LOD rim is haze, not a slab.
-    vec3 nightHaze = mix(vec3(0.006, 0.007, 0.011), vec3(0.010, 0.013, 0.020), h);
-    // Tint-space day haze (no LUT). Height blend keeps a little horizon lift without a texture fetch.
-    vec3 dayHaze = mix(ctx.groundTintLin, ctx.skyTintLin, mix(0.45, 0.68, h));
-
-    // Scene light color blends sun/moon across the horizon; gate haze on luminance with a wide
-    // twilight ramp so 06:00 / 18:00 do not hard-switch dark fog to day fog.
-    float lightLum = dot(lightColor, vec3(0.2126, 0.7152, 0.0722));
-    float daylightGate = smoothstep(0.08, 0.72, lightLum);
-    vec3 fog = mix(nightHaze, dayHaze, daylightGate);
-
-    // Moon fill is tiny; dusk still uses a modest sun scatter while lightColor remains bright.
-    float moonGate = 1.0 - smoothstep(0.08, 0.55, lightLum);
-    float scatter = mix(0.08 * max(daylightGate, 0.02), 0.04, moonGate);
-    fog += lightColor * scatter;
-    // Small warm twilight lift while the sun is still the bright source.
-    fog += ctx.sunWarmColor * (0.04 * daylightGate * (1.0 - smoothstep(0.35, 0.85, lightLum)));
-    return max(fog, vec3(0.0));
+    return fakeIblSky(fogDir, ctx.skyTintLin, ctx.groundTintLin);
 }
 
 #endif // GENESIS_IBL_GLSL

@@ -158,7 +158,7 @@ public sealed class PreviewCloudShellGeometryTests
     }
 
     [Fact]
-    public void HorizonVisibility_FeathersOnlyANarrowBandAroundTheTangent()
+    public void HorizonVisibility_BiasesNarrowFadeBehindTheTangent()
     {
         const float feather = 0.0025f;
         var center = PreviewCloudShellGeometry.PlanetCenter(GroundY);
@@ -171,14 +171,17 @@ public sealed class PreviewCloudShellGeometryTests
             Vector3.Normalize(new Vector3(MathF.Sqrt(Math.Max(1f - mu * mu, 0f)), mu, 0f));
 
         var below = PreviewCloudShellGeometry.PlanetHorizonVisibility(
-            camera, DirectionForMu(horizonMu - feather), center, feather);
+            camera, DirectionForMu(horizonMu - feather * 2f), center, feather);
+        var slightlyBehind = PreviewCloudShellGeometry.PlanetHorizonVisibility(
+            camera, DirectionForMu(horizonMu - feather * 0.5f), center, feather);
         var tangent = PreviewCloudShellGeometry.PlanetHorizonVisibility(
             camera, DirectionForMu(horizonMu), center, feather);
         var above = PreviewCloudShellGeometry.PlanetHorizonVisibility(
-            camera, DirectionForMu(horizonMu + feather), center, feather);
+            camera, DirectionForMu(horizonMu + feather * 0.25f), center, feather);
 
         Assert.Equal(0f, below, 3);
-        Assert.InRange(tangent, 0.49f, 0.51f);
+        Assert.InRange(slightlyBehind, 0.73f, 0.75f);
+        Assert.InRange(tangent, 0.96f, 0.97f);
         Assert.Equal(1f, above, 3);
     }
 

@@ -3,24 +3,44 @@ using Silk.NET.OpenGL;
 namespace AutoPBR.App.Rendering.OpenGL;
 
 /// <summary>
-/// Half-resolution cloud target with premultiplied radiance/opacity in attachment 0 and
-/// packed representative distance/type metadata in attachment 1. RGBA8 keeps the MRT path
-/// available on the GLES 3 fallback as well as desktop GL.
+/// Cloud target with premultiplied radiance/opacity in attachment 0 and representative
+/// distance/type metadata in attachment 1. High/Cinematic desktop profiles may add
+/// luminance moments in attachment 2. The packed RGBA8 GLES path remains two attachments.
 /// </summary>
-internal sealed class GlCloudTemporalRenderTarget(GL gl) : IDisposable
+internal sealed class GlCloudTemporalRenderTarget : IDisposable
 {
+    private readonly GL _gl;
     private uint _fbo;
     private uint _colorTexture;
     private uint _dataTexture;
+    private uint _momentTexture;
     private int _width;
     private int _height;
     private bool _disposed;
 
+    public GlCloudTemporalRenderTarget(GL gl)
+        : this(gl, GlCloudRenderFormatProfile.Compatibility)
+    {
+    }
+
+    public GlCloudTemporalRenderTarget(GL gl, GlCloudRenderFormatProfile profile)
+    {
+        _gl = gl;
+        Profile = profile;
+    }
+
+    public GlCloudRenderFormatProfile Profile { get; }
     public uint ColorTextureHandle => _colorTexture;
     public uint DataTextureHandle => _dataTexture;
+    public uint MomentTextureHandle => _momentTexture;
     public int Width => _width;
     public int Height => _height;
-    public bool IsValid => _fbo != 0 && _colorTexture != 0 && _dataTexture != 0;
+    public int AttachmentCount => Profile.UsesTemporalMoments ? 3 : 2;
+    public bool IsValid =>
+        _fbo != 0 &&
+        _colorTexture != 0 &&
+        _dataTexture != 0 &&
+        (!Profile.UsesTemporalMoments || _momentTexture != 0);
 
     public bool EnsureSize(int width, int height)
     {
@@ -34,20 +54,54 @@ internal sealed class GlCloudTemporalRenderTarget(GL gl) : IDisposable
         DestroyGpuResources();
         _width = width;
         _height = height;
-        _colorTexture = CreateTexture(width, height, linearFilter: true);
+        _colorTexture = CreateTexture(
+            width,
+            height,
+            Profile.ColorInternalFormat,
+            Profile.ColorPixelFormat,
+            Profile.ColorPixelType,
+            linearFilter: true);
         // Packed two-channel distance must not be interpolated across byte carries.
-        _dataTexture = CreateTexture(width, height, linearFilter: false);
+        // Direct distance/type metadata also remains nearest-filtered so layer identity and
+        // representative depth never bleed across a cloud boundary.
+        _dataTexture = CreateTexture(
+            width,
+            height,
+            Profile.DataInternalFormat,
+            Profile.DataPixelFormat,
+            Profile.DataPixelType,
+            linearFilter: false);
+        if (Profile.UsesTemporalMoments)
+        {
+            _momentTexture = CreateTexture(
+                width,
+                height,
+                Profile.MomentInternalFormat,
+                Profile.MomentPixelFormat,
+                Profile.MomentPixelType,
+                linearFilter: true);
+        }
 
-        _fbo = gl.GenFramebuffer();
-        gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
-        gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
+        _fbo = _gl.GenFramebuffer();
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+        _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
             TextureTarget.Texture2D, _colorTexture, 0);
-        gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment1,
+        _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment1,
             TextureTarget.Texture2D, _dataTexture, 0);
-        ConfigureBothAttachments();
-        var status = gl.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
-        gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-        gl.BindTexture(TextureTarget.Texture2D, 0);
+        if (Profile.UsesTemporalMoments)
+        {
+            _gl.FramebufferTexture2D(
+                FramebufferTarget.Framebuffer,
+                FramebufferAttachment.ColorAttachment2,
+                TextureTarget.Texture2D,
+                _momentTexture,
+                0);
+        }
+
+        ConfigureAllAttachments();
+        var status = _gl.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+        _gl.BindTexture(TextureTarget.Texture2D, 0);
         if (status != GLEnum.FramebufferComplete)
         {
             DestroyGpuResources();
@@ -57,99 +111,157 @@ internal sealed class GlCloudTemporalRenderTarget(GL gl) : IDisposable
         return true;
     }
 
-    public void BindDraw()
+    public void BindDraw(bool includeMoments = true)
     {
         if (!IsValid)
         {
             return;
         }
 
-        gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
-        ConfigureBothAttachments();
-        gl.Viewport(0, 0, (uint)_width, (uint)_height);
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+        if (Profile.UsesTemporalMoments && !includeMoments)
+        {
+            ConfigureCloudAttachments();
+        }
+        else
+        {
+            ConfigureAllAttachments();
+        }
+        _gl.Viewport(0, 0, (uint)_width, (uint)_height);
+    }
+
+    /// <summary>
+    /// Clears attachments to the profile's empty-cloud representation. Direct metadata uses a
+    /// negative type sentinel; moments use a negative first moment as their invalid sentinel.
+    /// </summary>
+    public void Clear()
+    {
+        if (!IsValid)
+        {
+            return;
+        }
+
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+        ConfigureSingleDrawAttachment(0);
+        _gl.ClearColor(0f, 0f, 0f, 0f);
+        _gl.Clear(ClearBufferMask.ColorBufferBit);
+        ConfigureSingleDrawAttachment(1);
+        _gl.ClearColor(0f, Profile.UsesDirectMetadata ? -1f : 0f, 0f, 0f);
+        _gl.Clear(ClearBufferMask.ColorBufferBit);
+        if (Profile.UsesTemporalMoments)
+        {
+            ConfigureSingleDrawAttachment(2);
+            _gl.ClearColor(-1f, 0f, 0f, 0f);
+            _gl.Clear(ClearBufferMask.ColorBufferBit);
+        }
+
+        _gl.ClearColor(0f, 0f, 0f, 0f);
+        ConfigureAllAttachments();
     }
 
     public bool CopyFrom(GlCloudTemporalRenderTarget source)
     {
-        if (!IsValid || !source.IsValid || _width != source._width || _height != source._height)
+        if (!IsValid || !source.IsValid || Profile != source.Profile ||
+            _width != source._width || _height != source._height)
         {
             return false;
         }
 
-        var priorRead = gl.GetInteger(GetPName.ReadFramebufferBinding);
-        var priorDraw = gl.GetInteger(GetPName.DrawFramebufferBinding);
-        while (gl.GetError() != GLEnum.NoError)
+        var priorRead = _gl.GetInteger(GetPName.ReadFramebufferBinding);
+        var priorDraw = _gl.GetInteger(GetPName.DrawFramebufferBinding);
+        while (_gl.GetError() != GLEnum.NoError)
         {
             // Attribute only errors produced by the history transfer below.
         }
-        gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, source._fbo);
-        gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _fbo);
+        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, source._fbo);
+        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _fbo);
 
         var ok = true;
-        for (var attachment = 0; attachment < 2; attachment++)
+        for (var attachment = 0; attachment < AttachmentCount; attachment++)
         {
-            gl.ReadBuffer((ReadBufferMode)((int)ReadBufferMode.ColorAttachment0 + attachment));
+            _gl.ReadBuffer((ReadBufferMode)((int)ReadBufferMode.ColorAttachment0 + attachment));
             ConfigureSingleDrawAttachment(attachment);
-            gl.BlitFramebuffer(0, 0, _width, _height, 0, 0, _width, _height,
+            _gl.BlitFramebuffer(0, 0, _width, _height, 0, 0, _width, _height,
                 ClearBufferMask.ColorBufferBit, GLEnum.Nearest);
-            ok &= gl.GetError() == GLEnum.NoError;
+            ok &= _gl.GetError() == GLEnum.NoError;
         }
 
-        gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, (uint)Math.Max(0, priorRead));
-        gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, (uint)Math.Max(0, priorDraw));
+        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, (uint)Math.Max(0, priorRead));
+        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, (uint)Math.Max(0, priorDraw));
         return ok;
     }
 
-    private uint CreateTexture(int width, int height, bool linearFilter)
+    private uint CreateTexture(
+        int width,
+        int height,
+        InternalFormat internalFormat,
+        PixelFormat pixelFormat,
+        PixelType pixelType,
+        bool linearFilter)
     {
-        var texture = gl.GenTexture();
-        gl.BindTexture(TextureTarget.Texture2D, texture);
+        var texture = _gl.GenTexture();
+        _gl.BindTexture(TextureTarget.Texture2D, texture);
         unsafe
         {
-            gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, (uint)width, (uint)height, 0,
-                PixelFormat.Rgba, PixelType.UnsignedByte, (void*)0);
+            _gl.TexImage2D(TextureTarget.Texture2D, 0, internalFormat, (uint)width, (uint)height, 0,
+                pixelFormat, pixelType, (void*)0);
         }
 
         var filter = linearFilter ? GLEnum.Linear : GLEnum.Nearest;
-        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)filter);
-        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)filter);
-        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
-        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)filter);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)filter);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
         return texture;
     }
 
-    private unsafe void ConfigureBothAttachments()
+    private unsafe void ConfigureAllAttachments()
+    {
+        var attachments = stackalloc DrawBufferMode[3];
+        attachments[0] = DrawBufferMode.ColorAttachment0;
+        attachments[1] = DrawBufferMode.ColorAttachment1;
+        attachments[2] = DrawBufferMode.ColorAttachment2;
+        _gl.DrawBuffers((uint)AttachmentCount, attachments);
+    }
+
+    private unsafe void ConfigureCloudAttachments()
     {
         var attachments = stackalloc DrawBufferMode[2];
         attachments[0] = DrawBufferMode.ColorAttachment0;
         attachments[1] = DrawBufferMode.ColorAttachment1;
-        gl.DrawBuffers(2, attachments);
+        _gl.DrawBuffers(2, attachments);
     }
 
     private unsafe void ConfigureSingleDrawAttachment(int attachment)
     {
         var buffer = (DrawBufferMode)((int)DrawBufferMode.ColorAttachment0 + attachment);
-        gl.DrawBuffers(1, &buffer);
+        _gl.DrawBuffers(1, &buffer);
     }
 
     private void DestroyGpuResources()
     {
         if (_fbo != 0)
         {
-            gl.DeleteFramebuffer(_fbo);
+            _gl.DeleteFramebuffer(_fbo);
             _fbo = 0;
         }
 
         if (_colorTexture != 0)
         {
-            gl.DeleteTexture(_colorTexture);
+            _gl.DeleteTexture(_colorTexture);
             _colorTexture = 0;
         }
 
         if (_dataTexture != 0)
         {
-            gl.DeleteTexture(_dataTexture);
+            _gl.DeleteTexture(_dataTexture);
             _dataTexture = 0;
+        }
+
+        if (_momentTexture != 0)
+        {
+            _gl.DeleteTexture(_momentTexture);
+            _momentTexture = 0;
         }
 
         _width = 0;

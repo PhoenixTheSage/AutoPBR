@@ -47,6 +47,7 @@ uniform float uExtinction;
 uniform int uHasPrevIntegrate;
 uniform int uHasPrevFroxel;
 uniform int uHasCloudTransmittance;
+uniform int uCloudDataDirect;
 
 out vec4 FragColor;
 
@@ -83,7 +84,7 @@ void main()
 #endif
     float jitter = uJitter * stepLen;
     vec2 sharedCloudSignal = cstResolveViewSignal(
-        uCloudTransmittance, uCloudData, vUv, uHasCloudTransmittance);
+        uCloudTransmittance, uCloudData, vUv, uHasCloudTransmittance, uCloudDataDirect);
     float sharedCloudOpacity = sharedCloudSignal.x;
     float sharedCloudDistance = sharedCloudSignal.y;
 #ifdef GENESIS_VOLUME_TEMPORAL

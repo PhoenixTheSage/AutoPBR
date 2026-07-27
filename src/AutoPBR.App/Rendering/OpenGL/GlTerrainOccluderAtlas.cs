@@ -56,7 +56,8 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
         TerrainChunkKey cameraChunk,
         int chunkViewDistance,
         in PreviewTerrainWorldGenSettings worldGen,
-        int worldGenRevision)
+        int worldGenRevision,
+        int lodRingChunks = PreviewStageConstants.TerrainDefaultLodRingChunks)
     {
         if (_disposed)
         {
@@ -67,7 +68,11 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
             chunkViewDistance,
             PreviewStageConstants.TerrainMinChunkViewDistance,
             PreviewStageConstants.TerrainMaxChunkViewDistance);
-        var radiusChunks = chunkViewDistance + PreviewStageConstants.TerrainLodRingChunks;
+        lodRingChunks = Math.Clamp(
+            lodRingChunks,
+            PreviewStageConstants.TerrainMinLodRingChunks,
+            PreviewStageConstants.TerrainMaxLodRingChunks);
+        var radiusChunks = chunkViewDistance + lodRingChunks;
         var sizeChunks = radiusChunks * 2 + 1;
         var sizeColumns = sizeChunks * PreviewStageConstants.TerrainChunkSize;
         var settingsVersion = HashCode.Combine(
@@ -80,8 +85,8 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
             worldGen.Continentalness.GetHashCode());
 
         // Keep the resident atlas while the camera stays inside with a chunk-margin buffer.
-        // Flying across the interior must not trigger a full 464² rebuild every chunk.
-        var edgeMarginChunks = Math.Max(2, PreviewStageConstants.TerrainLodRingChunks);
+        // Flying across the interior must not trigger a full rebuild every chunk.
+        var edgeMarginChunks = Math.Max(2, lodRingChunks);
         if (IsValid &&
             _width == sizeColumns &&
             _height == sizeColumns &&

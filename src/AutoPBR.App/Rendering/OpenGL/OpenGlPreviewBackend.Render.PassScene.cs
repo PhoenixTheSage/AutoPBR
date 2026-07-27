@@ -689,6 +689,10 @@ public sealed partial class OpenGlPreviewBackend
         SetFloatLoc(
             u.TerrainPomFadeEnd,
             PreviewStageConstants.TerrainNearPomRadius + PreviewStageConstants.TerrainNearPomFadeWidth);
+        SetFloatLoc(u.Turbidity, frame.Settings.AtmosphereTurbidity);
+        SetFloatLoc(u.HorizonFalloff, frame.Settings.AtmosphereHorizonFalloff);
+        SetFloatLoc(u.GroundWorldY, PreviewStageConstants.GroundPlaneWorldY);
+        SetFloatLoc(u.SkyExposure, frame.Settings.AtmosphereSkyExposure);
     }
 
     private void ApplyMainPassPerSettingsUniforms(ref GlRenderFrame frame, MainProgramUniformLocs u)
@@ -706,7 +710,10 @@ public sealed partial class OpenGlPreviewBackend
         SetIntLoc(u.ParallaxRefineSteps, Math.Clamp(frame.Settings.ParallaxRefineSteps, 0, 8));
         SetIntLoc(u.ParallaxShadowSamples, Math.Clamp(frame.Settings.ParallaxShadowSamples, 4, 64));
         SetFloatLoc(u.ParallaxShadowSoftness, Math.Clamp(frame.Settings.ParallaxShadowSoftness, 0f, 4f));
-        SetFloatLoc(u.ParallaxMaxUvShift, Math.Clamp(frame.Settings.ParallaxMaxUvShift, 0.05f, 0.75f));
+        SetFloatLoc(u.ParallaxMaxUvShift, (float)Math.Clamp(
+            frame.Settings.ParallaxMaxUvShift,
+            PreviewStageConstants.ParallaxMaxUvShiftMin,
+            PreviewStageConstants.ParallaxMaxUvShiftMax));
         SetFloatLoc(u.TessellationLevel, Math.Clamp(frame.Settings.TessellationLevel, 1f, 16f));
         SetFloatLoc(u.TessellationDisplacementStrength, Math.Clamp(frame.Settings.TessellationDisplacementStrength, 0f, 0.20f));
         SetFloatLoc(u.AlphaCutoff, frame.Settings.AlphaCutoff);

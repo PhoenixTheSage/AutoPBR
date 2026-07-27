@@ -151,7 +151,10 @@ public static class PreviewCloudShellGeometry
         return near > 1e-3f ? near : float.PositiveInfinity;
     }
 
-    /// <summary>CPU reference for the narrow shader-side geometric-horizon feather.</summary>
+    /// <summary>
+    /// CPU reference for the narrow shader-side geometric-horizon feather. The fade is
+    /// biased behind the tangent so a cloud crossing the visible horizon is not cut at 50%.
+    /// </summary>
     public static float PlanetHorizonVisibility(
         Vector3 rayOrigin,
         Vector3 rayDirection,
@@ -177,7 +180,7 @@ public static class PreviewCloudShellGeometry
         var horizonMu = -MathF.Sqrt(Math.Max(1f - radiusRatio * radiusRatio, 0f));
         var viewMu = Vector3.Dot(rayDirection, localUp);
         var width = Math.Max(feather, 1e-5f);
-        return Smoothstep(horizonMu - width, horizonMu + width, viewMu);
+        return Smoothstep(horizonMu - width * 2f, horizonMu + width * 0.25f, viewMu);
     }
 
     private static float Smoothstep(float edge0, float edge1, float value)

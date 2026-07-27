@@ -8,4 +8,10 @@ internal static class PreviewCloudTemporalJitter
     public static int Period => Samples.Length;
 
     public static float Sample(int frameIndex) => Samples[Math.Abs(frameIndex % Samples.Length)];
+
+    public static int AdvanceFrame(int frameIndex, bool temporalSamplingDisabled, int period)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(period);
+        return temporalSamplingDisabled ? frameIndex : (frameIndex + 1) % period;
+    }
 }

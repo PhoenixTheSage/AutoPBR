@@ -1,7 +1,8 @@
 # CQ1 — Volumetric cloud precision and reconstruction
 
-**Status:** Proposed  
+**Status:** In progress
 **Roadmap:** [Volumetric cloud quality roadmap](volumetric-cloud-quality-roadmap.md)  
+**Implementation handoff:** [Volumetric cloud implementation handoff](volumetric-cloud-implementation-handoff.md)
 **Depends on:** Green build and recorded Phase 6 baseline  
 **Required by:** [CQ2 density](volumetric-cloud-cq2-density-textures.md), [CQ3 lighting](volumetric-cloud-cq3-lighting-cache.md), [CQ4 sparse volume](volumetric-cloud-cq4-sparse-voxel-sdf.md)
 
@@ -55,7 +56,7 @@ The user march-step override replaces only `Default view steps`, clamped to the 
 
 ## Render-format contract
 
-Introduce an internal cloud render-format profile selected once during cloud resource initialization and re-evaluated after context recreation.
+Introduce an internal cloud render-format profile selected during cloud resource initialization and re-evaluated after context recreation or a quality transition. Low always selects compatibility targets. Medium, High, and Cinematic select floating-point targets when desktop capabilities and framebuffer completeness permit them.
 
 ### Floating-point desktop profile
 
@@ -217,15 +218,15 @@ Framebuffer incompleteness, shader failure, invalid texture handles, or GL error
 
 ## Implementation milestones
 
-- [ ] CQ1.0: Add fixed baseline fixtures and GPU timing capture.
-- [ ] CQ1.1: Add `Cinematic = 3`, profile selection, persistence, localization, and diagnostics.
-- [ ] CQ1.2: Generalize the cloud temporal target to capability-selected attachment formats.
-- [ ] CQ1.3: Add direct-distance shader ABI and packed compatibility shader ABI.
-- [ ] CQ1.4: Move trace, temporal, and upsample color to linear HDR; encode only during final composition.
-- [ ] CQ1.5: Add deterministic STBN generation/loading and march jitter.
-- [ ] CQ1.6: Add moment allocation, reprojection, variance clipping, and confidence.
-- [ ] CQ1.7: Add two-thirds Cinematic sizing and history invalidation.
-- [ ] CQ1.8: Add classification and bounded full-resolution edge repair.
+- [x] CQ1.0: Add the initial fixed baseline fixture and GPU timing capture.
+- [x] CQ1.1: Add `Cinematic = 3`, profile selection, persistence, localization, and diagnostics.
+- [x] CQ1.2: Generalize the cloud temporal target to capability-selected attachment formats.
+- [x] CQ1.3: Add direct-distance shader ABI and packed compatibility shader ABI.
+- [x] CQ1.4: Move trace, temporal, and upsample color to linear HDR; encode only during final composition.
+- [x] CQ1.5: Add deterministic STBN generation/loading and march jitter.
+- [x] CQ1.6: Add moment allocation, reprojection, variance clipping, and confidence.
+- [x] CQ1.7: Add two-thirds Cinematic sizing and history invalidation.
+- [x] CQ1.8: Add classification and bounded full-resolution edge repair.
 - [ ] CQ1.9: Complete automated, live-GL, artifact, and performance acceptance.
 
 ## Test matrix

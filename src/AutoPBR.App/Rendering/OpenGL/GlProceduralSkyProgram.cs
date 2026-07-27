@@ -72,6 +72,19 @@ float hash31(vec3 p)
     return fract((p.x + p.y) * p.z);
 }
 
+float starTwinkle(float timeSec, float seed)
+{
+    float phase = seed * 6.2831853;
+    float rate = mix(1.7, 5.5, fract(seed * 17.13));
+    float scint =
+        0.50 * sin(timeSec * rate + phase) +
+        0.32 * sin(timeSec * rate * 1.73 + phase * 1.9) +
+        0.18 * sin(timeSec * rate * 3.11 + phase * 2.7);
+    float twinkle = 1.0 + 0.10 * scint;
+    float sparkle = pow(max(sin(timeSec * rate * 0.41 + phase * 3.7), 0.0), 28.0);
+    return twinkle + sparkle * mix(0.08, 0.22, seed);
+}
+
 vec3 stars(vec3 viewDir, float timeSec)
 {
     if (viewDir.y <= 0.01)
@@ -80,12 +93,35 @@ vec3 stars(vec3 viewDir, float timeSec)
     }
 
     vec3 p = normalize(viewDir) * 140.0;
-    vec3 cell = floor(p * 6.5);
+    float grid = 6.5;
+    vec3 cell = floor(p * grid);
+    vec3 local = fract(p * grid) - 0.5;
+    float r = length(local);
+    float core = 1.0 - smoothstep(0.18, 0.52, r);
+    float spike = exp(-r * r * 14.0);
+    float shape = max(core, spike);
+
     float h = hash31(cell);
-    float twinkle = 0.55 + 0.45 * sin(timeSec * 1.8 + h * 52.0);
-    float star = step(0.9935, h) * twinkle;
-    star += step(0.9985, hash31(cell + vec3(17.0, 3.0, 11.0))) * twinkle * 0.65;
-    return vec3(star * 0.95);
+    float primary = 0.0;
+    if (h > 0.9935)
+    {
+        float mag = (h - 0.9935) / 0.0065;
+        float base = mix(0.75, 1.35, pow(clamp(mag, 0.0, 1.0), 0.65));
+        primary = base * starTwinkle(timeSec, h) * shape;
+    }
+
+    float h2 = hash31(cell + vec3(17.0, 3.0, 11.0));
+    float secondary = 0.0;
+    if (h2 > 0.9985)
+    {
+        float mag2 = (h2 - 0.9985) / 0.0015;
+        float base2 = mix(0.45, 0.95, pow(clamp(mag2, 0.0, 1.0), 0.65));
+        secondary = base2 * starTwinkle(timeSec, h2) * shape;
+    }
+
+    float star = primary + secondary;
+    vec3 tint = mix(vec3(0.82, 0.90, 1.0), vec3(1.0, 0.92, 0.82), fract(h * 7.91));
+    return tint * star;
 }
 
 vec3 nightZenith(vec3 viewDir)
@@ -163,6 +199,25 @@ vec3 belowHorizonFog(vec3 viewDir, float strength, float horizonBandScale)
 
     float depth = smoothstep(0.0, -0.55, viewDir.y);
     return vec3(0.06, 0.07, 0.09) * depth * strength * clamp(horizonBandScale, 0.0, 1.0);
+}
+
+vec3 seamFogDir(vec3 viewDir)
+{
+    vec3 d = normalize(viewDir);
+    float y = clamp(mix(d.y, 0.12, 0.35), 0.02, 0.55);
+    return normalize(vec3(d.x, y, d.z));
+}
+
+float aboveHorizonHazeWeight(vec3 viewDir, float strength, float horizonBandScale)
+{
+    if (strength <= 0.0)
+    {
+        return 0.0;
+    }
+
+    float elev = max(normalize(viewDir).y, 0.0);
+    float band = exp(-elev * 7.5);
+    return band * clamp(strength, 0.0, 1.0) * 0.72 * clamp(horizonBandScale, 0.0, 1.0);
 }
 
 vec3 sunDiscAureole(vec3 viewDir, vec3 lightPropagationDir, float cosDiscEdge, float bloomRadiusUv, float bloomStrength, float discBrightness, float turbidity)
@@ -263,6 +318,14 @@ void main()
     sky = mix(nightSky, sky, dayAmt);
     sky += horizonGlow(viewDir, dayAmt, horizonBandScale);
     sky += belowHorizonFog(viewDir, uHorizonFogStrength, horizonBandScale);
+
+    float aboveW = aboveHorizonHazeWeight(viewDir, uHorizonFogStrength, horizonBandScale);
+    if (aboveW > 1e-4)
+    {
+        vec3 hazeCol = proceduralSky(seamFogDir(viewDir), uLightDir, uSunIntensity, uTurbidity, uHorizonFalloff,
+            horizonBandScale);
+        sky = mix(sky, hazeCol, aboveW);
+    }
 
     float sunVis = smoothstep(0.0, 0.06, dayAmt) * (0.35 + 0.65 * dayAmt);
     if (sunVis > 0.001)

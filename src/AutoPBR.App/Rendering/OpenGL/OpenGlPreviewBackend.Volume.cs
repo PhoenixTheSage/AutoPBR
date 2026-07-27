@@ -707,6 +707,8 @@ public sealed partial class OpenGlPreviewBackend
         gl.BindTexture(TextureTarget.Texture2D, sharedClouds?.DataTextureHandle ?? fallbackTexture);
         SetIntOnProgramLoc(program, uniforms.CloudData, 6);
         SetIntOnProgramLoc(program, uniforms.HasCloudTransmittance, sharedClouds is not null ? 1 : 0);
+        SetIntOnProgramLoc(program, uniforms.CloudDataDirect,
+            sharedClouds?.Profile.UsesDirectMetadata == true ? 1 : 0);
 
         if (sharedClouds is not null && !_loggedSharedCloudTransmittance)
         {

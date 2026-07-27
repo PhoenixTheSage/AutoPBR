@@ -7,7 +7,8 @@ public sealed class PreviewVolumetricQualityTests
     [Theory]
     [InlineData(0, 8, 24, 12, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)]
     [InlineData(1, 4, 32, 20, 2.8f, 0.28f, 0.42f, 1, 0.35f, 0.45f, 0.78f, 1.0f)]
-    [InlineData(2, 3, 48, 24, 4.2f, 0.38f, 0.55f, 2, 0.42f, 0.55f, 0.84f, 1.0f)]
+    [InlineData(2, 3, 48, 24, 4.2f, 0.38f, 0.72f, 2, 0.42f, 0.55f, 0.84f, 1.0f)]
+    [InlineData(3, 3, 48, 24, 4.2f, 0.38f, 0.84f, 3, 0.42f, 0.55f, 0.84f, 1.0f)]
     public void Resolve_ReturnsExpectedProfile(
         int quality,
         int divisor,
@@ -38,12 +39,24 @@ public sealed class PreviewVolumetricQualityTests
     }
 
     [Theory]
-    [InlineData(-1, 8)]
-    [InlineData(99, 3)]
-    public void Resolve_ClampsOutOfRangeQuality(int quality, int expectedDivisor)
+    [InlineData(-1, 8, 0)]
+    [InlineData(99, 3, 3)]
+    public void Resolve_ClampsOutOfRangeQuality(int quality, int expectedDivisor, int expectedCloudQuality)
     {
         var profile = PreviewVolumetricQuality.Resolve(quality);
         Assert.Equal(expectedDivisor, profile.FroxelDivisor);
+        Assert.Equal(expectedCloudQuality, profile.CloudQuality);
+    }
+
+    [Theory]
+    [InlineData(0, "Low")]
+    [InlineData(1, "Medium")]
+    [InlineData(2, "High")]
+    [InlineData(3, "Cinematic")]
+    [InlineData(99, "Cinematic")]
+    public void GetName_UsesPersistedQualityContract(int quality, string expected)
+    {
+        Assert.Equal(expected, PreviewVolumetricQuality.GetName(quality));
     }
 
     [Fact]

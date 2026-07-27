@@ -4,7 +4,7 @@ using AutoPBR.PreviewGpuAssets;
 
 namespace AutoPBR.App.Rendering.OpenGL;
 
-/// <summary>Loads pre-baked cloud noise/coverage blobs from Assets/Preview when present.</summary>
+/// <summary>Loads pre-baked cloud noise, coverage, and sampling blobs from Assets/Preview.</summary>
 internal static class PreviewCloudBakedAssetLoader
 {
     private const string AssetRoot = "avares://AutoPBR.App/Assets/Preview/";
@@ -67,25 +67,81 @@ internal static class PreviewCloudBakedAssetLoader
         return true;
     }
 
-    private static bool TryLoadRaw(string fileName, out byte[] data)
+    public static bool TryLoadSpatiotemporalBlueNoise(out byte[] r8, out string reason)
     {
-        data = Array.Empty<byte>();
-        var uri = new Uri(AssetRoot + fileName);
-        if (!AssetLoader.Exists(uri))
+        r8 = Array.Empty<byte>();
+        if (!TryLoadRaw(
+                PreviewCloudSpatiotemporalBlueNoiseGenerator.AssetFileName,
+                out var data,
+                out reason))
         {
             return false;
         }
 
+        if (!ValidateSpatiotemporalBlueNoise(data, out reason))
+        {
+            return false;
+        }
+
+        r8 = data;
+        reason = $"asset-v{PreviewCloudSpatiotemporalBlueNoiseGenerator.AssetVersion}";
+        return true;
+    }
+
+    internal static bool ValidateSpatiotemporalBlueNoise(
+        ReadOnlySpan<byte> data,
+        out string reason)
+    {
+        if (data.Length != PreviewCloudSpatiotemporalBlueNoiseGenerator.ByteLength)
+        {
+            reason =
+                $"length-{data.Length}-expected-{PreviewCloudSpatiotemporalBlueNoiseGenerator.ByteLength}";
+            return false;
+        }
+
+        if (!PreviewCloudSpatiotemporalBlueNoiseGenerator.HasExpectedHash(data))
+        {
+            reason = "sha256-mismatch";
+            return false;
+        }
+
+        reason = "valid";
+        return true;
+    }
+
+    private static bool TryLoadRaw(string fileName, out byte[] data)
+    {
+        return TryLoadRaw(fileName, out data, out _);
+    }
+
+    private static bool TryLoadRaw(string fileName, out byte[] data, out string reason)
+    {
+        data = Array.Empty<byte>();
+        var uri = new Uri(AssetRoot + fileName);
         try
         {
+            if (!AssetLoader.Exists(uri))
+            {
+                reason = "missing";
+                return false;
+            }
+
             using var stream = AssetLoader.Open(uri);
             using var ms = new MemoryStream();
             stream.CopyTo(ms);
             data = ms.ToArray();
-            return data.Length > 0;
+            if (data.Length == 0)
+            {
+                reason = "empty";
+                return false;
+            }
+
+            reason = "loaded";
+            return true;
         }
-        catch
+        catch (Exception exception)
         {
+            reason = "read-" + exception.GetType().Name;
             return false;
         }
     }

@@ -1445,7 +1445,7 @@
     <value>Froxel Quality</value>
   </data>
   <data name="Preview3DVolumetricQualityTooltip" xml:space="preserve">
-    <value>Low / medium / high froxel resolution, slice count, cloud detail, and temporal filtering.</value>
+    <value>Controls fog-froxel resolution, slice count, cloud detail, and temporal filtering. Cinematic keeps the High fog cost while raising desktop cloud quality.</value>
   </data>
   <data name="Preview3DGodRayStrength" xml:space="preserve">
     <value>God-ray strength</value>
@@ -1678,6 +1678,9 @@
   <data name="Preview3DVolumetricQualityHigh" xml:space="preserve">
     <value>High</value>
   </data>
+  <data name="Preview3DVolumetricQualityCinematic" xml:space="preserve">
+    <value>Cinematic</value>
+  </data>
   <data name="Preview3DParallaxSection" xml:space="preserve">
     <value>Parallax</value>
   </data>
@@ -1685,7 +1688,7 @@
     <value>POM displacement</value>
   </data>
   <data name="Preview3DParallaxHeightStrengthTooltip" xml:space="preserve">
-    <value>Shader-side parallax displacement strength (maps to uHeightStrength). Higher values create deeper relief but need more trace quality.</value>
+    <value>Shader-side parallax displacement strength (maps to uHeightStrength, range 0–4). Higher values create deeper relief; raise POM max UV shift if grazing views soft-cap the travel.</value>
   </data>
   <data name="Preview3DParallaxTraceLayers" xml:space="preserve">
     <value>POM trace layers</value>
@@ -1703,7 +1706,7 @@
     <value>POM max UV shift</value>
   </data>
   <data name="Preview3DParallaxMaxUvShiftTooltip" xml:space="preserve">
-    <value>Caps how far one parallax trace may travel in UV space. Raise for deeper relief; lower to reduce grazing-angle stretching.</value>
+    <value>Soft-caps how far one parallax trace may travel in UV space (0.05–4). Ground marches continuously across tiled UVs; subject faces stay inside their tile. Raise with displacement for deeper grazing relief.</value>
   </data>
   <data name="Preview3DEnableTessellationDisplacement" xml:space="preserve">
     <value>Tessellation</value>
@@ -1775,7 +1778,13 @@
     <value>Chunk view distance</value>
   </data>
   <data name="Preview3DChunkViewDistanceTooltip" xml:space="preserve">
-    <value>Hard radius (in 16-block chunks) of full-detail terrain around the camera. A merged LOD ring and fog extend beyond this to hide the unload edge.</value>
+    <value>Hard radius (in 16-block chunks) of full-detail terrain around the camera. Distant LOD and fog extend beyond this to hide the unload edge.</value>
+  </data>
+  <data name="Preview3DDistantLod" xml:space="preserve">
+    <value>Distant LOD</value>
+  </data>
+  <data name="Preview3DDistantLodTooltip" xml:space="preserve">
+    <value>Extra merged LOD chunks beyond chunk view distance. Higher values keep biome materials and vegetation farther out before terrain unloads into fog.</value>
   </data>
   <data name="Preview3DWorldSeed" xml:space="preserve">
     <value>World seed</value>

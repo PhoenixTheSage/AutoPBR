@@ -36,7 +36,18 @@ public class PreviewGlslEsAdaptTests
             var adapted = GlslSourceAdapter.Adapt(src, ShaderType.FragmentShader, useOpenGlEs: true);
             var count = CountSubstringOccurrences(adapted, "const float SKY_VIEW_LUT_WIDTH");
             Assert.Equal(1, count);
+            Assert.Equal(1, CountSubstringOccurrences(adapted, "const float SKY_VIEW_LUT_HEIGHT"));
         }
+    }
+
+    [Fact]
+    public void AtmoSkyView_SamplesTransmittanceByZenithOnly()
+    {
+        // Azimuth UV on the transmittance LUT baked a -Z meridian seam into cloud ambient / IBL.
+        var src = GlslIncludeResolver.Resolve("atmo_skyview.frag", LoadShader);
+        Assert.Contains("texture(uTransmittanceLut, vec2(0.5, clamp(vUv.y, 0.0, 1.0)))", src, StringComparison.Ordinal);
+        Assert.DoesNotContain("texture(uTransmittanceLut, vec2(vUv.x,", src, StringComparison.Ordinal);
+        Assert.Contains("skyViewLutTexelToUnitUv", src, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -340,6 +351,33 @@ public class PreviewGlslEsAdaptTests
     }
 
     [Fact]
+    public void DesktopAdapt_StripsNonAsciiCommentChars()
+    {
+        const string src = "#version 330 core\n// Beer\u2013Lambert \u2014 mist\nout vec4 c;\nvoid main(){c=vec4(1.0);}\n";
+        var adapted = GlslSourceAdapter.Adapt(src, ShaderType.FragmentShader, useOpenGlEs: false);
+
+        Assert.StartsWith("#version 330 core", adapted, StringComparison.Ordinal);
+        Assert.DoesNotContain('\u2013', adapted);
+        Assert.DoesNotContain('\u2014', adapted);
+        foreach (var ch in adapted)
+        {
+            Assert.True(ch <= '\x7F');
+        }
+    }
+
+    [Fact]
+    public void PreparedGenesisDesktop_IsAsciiOnly()
+    {
+        var src = GlslIncludeResolver.Resolve("genesis.frag", LoadShader);
+        var adapted = GlslSourceAdapter.Adapt(src, ShaderType.FragmentShader, useOpenGlEs: false);
+
+        foreach (var ch in adapted)
+        {
+            Assert.True(ch <= '\x7F');
+        }
+    }
+
+    [Fact]
     public void EsAdaptedGenesis_IncludesSplitSumIblWithoutAtmosphereOnlySymbols()
     {
         var src = GlslIncludeResolver.Resolve("genesis.frag", LoadShader);
@@ -383,7 +421,7 @@ public class PreviewGlslEsAdaptTests
         Assert.DoesNotContain("Sun / punctual highlights come from direct lighting only", adapted, StringComparison.Ordinal);
         Assert.DoesNotContain("iblPrefilteredSkyRadianceFallback", adapted, StringComparison.Ordinal);
 
-        // Soft LOD haze keeps day/night inscatter but must not pay per-fragment sky-view LUT samples.
+        // Outer LOD fog takes color from the same procedural sky as the dome.
         var ibl = GlslIncludeResolver.Resolve("common/ibl.glsl", LoadShader);
         var fogFn = ibl.IndexOf("vec3 previewAerialFogRadiance", StringComparison.Ordinal);
         Assert.True(fogFn >= 0);
@@ -395,17 +433,15 @@ public class PreviewGlslEsAdaptTests
         }
 
         fogBody = fogBody[..fogEnd];
-        Assert.Contains("nightHaze", fogBody, StringComparison.Ordinal);
-        Assert.Contains("dayHaze", fogBody, StringComparison.Ordinal);
-        Assert.Contains("daylightGate", fogBody, StringComparison.Ordinal);
-        Assert.Contains("moonGate", fogBody, StringComparison.Ordinal);
-        // Wide luminance twilight ramp (pairs with SceneLightColor horizon blend).
-        Assert.Contains("smoothstep(0.08, 0.72, lightLum)", fogBody, StringComparison.Ordinal);
-        // Night inscatter must stay modest (full moonlight previously washed the horizon).
-        Assert.Contains("0.04, moonGate", fogBody, StringComparison.Ordinal);
-        Assert.Contains("lightColor * scatter", fogBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("sampleSkyViewLutSrgb", fogBody, StringComparison.Ordinal);
+        Assert.Contains("skyProceduralRadiance", fogBody, StringComparison.Ordinal);
+        Assert.Contains("skySeamFogDir", fogBody, StringComparison.Ordinal);
         Assert.DoesNotContain("previewEnvSkyGroundRadianceCtx", fogBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("nightHaze", fogBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dayHaze", fogBody, StringComparison.Ordinal);
+
+        var radiance = GlslIncludeResolver.Resolve("common/sky_radiance.glsl", LoadShader);
+        Assert.Contains("vec3 skyProceduralRadiance", radiance, StringComparison.Ordinal);
+        Assert.Contains("skyAboveHorizonHazeWeight", radiance, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -529,28 +565,32 @@ public class PreviewGlslEsAdaptTests
     }
 
     [Fact]
-    public void GenesisParallax_UsesTileLocalPomWithoutPostClamp()
+    public void GenesisParallax_UsesContinuousGroundPomWithoutTileFractWrap()
     {
         var src = GlslIncludeResolver.Resolve("genesis.frag", LoadShader);
         var adapted = GlslSourceAdapter.Adapt(src, ShaderType.FragmentShader, useOpenGlEs: true);
 
-        Assert.Contains("textureGrad(heightTex", adapted, StringComparison.Ordinal);
+        Assert.Contains("textureLod(heightTex, uv, 0.0)", adapted, StringComparison.Ordinal);
+        Assert.Contains("sampleHeight01Lod0", adapted, StringComparison.Ordinal);
         Assert.Contains("sampleGenesisAlbedoGrad(uv, uvDx, uvDy)", adapted, StringComparison.Ordinal);
         Assert.Contains("sampleGenesisAlbedo(vUv)", adapted, StringComparison.Ordinal);
         Assert.Contains("pomActiveEarly", adapted, StringComparison.Ordinal);
         Assert.Contains("sampleGenesisNormalGrad(uv, dx, dy)", adapted, StringComparison.Ordinal);
         Assert.Contains("sampleGenesisSpecularGrad(uv, uvDx, uvDy)", adapted, StringComparison.Ordinal);
-        Assert.Contains("pomTileUv(tileBase", adapted, StringComparison.Ordinal);
-        Assert.Contains("tileBase + fract(localUv)", adapted, StringComparison.Ordinal);
+        Assert.Contains("pomLimitUvTravel", adapted, StringComparison.Ordinal);
+        Assert.Contains("pomConstrainSubjectOffset", adapted, StringComparison.Ordinal);
+        Assert.Contains("uIsGroundPass > 0", adapted, StringComparison.Ordinal);
+        Assert.DoesNotContain("tileBase + fract(localUv)", adapted, StringComparison.Ordinal);
         Assert.Contains("uParallaxTraceLayers", adapted, StringComparison.Ordinal);
         Assert.Contains("uParallaxRefineSteps", adapted, StringComparison.Ordinal);
         Assert.Contains("uParallaxShadowSamples", adapted, StringComparison.Ordinal);
         Assert.Contains("uParallaxShadowSoftness", adapted, StringComparison.Ordinal);
         Assert.Contains("uParallaxUvScale", adapted, StringComparison.Ordinal);
-        Assert.Contains(
-            "pomUvDisplacementScale(strength) * clamp(genesisParallaxUvScale(uParallaxUvScale), 0.02, 1.0)",
-            adapted,
-            StringComparison.Ordinal);
+        Assert.Contains("pomBaseUvScale(strength)", adapted, StringComparison.Ordinal);
+        Assert.Contains("GEN_POM_HEIGHT_STRENGTH_MAX", adapted, StringComparison.Ordinal);
+        Assert.Contains("GEN_POM_MAX_UV_SHIFT_MAX", adapted, StringComparison.Ordinal);
+        Assert.Contains("pomStrengthEff", adapted, StringComparison.Ordinal);
+        Assert.Contains("out float effectiveStrength", adapted, StringComparison.Ordinal);
         Assert.Contains("uParallaxHeightTexSize", adapted, StringComparison.Ordinal);
         Assert.Contains("if (Vtan.z <= 0.0)", adapted, StringComparison.Ordinal);
         Assert.Contains("Vtan.xy / max(Vtan.z, GEN_POM_MIN_VIEW_Z)", adapted, StringComparison.Ordinal);
@@ -559,7 +599,6 @@ public class PreviewGlslEsAdaptTests
         Assert.Contains("float delta = curLayer - sampleH;", adapted, StringComparison.Ordinal);
         Assert.Contains("smoothstep(0.0, softWidth, delta)", adapted, StringComparison.Ordinal);
         Assert.DoesNotContain("uv = clamp(uvDisp", adapted, StringComparison.Ordinal);
-        Assert.DoesNotContain("clamp(localUv", adapted, StringComparison.Ordinal);
         Assert.DoesNotContain("cavityAmt", adapted, StringComparison.Ordinal);
         Assert.DoesNotContain("sampleHeight01(sampler2D heightTex, vec2 uv)", adapted, StringComparison.Ordinal);
     }
@@ -607,8 +646,11 @@ public class PreviewGlslEsAdaptTests
             useOpenGlEs: true);
         Assert.Contains("uHdrPresent", genesis, StringComparison.Ordinal);
         Assert.Contains("uHdrPaperWhiteNits", genesis, StringComparison.Ordinal);
-        // Fog is authored in post-ACES space; HDR recovers linear via inverse so present ACES matches SDR.
+        // Atmosphere fog: SDR uses skyTonemapLum (matches dome); HDR uses ACES + inverse.
         Assert.Contains("applyTerrainAerialFog(tonemapAcesNarkowicz(hdr))", genesis, StringComparison.Ordinal);
+        Assert.Contains("skyTonemapLum(fogLin)", genesis, StringComparison.Ordinal);
+        Assert.Contains("tonemapAcesNarkowicz(fogLin)", genesis, StringComparison.Ordinal);
+        Assert.Contains("uSkyExposure * 1.4", genesis, StringComparison.Ordinal);
         Assert.Contains("inverseTonemapAcesNarkowicz(foggedMapped)", genesis, StringComparison.Ordinal);
         // Night HDR undoes paper-white scale on fog midtones so the LOD band matches SDR.
         Assert.Contains("1.0 / max(paperScale, 1.0)", genesis, StringComparison.Ordinal);
@@ -621,6 +663,8 @@ public class PreviewGlslEsAdaptTests
             ShaderType.FragmentShader,
             useOpenGlEs: true);
         Assert.Contains("uHdrPresent", sky, StringComparison.Ordinal);
+        Assert.Contains("skyAboveHorizonHazeWeight", sky, StringComparison.Ordinal);
+        Assert.Contains("skySeamFogDir", sky, StringComparison.Ordinal);
 
         var taa = GlslSourceAdapter.Adapt(
             GlslIncludeResolver.Resolve("genesis_taa_resolve.frag", LoadShader),
@@ -720,7 +764,8 @@ public class PreviewGlslEsAdaptTests
         Assert.Contains("#if defined(GENESIS_ENABLE_SPECULAR_MAP)", adapted, StringComparison.Ordinal);
         Assert.Contains("float specLobe = 1.0;", adapted, StringComparison.Ordinal);
         Assert.Contains("br.specular *= groundSpecFade * specLobe;", adapted, StringComparison.Ordinal);
-        Assert.Contains("ditherSrgb8(linearToSrgb(mapped), gl_FragCoord.xy)", adapted, StringComparison.Ordinal);
+        Assert.Contains("ditherSrgb8(linearToSrgb(foggedMapped), gl_FragCoord.xy)", adapted,
+            StringComparison.Ordinal);
     }
 
     [Fact]

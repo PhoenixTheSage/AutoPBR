@@ -23,6 +23,14 @@ public sealed partial class MainWindowViewModel
             rounded: true,
             apply: v => Preview3DChunkViewDistance = v);
 
+    partial void OnPreview3DLodRingChunksChanged(double value) =>
+        ClampAndDebounceWorldModifier(
+            value,
+            PreviewStageConstants.TerrainMinLodRingChunks,
+            PreviewStageConstants.TerrainMaxLodRingChunks,
+            rounded: true,
+            apply: v => Preview3DLodRingChunks = v);
+
     partial void OnPreview3DWorldSeedChanged(double value) =>
         ClampAndDebounceWorldModifier(
             value,

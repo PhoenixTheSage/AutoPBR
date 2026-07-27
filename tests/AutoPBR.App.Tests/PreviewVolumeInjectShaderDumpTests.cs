@@ -74,7 +74,9 @@ public sealed class PreviewVolumeInjectShaderEsTests
 
         Assert.Contains("uniform sampler2D uCloudTransmittance", adapted, StringComparison.Ordinal);
         Assert.Contains("uniform sampler2D uCloudData", adapted, StringComparison.Ordinal);
+        Assert.Contains("uniform int uCloudDataDirect", adapted, StringComparison.Ordinal);
         Assert.Contains("cstResolveViewSignal", adapted, StringComparison.Ordinal);
+        Assert.Contains("ctMetadataDistance", adapted, StringComparison.Ordinal);
         Assert.Contains("cstViewTransmittance(t, sharedCloudDistance", adapted, StringComparison.Ordinal);
         Assert.Contains("transmittance * cloudViewT * sunScatter", adapted, StringComparison.Ordinal);
     }
@@ -153,12 +155,15 @@ public sealed class PreviewVolumeInjectShaderEsTests
         Assert.Contains("vcsIntersectShell", adapted, StringComparison.Ordinal);
         Assert.Contains("vcCloudConservativeDensity", adapted, StringComparison.Ordinal);
         Assert.Contains("const int CLOUD_MAX_STEPS = 64", adapted, StringComparison.Ordinal);
+        Assert.Contains("uQuality >= 3 ? 48", adapted, StringComparison.Ordinal);
         Assert.Contains("tExit = min(slabSeg.y, sceneT)", adapted, StringComparison.Ordinal);
         Assert.Contains("vcsPlanetOcclusionDistance", adapted, StringComparison.Ordinal);
         Assert.Contains("vcsPlanetHorizonVisibility", adapted, StringComparison.Ordinal);
         Assert.Contains("float sceneT = cloudSceneDistance(rd)", adapted, StringComparison.Ordinal);
         Assert.Contains("density = vcCloudDensityFromBase", adapted, StringComparison.Ordinal);
-        Assert.Contains("uWindOffset) * slabHorizonVisibility", adapted, StringComparison.Ordinal);
+        Assert.Contains("accum *= slabHorizonVisibility", adapted, StringComparison.Ordinal);
+        Assert.DoesNotContain("uWindOffset) * slabHorizonVisibility", adapted,
+            StringComparison.Ordinal);
         Assert.DoesNotContain("cloudMinRayElevation", adapted, StringComparison.Ordinal);
         Assert.DoesNotContain("cloudHorizonLifetime", adapted, StringComparison.Ordinal);
         Assert.DoesNotContain("cloudHeightMarchT", adapted, StringComparison.Ordinal);
@@ -193,9 +198,125 @@ public sealed class PreviewVolumeInjectShaderEsTests
             StringComparison.Ordinal);
         Assert.Contains("vcsPlanetOcclusionDistance", adapted, StringComparison.Ordinal);
         Assert.Contains("vcsPlanetHorizonVisibility", adapted, StringComparison.Ordinal);
-        Assert.Contains("ctDecodeDistance", adapted, StringComparison.Ordinal);
-        Assert.Contains("FragColor = vec4(rgb, coverage) * planetVisibility", adapted,
+        Assert.Contains("ctMetadataDistance", adapted, StringComparison.Ordinal);
+        Assert.Contains("ctMetadataValid", adapted, StringComparison.Ordinal);
+        Assert.Contains("cloudPlanetReconstructionMask", adapted, StringComparison.Ordinal);
+        Assert.Contains("return horizonVisibility > 1e-4 ? 1.0 : 0.0", adapted,
             StringComparison.Ordinal);
+        Assert.Contains("uCloudSourceFullResolution", adapted, StringComparison.Ordinal);
+        Assert.Contains("FragColor = vec4(presentedRgb, coverage) * planetMask", adapted,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Cq18CloudRepair_ClassifiesFourTapsAndBoundsRetraceToEightSteps()
+    {
+        var repair = ResolveAndAdapt("genesis_clouds_repair.frag", useOpenGlEs: false);
+
+        Assert.Contains("const int CLOUD_REPAIR_STEPS = 8", repair, StringComparison.Ordinal);
+        Assert.Contains("alphaMax - alphaMin > CLOUD_REPAIR_ALPHA_THRESHOLD", repair,
+            StringComparison.Ordinal);
+        Assert.Contains("distanceMax - distanceMin > max(", repair, StringComparison.Ordinal);
+        Assert.Contains("bool validityEdge = validCount > 0.0 && validCount < 4.0", repair,
+            StringComparison.Ordinal);
+        Assert.Contains("kindMax - kindMin > CLOUD_REPAIR_KIND_THRESHOLD", repair,
+            StringComparison.Ordinal);
+        Assert.Contains("normalizedValidWeight < CLOUD_REPAIR_VALID_WEIGHT_MIN", repair,
+            StringComparison.Ordinal);
+        Assert.Contains("for (int i = 0; i < CLOUD_REPAIR_STEPS; ++i)", repair,
+            StringComparison.Ordinal);
+        Assert.Contains("boundaryCenter - primaryFineStep", repair, StringComparison.Ordinal);
+        Assert.Contains("boundaryCenter + primaryFineStep", repair, StringComparison.Ordinal);
+        Assert.Contains("vcCloudDensityFromBase(", repair, StringComparison.Ordinal);
+        Assert.Contains("vcLightOpticalDepthFromBase(", repair, StringComparison.Ordinal);
+        Assert.Contains("ctEncodeMetadata(", repair, StringComparison.Ordinal);
+        Assert.Contains("outputDistance", repair, StringComparison.Ordinal);
+        Assert.Contains("if (!shellIntersects)", repair, StringComparison.Ordinal);
+        Assert.Contains("writeEmpty()", repair, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Cq18HorizonFade_AppliesAfterOpticalIntegrationExactlyOnce()
+    {
+        var trace = ResolveAndAdapt("genesis_clouds.frag", useOpenGlEs: false);
+        var upsample = ResolveAndAdapt("genesis_clouds_upsample.frag", useOpenGlEs: false);
+
+        Assert.Contains("accum *= slabHorizonVisibility", trace, StringComparison.Ordinal);
+        Assert.Contains("transmittance = 1.0 - cumulusAlpha * slabHorizonVisibility", trace,
+            StringComparison.Ordinal);
+        Assert.Contains("float cirrusAlpha = (1.0 - exp(-cirrusOd)) * cirrusHorizonVisibility",
+            trace, StringComparison.Ordinal);
+        Assert.DoesNotContain("uWindOffset) * slabHorizonVisibility", trace,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("slant *\n                    cirrusHorizonVisibility", trace,
+            StringComparison.Ordinal);
+        Assert.Contains("return horizonVisibility > 1e-4 ? 1.0 : 0.0", upsample,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Cq14CloudPipeline_EncodesOnlyAtFinalComposition()
+    {
+        var trace = ResolveAndAdapt("genesis_clouds.frag", useOpenGlEs: false);
+        var temporal = ResolveAndAdapt("genesis_clouds_temporal.frag", useOpenGlEs: false);
+        var upsample = ResolveAndAdapt("genesis_clouds_upsample.frag", useOpenGlEs: false);
+        var fallbackComposite = ResolveAndAdapt("genesis_godrays_composite.frag", useOpenGlEs: false);
+
+        Assert.Contains("cloudCol = max(accum, vec3(0.0))", trace, StringComparison.Ordinal);
+        Assert.DoesNotContain("uniform float uSkyExposure", trace, StringComparison.Ordinal);
+        Assert.DoesNotContain("uniform int uHdrPresent", trace, StringComparison.Ordinal);
+        Assert.DoesNotContain("skySoftKnee(accum", trace, StringComparison.Ordinal);
+        Assert.DoesNotContain("cpEncodeCloudRadiance(", trace, StringComparison.Ordinal);
+        Assert.DoesNotContain("cpEncodeCloudRadiance(", temporal, StringComparison.Ordinal);
+
+        Assert.Contains("vec3 presentedRgb = cpEncodeCloudRadiance(", upsample, StringComparison.Ordinal);
+        Assert.Contains("uniform float uCloudExposure", upsample, StringComparison.Ordinal);
+        Assert.Contains("uniform int uHdrPresent", upsample, StringComparison.Ordinal);
+        Assert.Contains("vec3 straightRadiance = max(linearPremultipliedRadiance", upsample,
+            StringComparison.Ordinal);
+        Assert.Contains("vec3 presented = hdrPresent > 0 ? shaped : linearToSrgb(shaped)", upsample,
+            StringComparison.Ordinal);
+        Assert.Contains("return presented * opacity", upsample, StringComparison.Ordinal);
+
+        Assert.Contains("uniform int uCloudPresent", fallbackComposite, StringComparison.Ordinal);
+        Assert.Contains("rays.rgb = cpEncodeCloudRadiance(", fallbackComposite, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Cq15CloudTrace_UsesVersionedStbnOnlyForHighQualityMarchPlacement()
+    {
+        var trace = ResolveAndAdapt("genesis_clouds.frag", useOpenGlEs: false);
+
+        Assert.Contains("uniform sampler3D uCloudStbn", trace, StringComparison.Ordinal);
+        Assert.Contains("uniform int uCloudFrameIndex", trace, StringComparison.Ordinal);
+        Assert.Contains("uHasCloudStbn > 0 && uQuality >= 2", trace, StringComparison.Ordinal);
+        Assert.Contains("floor(gl_FragCoord.xy)", trace, StringComparison.Ordinal);
+        Assert.Contains("mod(float(uCloudFrameIndex), CLOUD_STBN_FRAMES)", trace, StringComparison.Ordinal);
+        Assert.Contains("float jitter01 = cloudPrimaryMarchJitter()", trace, StringComparison.Ordinal);
+        Assert.Contains("gl_FragCoord.xy + uFramePhase", trace, StringComparison.Ordinal);
+        Assert.DoesNotContain("uCloudMoments", trace, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Cq16CloudTemporal_UsesMomentsVarianceClippingAndConfidence()
+    {
+        var temporal = ResolveAndAdapt("genesis_clouds_temporal.frag", useOpenGlEs: false);
+
+        Assert.Contains("layout(location = 2) out vec2 FragCloudMoments", temporal,
+            StringComparison.Ordinal);
+        Assert.Contains("uniform sampler2D uHistoryCloudMoments", temporal, StringComparison.Ordinal);
+        Assert.Contains("historyMoments.y - historyMoments.x * historyMoments.x", temporal,
+            StringComparison.Ordinal);
+        Assert.Contains("uMomentSigma", temporal, StringComparison.Ordinal);
+        Assert.Contains("uMomentMinBand", temporal, StringComparison.Ordinal);
+        Assert.Contains("cloudClipHistoryWithMoments", temporal, StringComparison.Ordinal);
+        Assert.Contains("trClipHistoryToNeighborhoodYCoCg", temporal, StringComparison.Ordinal);
+        Assert.Contains("uHistoryConfidence", temporal, StringComparison.Ordinal);
+        Assert.Contains("depthWeight * kindWeight * motionWeight", temporal, StringComparison.Ordinal);
+        Assert.Contains("reactiveWeight * confidenceWeight", temporal, StringComparison.Ordinal);
+        Assert.Contains("FragCloudMoments = mix(currentMoments, clippedHistoryMoments, historyWeight)",
+            temporal, StringComparison.Ordinal);
+        Assert.DoesNotContain("cpEncodeCloudRadiance(", temporal, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -217,7 +338,8 @@ public sealed class PreviewVolumeInjectShaderEsTests
         var temporal = ResolveAndAdapt("genesis_clouds_temporal.frag");
 
         Assert.Contains("layout(location = 1) out vec4 FragCloudData", trace, StringComparison.Ordinal);
-        Assert.Contains("ctEncodeDistance(representativeT)", trace, StringComparison.Ordinal);
+        Assert.Contains("ctEncodeMetadata(representativeT", trace, StringComparison.Ordinal);
+        Assert.Contains("uniform int uCloudDataDirect", trace, StringComparison.Ordinal);
         Assert.DoesNotContain("uPrevClouds", trace, StringComparison.Ordinal);
         Assert.Contains("expectedPreviousDistance", temporal, StringComparison.Ordinal);
         Assert.Contains("uWindDelta", temporal, StringComparison.Ordinal);
@@ -225,6 +347,8 @@ public sealed class PreviewVolumeInjectShaderEsTests
         Assert.Contains("cloudNeighborhood", temporal, StringComparison.Ordinal);
         Assert.Contains("trClipHistoryToNeighborhoodYCoCg", temporal, StringComparison.Ordinal);
         Assert.Contains("kindWeight", temporal, StringComparison.Ordinal);
+        Assert.Contains("ctMetadataValid", temporal, StringComparison.Ordinal);
+        Assert.Contains("ctMetadataDistance", temporal, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -295,7 +295,7 @@ public static class PreviewTerrainMeshBaker
         };
     }
 
-    private static List<float>[] CreateMaterialBuckets(int slotCount = PreviewTerrainGrassSlots.MaxCount)
+    internal static List<float>[] CreateMaterialBuckets(int slotCount = PreviewTerrainGrassSlots.MaxCount)
     {
         slotCount = Math.Max(PreviewTerrainGrassSlots.MaxCount, slotCount);
         var buckets = new List<float>[slotCount];
@@ -307,7 +307,7 @@ public static class PreviewTerrainMeshBaker
         return buckets;
     }
 
-    private static bool TryConcatMaterialBuckets(
+    internal static bool TryConcatMaterialBuckets(
         List<float>[] buckets,
         out float[] verts,
         out uint[] indices,

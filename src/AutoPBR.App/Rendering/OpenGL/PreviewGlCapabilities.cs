@@ -25,7 +25,9 @@ internal sealed record PreviewGlCapabilities(
     bool TextureArrays,
     bool BindlessTextures,
     bool SpirV,
-    bool SeparablePrograms)
+    bool SeparablePrograms,
+    int MaxColorAttachments,
+    int MaxDrawBuffers)
 {
     public bool CanUsePersistentUploadRing => !IsOpenGlEs && PersistentMappedBuffers;
 
@@ -72,6 +74,23 @@ internal sealed record PreviewGlCapabilities(
 
     public bool CanUseSeparableShaderPrograms => !IsOpenGlEs && SeparablePrograms;
 
+    /// <summary>
+    /// Desktop GL 3.3 guarantees color-renderable RGBA16F and RG32F textures. GLES/ANGLE keeps
+    /// the packed RGBA8 cloud path so its MRT requirements and driver behavior remain unchanged.
+    /// Allocation completeness is still verified at runtime before this path becomes active.
+    /// </summary>
+    public bool CanUseFloatingPointCloudTargets => !IsOpenGlEs && Major >= 3;
+
+    /// <summary>
+    /// CQ1.6 temporal moments add a third cloud color attachment. Keep this desktop-only and
+    /// require both attachment and draw-buffer limits before attempting the RG16F profile.
+    /// Framebuffer completeness remains the final runtime authority.
+    /// </summary>
+    public bool CanUseCloudTemporalMoments =>
+        CanUseFloatingPointCloudTargets &&
+        MaxColorAttachments >= 3 &&
+        MaxDrawBuffers >= 3;
+
     public string UploadTransportLabel => CanUsePersistentUploadRing ? "persistent-mapped UBO uploads" : "BufferSubData uploads";
 
     public string FormatDiagnostic()
@@ -95,6 +114,8 @@ internal sealed record PreviewGlCapabilities(
                $"gpuReductions={(CanUseGpuReductionDiagnostics ? "on" : "off")}, " +
                $"imageHistogram={(CanUseImageHistogram ? "on" : "off")}, " +
                $"materialTextureArrays={(CanUseMaterialTextureArrays ? "on" : "off")}, " +
+               $"cloudFpTargets={(CanUseFloatingPointCloudTargets ? "on" : "off")}, " +
+               $"cloudMoments={(CanUseCloudTemporalMoments ? "on" : "off")}({MaxColorAttachments}/{MaxDrawBuffers}), " +
                $"gpuTimers={(CanUseGpuTimerQueries ? "on" : "off")}, " +
                $"compute={(ComputeShaders ? "yes" : "no")}, " +
                $"imageStore={(ImageLoadStore ? "yes" : "no")}, " +
@@ -112,11 +133,14 @@ internal sealed record PreviewGlCapabilities(
         var drawRecords = CanUseMaterialDrawRecordSsbo ? "draw SSBO" : "draw uniforms";
         var materialTextures = CanUseMaterialTextureArrays ? "material arrays" : "material samplers";
         var froxelInject = CanUseComputeFroxelInject ? "compute froxels" : "fragment froxels";
+        var cloudTargets = CanUseFloatingPointCloudTargets
+            ? CanUseCloudTemporalMoments ? "FP cloud targets + moments" : "FP cloud targets"
+            : "RGBA8 clouds";
         var gpuTimers = CanUseGpuTimerQueries ? "GPU timers" : "no GPU timers";
         var drawCommands = CanUseMultiDrawIndirectGroups
             ? "multi-draw groups"
             : CanUseIndirectDrawCommands ? "indirect draws" : "direct draws";
-        return $" · {upload} · {entitySkinning} · {drawRecords} · {materialTextures} · {froxelInject} · {drawCommands} · {gpuTimers}";
+        return $" · {upload} · {entitySkinning} · {drawRecords} · {materialTextures} · {froxelInject} · {cloudTargets} · {drawCommands} · {gpuTimers}";
     }
 
     public static PreviewGlCapabilities FromGl(GL gl, bool useOpenGlEs, string versionString)
@@ -124,7 +148,14 @@ internal sealed record PreviewGlCapabilities(
         var vendor = ReadGlString(gl, StringName.Vendor);
         var renderer = ReadGlString(gl, StringName.Renderer);
         var extensions = ReadExtensionString(gl);
-        return FromStrings(versionString, vendor, renderer, extensions, useOpenGlEs);
+        var capabilities = FromStrings(versionString, vendor, renderer, extensions, useOpenGlEs);
+        var maxColorAttachments = Math.Max(1, gl.GetInteger(GetPName.MaxColorAttachments));
+        var maxDrawBuffers = Math.Max(1, gl.GetInteger(GetPName.MaxDrawBuffers));
+        return capabilities with
+        {
+            MaxColorAttachments = maxColorAttachments,
+            MaxDrawBuffers = maxDrawBuffers,
+        };
     }
 
     internal static PreviewGlCapabilities FromStrings(
@@ -132,7 +163,9 @@ internal sealed record PreviewGlCapabilities(
         string vendor,
         string renderer,
         string extensions,
-        bool? forceOpenGlEs = null)
+        bool? forceOpenGlEs = null,
+        int? maxColorAttachments = null,
+        int? maxDrawBuffers = null)
     {
         var isEs = forceOpenGlEs ?? versionString.Contains("OpenGL ES", StringComparison.OrdinalIgnoreCase);
         var (major, minor) = ParseVersion(versionString);
@@ -160,6 +193,8 @@ internal sealed record PreviewGlCapabilities(
         var bindless = !isEs && HasExtension("GL_ARB_bindless_texture");
         var spirv = !isEs && (VersionAtLeast(4, 6) || HasExtension("GL_ARB_gl_spirv"));
         var separable = !isEs && (VersionAtLeast(4, 1) || HasExtension("GL_ARB_separate_shader_objects"));
+        var defaultColorAttachments = major >= 3 ? (isEs ? 4 : 8) : 1;
+        var defaultDrawBuffers = major >= 3 ? (isEs ? 4 : 8) : 1;
 
         return new PreviewGlCapabilities(
             string.IsNullOrWhiteSpace(versionString) ? "(unknown)" : versionString,
@@ -181,7 +216,9 @@ internal sealed record PreviewGlCapabilities(
             textureArrays,
             bindless,
             spirv,
-            separable);
+            separable,
+            Math.Max(1, maxColorAttachments ?? defaultColorAttachments),
+            Math.Max(1, maxDrawBuffers ?? defaultDrawBuffers));
     }
 
     private static (int Major, int Minor) ParseVersion(string versionString)

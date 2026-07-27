@@ -36,6 +36,45 @@ internal sealed class GlTexture3D : IDisposable
         _gl.GenerateMipmap(TextureTarget.Texture3D);
     }
 
+    public void UploadR8(int width, int height, int depth, ReadOnlySpan<byte> r8)
+    {
+        if (width <= 0 || height <= 0 || depth <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(width),
+                "R8 texture dimensions must all be positive.");
+        }
+
+        var expectedLength = checked(width * height * depth);
+        if (r8.Length != expectedLength)
+        {
+            throw new ArgumentException(
+                $"R8 texture payload is {r8.Length} bytes; expected {expectedLength}.",
+                nameof(r8));
+        }
+
+        Bind(0);
+        _gl.TexParameter(
+            TextureTarget.Texture3D,
+            TextureParameterName.TextureMinFilter,
+            (int)GLEnum.Nearest);
+        _gl.TexParameter(
+            TextureTarget.Texture3D,
+            TextureParameterName.TextureMagFilter,
+            (int)GLEnum.Nearest);
+        _gl.TexImage3D(
+            TextureTarget.Texture3D,
+            0,
+            InternalFormat.R8,
+            (uint)width,
+            (uint)height,
+            (uint)depth,
+            0,
+            PixelFormat.Red,
+            PixelType.UnsignedByte,
+            r8);
+    }
+
     public void Dispose()
     {
         if (_disposed)

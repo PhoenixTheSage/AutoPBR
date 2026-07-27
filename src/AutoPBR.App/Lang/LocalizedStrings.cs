@@ -497,6 +497,7 @@ public sealed class LocalizedStrings
     public static string Preview3DVolumetricQualityLow => Resources.Preview3DVolumetricQualityLow;
     public static string Preview3DVolumetricQualityMedium => Resources.Preview3DVolumetricQualityMedium;
     public static string Preview3DVolumetricQualityHigh => Resources.Preview3DVolumetricQualityHigh;
+    public static string Preview3DVolumetricQualityCinematic => Resources.Preview3DVolumetricQualityCinematic;
     public static string Preview3DParallaxSection => Resources.Preview3DParallaxSection;
     public static string Preview3DParallaxHeightStrength => Resources.Preview3DParallaxHeightStrength;
     public static string Preview3DParallaxHeightStrengthTooltip => Resources.Preview3DParallaxHeightStrengthTooltip;
@@ -531,6 +532,8 @@ public sealed class LocalizedStrings
     public static string Preview3DShowGroundMeshTooltip => Resources.Preview3DShowGroundMeshTooltip;
     public static string Preview3DChunkViewDistance => Resources.Preview3DChunkViewDistance;
     public static string Preview3DChunkViewDistanceTooltip => Resources.Preview3DChunkViewDistanceTooltip;
+    public static string Preview3DDistantLod => Resources.Preview3DDistantLod;
+    public static string Preview3DDistantLodTooltip => Resources.Preview3DDistantLodTooltip;
     public static string Preview3DWorldSeed => Resources.Preview3DWorldSeed;
     public static string Preview3DWorldSeedTooltip => Resources.Preview3DWorldSeedTooltip;
     public static string Preview3DWorldSeedRandomize => Resources.Preview3DWorldSeedRandomize;

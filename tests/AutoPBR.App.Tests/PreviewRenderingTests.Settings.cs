@@ -1,6 +1,7 @@
 using AutoPBR.App.Lang;
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.OpenGL;
+using AutoPBR.App.Rendering.Scene;
 
 using System.Numerics;
 
@@ -35,6 +36,10 @@ public sealed partial class PreviewRenderingTests
         Assert.Equal(24, s.ParallaxShadowSamples);
         Assert.Equal(1.25f, s.ParallaxShadowSoftness);
         Assert.Equal(0.45f, s.ParallaxMaxUvShift);
+        Assert.Equal(0.0, PreviewStageConstants.ParallaxHeightStrengthMin);
+        Assert.Equal(4.0, PreviewStageConstants.ParallaxHeightStrengthMax);
+        Assert.Equal(0.05, PreviewStageConstants.ParallaxMaxUvShiftMin);
+        Assert.Equal(4.0, PreviewStageConstants.ParallaxMaxUvShiftMax);
         Assert.True(s.EnableIbl);
         Assert.True(s.EnableAtmosphericSky);
         Assert.Equal(2.6f, s.AtmosphereTurbidity);
@@ -100,7 +105,7 @@ public sealed partial class PreviewRenderingTests
 
         Assert.Contains("PrepareTerrainShadowCasterSelections(", shadow, StringComparison.Ordinal);
         Assert.Contains("PrepareShadowSubjectGpuUploads(ref frame);", shadow, StringComparison.Ordinal);
-        Assert.Contains("_shadowSubjectUploadsPrepared = false;", shadow, StringComparison.Ordinal);
+        Assert.Contains("_frameSubjectGpuUploadsReady = false;", shadow, StringComparison.Ordinal);
         Assert.Contains("nearCasterDist = nearHalf + casterPad", shadow, StringComparison.Ordinal);
         Assert.Contains("midCasterDist = midHalf + casterPad", shadow, StringComparison.Ordinal);
         Assert.Contains("Parallel.Invoke(", ground, StringComparison.Ordinal);
@@ -455,7 +460,7 @@ public sealed partial class PreviewRenderingTests
         Assert.Contains("PreviewGlMatrices.ApplyProjectionJitter", source, StringComparison.Ordinal);
         Assert.Contains("CurrentPreviewTaaJitter(jitterW, jitterH, frame.Settings)", source, StringComparison.Ordinal);
         Assert.Contains("frame.GodRayCaptureActive && frame.SceneCaptureW > 0 ? frame.SceneCaptureW : frame.Vw", source, StringComparison.Ordinal);
-        Assert.Contains("frame.UnjitteredProj = frame.Proj;", source, StringComparison.Ordinal);
+        Assert.Contains("frame.Proj = frame.UnjitteredProj;", source, StringComparison.Ordinal);
         Assert.Contains("frame.PreviewTaaJitterNdc", source, StringComparison.Ordinal);
         Assert.Contains("SetMatrixLoc(u.TaaCurrViewProj, taaCurrentViewProj);", source, StringComparison.Ordinal);
         Assert.Contains("ResolvePreviewTaaPrevViewProj(taaCurrentViewProj)", source, StringComparison.Ordinal);
@@ -735,10 +740,11 @@ public sealed partial class PreviewRenderingTests
         Assert.Contains("TAA resolve draw GL error", taa, StringComparison.Ordinal);
         Assert.Contains("_taaResolveTarget", taa, StringComparison.Ordinal);
         Assert.Contains("var resolveTarget = _taaResolveTarget!;", taa, StringComparison.Ordinal);
-        Assert.Contains("resolveTarget.EnsureSize(w, h)", taa, StringComparison.Ordinal);
+        Assert.Contains("resolveTarget.EnsureSize(w, h, useFloat)", taa, StringComparison.Ordinal);
         Assert.Contains("resolveTarget.BindDraw();", taa, StringComparison.Ordinal);
         Assert.Contains("TryPresentPreviewTaaResolveToDefault", taa, StringComparison.Ordinal);
-        Assert.Contains("SetIntOnProgramLoc(_scenePresentProgram, _scenePresentUniformLocs.SceneColor, 0);", taa, StringComparison.Ordinal);
+        Assert.Contains("BindScenePresentUniforms(frame.Settings, sceneIsLinear: frame.Settings.HdrPresentActive);",
+            taa, StringComparison.Ordinal);
         Assert.Contains("resolveTarget.BlitColorToFramebuffer(readFbo, frame.VpX, frame.VpY, w, h)", taa, StringComparison.Ordinal);
         Assert.Contains("historyTarget.CopyColorFrom(resolveTarget)", taa, StringComparison.Ordinal);
         Assert.Contains("MaybeLogPreviewTaaDiagnostics", taa, StringComparison.Ordinal);
@@ -794,6 +800,27 @@ public sealed partial class PreviewRenderingTests
     }
 
     [Fact]
+    public void CinematicVolumetricQuality_IsWiredThroughPersistenceUiAndDiagnostics()
+    {
+        var viewModel = LoadSource(ThisFilePath(),
+            "src", "AutoPBR.App", "ViewModels", "MainWindowViewModel.Preview.cs");
+        var synchronizer = LoadSource(ThisFilePath(),
+            "src", "AutoPBR.App", "Services", "UserSettingsSynchronizer.cs");
+        var clouds = LoadSource(ThisFilePath(),
+            "src", "AutoPBR.App", "Rendering", "OpenGL", "OpenGlPreviewBackend.VolumetricClouds.cs");
+
+        Assert.Contains("LocalizedStrings.Preview3DVolumetricQualityCinematic", viewModel, StringComparison.Ordinal);
+        Assert.Contains("VolumetricQuality = PreviewVolumetricQuality.Clamp(Preview3DVolumetricQuality)", viewModel,
+            StringComparison.Ordinal);
+        Assert.Contains("PreviewVolumetricQuality.Clamp(settings.Preview3DVolumetricQuality)", synchronizer,
+            StringComparison.Ordinal);
+        Assert.Contains("PreviewVolumetricQuality.Clamp(vm.Preview3DVolumetricQuality)", synchronizer,
+            StringComparison.Ordinal);
+        Assert.Contains("volumetricPreset={PreviewVolumetricQuality.GetName", clouds, StringComparison.Ordinal);
+        Assert.Equal("Cinematic", LocalizedStrings.Preview3DVolumetricQualityCinematic);
+    }
+
+    [Fact]
     public void PreviewTaa_EdgeModesSupersampleSceneCaptureBeforeResolve()
     {
         var frame = LoadSource(ThisFilePath(),
@@ -833,7 +860,8 @@ public sealed partial class PreviewRenderingTests
         Assert.Contains("PreviewTaaSsaaMaxDimension", godRaysCoordinator, StringComparison.Ordinal);
         Assert.Contains("ResolveSceneCaptureScale", godRaysCoordinator, StringComparison.Ordinal);
         Assert.Contains("ResolveSceneCaptureSize(ref frame, out var captureW, out var captureH, out var captureScale)", godRays, StringComparison.Ordinal);
-        Assert.Contains("_sceneCapture.EnsureSize(captureW, captureH)", godRays, StringComparison.Ordinal);
+        Assert.Contains("_sceneCapture.EnsureSize(captureW, captureH, frame.Settings.HdrPresentActive)", godRays,
+            StringComparison.Ordinal);
         Assert.Contains("_sceneCapture.BindDraw(captureW, captureH)", godRays, StringComparison.Ordinal);
         Assert.Contains("Scene capture AA scale:", godRaysCoordinator, StringComparison.Ordinal);
         Assert.Contains("LogPreviewTaaDiagnostics", godRaysCoordinator, StringComparison.Ordinal);

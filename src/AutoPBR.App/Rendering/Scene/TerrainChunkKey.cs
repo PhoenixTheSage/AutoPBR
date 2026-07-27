@@ -44,7 +44,7 @@ public sealed class PreviewTerrainChunkMesh
 
     /// <summary>
     /// Contiguous index ranges by terrain grass material slot. Empty means draw the full index buffer
-    /// with material slot 0 (BuiltIn / LOD).
+    /// with material slot 0 (BuiltIn).
     /// </summary>
     public PreviewDrawBatch[] DrawBatches { get; init; } = [];
 

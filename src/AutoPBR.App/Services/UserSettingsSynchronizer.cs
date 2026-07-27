@@ -55,6 +55,12 @@ internal static class UserSettingsSynchronizer
         vm.Preview3DShowGroundMesh = settings.Preview3DShowGroundMesh;
         vm.Preview3DChunkViewDistance = Math.Clamp(
             settings.Preview3DChunkViewDistance, 2, 24);
+        vm.Preview3DLodRingChunks = Math.Clamp(
+            settings.Preview3DLodRingChunks <= 0
+                ? PreviewStageConstants.TerrainDefaultLodRingChunks
+                : settings.Preview3DLodRingChunks,
+            PreviewStageConstants.TerrainMinLodRingChunks,
+            PreviewStageConstants.TerrainMaxLodRingChunks);
         vm.Preview3DWorldSeed = Math.Clamp(settings.Preview3DWorldSeed, 0, int.MaxValue);
         vm.Preview3DTerrainBiomeSize = Math.Clamp(
             settings.Preview3DTerrainBiomeSize,
@@ -92,7 +98,10 @@ internal static class UserSettingsSynchronizer
         vm.Preview3DEnableSpecularMap = settings.Preview3DEnableSpecularMap;
         vm.Preview3DParallaxHeightStrength = settings.Preview3DParallaxHeightStrength <= 0
             ? 0.05
-            : Math.Clamp(settings.Preview3DParallaxHeightStrength, 0.0, 1.0);
+            : Math.Clamp(
+                settings.Preview3DParallaxHeightStrength,
+                PreviewStageConstants.ParallaxHeightStrengthMin,
+                PreviewStageConstants.ParallaxHeightStrengthMax);
         vm.Preview3DParallaxTraceLayers = settings.Preview3DParallaxTraceLayers <= 0
             ? 64
             : Math.Clamp(settings.Preview3DParallaxTraceLayers, 8.0, 128.0);
@@ -107,7 +116,10 @@ internal static class UserSettingsSynchronizer
             : Math.Clamp(settings.Preview3DParallaxShadowSoftness, 0.0, 4.0);
         vm.Preview3DParallaxMaxUvShift = settings.Preview3DParallaxMaxUvShift <= 0
             ? 0.45
-            : Math.Clamp(settings.Preview3DParallaxMaxUvShift, 0.05, 0.75);
+            : Math.Clamp(
+                settings.Preview3DParallaxMaxUvShift,
+                PreviewStageConstants.ParallaxMaxUvShiftMin,
+                PreviewStageConstants.ParallaxMaxUvShiftMax);
         vm.Preview3DEnableTessellationDisplacement = settings.Preview3DEnableTessellationDisplacement;
         vm.Preview3DTessellationLevel = settings.Preview3DTessellationLevel <= 0
             ? 8.0
@@ -184,7 +196,7 @@ internal static class UserSettingsSynchronizer
             : Math.Clamp(settings.Preview3DHorizonFogStrength, 0.0, 2.0);
         vm.Preview3DEnableGodRays = settings.Preview3DEnableGodRays;
         vm.Preview3DEnableVolumetricClouds = settings.Preview3DEnableVolumetricClouds;
-        vm.Preview3DVolumetricQuality = Math.Clamp(settings.Preview3DVolumetricQuality, 0, 2);
+        vm.Preview3DVolumetricQuality = PreviewVolumetricQuality.Clamp(settings.Preview3DVolumetricQuality);
         vm.Preview3DGodRayStrength = settings.Preview3DGodRayStrength <= 0
             ? 0.45
             : Math.Clamp(settings.Preview3DGodRayStrength, 0.0, 2.0);
@@ -410,6 +422,10 @@ internal static class UserSettingsSynchronizer
         settings.Preview3DGridColorArgb = vm.Preview3DGridColor.ToUInt32();
         settings.Preview3DShowGroundMesh = vm.Preview3DShowGroundMesh;
         settings.Preview3DChunkViewDistance = (int)Math.Round(Math.Clamp(vm.Preview3DChunkViewDistance, 2, 24));
+        settings.Preview3DLodRingChunks = (int)Math.Round(Math.Clamp(
+            vm.Preview3DLodRingChunks,
+            PreviewStageConstants.TerrainMinLodRingChunks,
+            PreviewStageConstants.TerrainMaxLodRingChunks));
         settings.Preview3DWorldSeed = (int)Math.Clamp(Math.Round(vm.Preview3DWorldSeed), 0, int.MaxValue);
         settings.Preview3DTerrainBiomeSize = Math.Clamp(
             vm.Preview3DTerrainBiomeSize,
@@ -440,12 +456,18 @@ internal static class UserSettingsSynchronizer
         settings.Preview3DEnableParallax = vm.Preview3DEnableParallax;
         settings.Preview3DEnableNormalMap = vm.Preview3DEnableNormalMap;
         settings.Preview3DEnableSpecularMap = vm.Preview3DEnableSpecularMap;
-        settings.Preview3DParallaxHeightStrength = Math.Clamp(vm.Preview3DParallaxHeightStrength, 0.0, 1.0);
+        settings.Preview3DParallaxHeightStrength = Math.Clamp(
+            vm.Preview3DParallaxHeightStrength,
+            PreviewStageConstants.ParallaxHeightStrengthMin,
+            PreviewStageConstants.ParallaxHeightStrengthMax);
         settings.Preview3DParallaxTraceLayers = Math.Clamp(vm.Preview3DParallaxTraceLayers, 8.0, 128.0);
         settings.Preview3DParallaxRefineSteps = Math.Clamp(vm.Preview3DParallaxRefineSteps, 0.0, 8.0);
         settings.Preview3DParallaxShadowSamples = Math.Clamp(vm.Preview3DParallaxShadowSamples, 4.0, 64.0);
         settings.Preview3DParallaxShadowSoftness = Math.Clamp(vm.Preview3DParallaxShadowSoftness, 0.0, 4.0);
-        settings.Preview3DParallaxMaxUvShift = Math.Clamp(vm.Preview3DParallaxMaxUvShift, 0.05, 0.75);
+        settings.Preview3DParallaxMaxUvShift = Math.Clamp(
+            vm.Preview3DParallaxMaxUvShift,
+            PreviewStageConstants.ParallaxMaxUvShiftMin,
+            PreviewStageConstants.ParallaxMaxUvShiftMax);
         settings.Preview3DEnableTessellationDisplacement = vm.Preview3DEnableTessellationDisplacement;
         settings.Preview3DTessellationLevel = Math.Clamp(vm.Preview3DTessellationLevel, 1.0, 16.0);
         settings.Preview3DTessellationDisplacementStrength = Math.Clamp(vm.Preview3DTessellationDisplacementStrength, 0.0, 0.20);
@@ -475,7 +497,7 @@ internal static class UserSettingsSynchronizer
         settings.Preview3DHorizonFogStrength = Math.Clamp(vm.Preview3DHorizonFogStrength, 0.0, 2.0);
         settings.Preview3DEnableGodRays = vm.Preview3DEnableGodRays;
         settings.Preview3DEnableVolumetricClouds = vm.Preview3DEnableVolumetricClouds;
-        settings.Preview3DVolumetricQuality = Math.Clamp(vm.Preview3DVolumetricQuality, 0, 2);
+        settings.Preview3DVolumetricQuality = PreviewVolumetricQuality.Clamp(vm.Preview3DVolumetricQuality);
         settings.Preview3DGodRayStrength = Math.Clamp(vm.Preview3DGodRayStrength, 0.0, 2.0);
         settings.Preview3DGodRayScatterGain = Math.Clamp(vm.Preview3DGodRayScatterGain, 0.0, 20.0);
         settings.Preview3DGodRayExtinction = Math.Clamp(vm.Preview3DGodRayExtinction, 0.01, 8.0);

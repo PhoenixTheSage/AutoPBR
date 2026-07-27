@@ -144,7 +144,6 @@ public sealed partial class OpenGlPreviewBackend
         var layerWorldY = PreviewStageConstants.CloudLayerBaseWorldY(settings.CloudLayerHeight);
         var cu = _cloudUniformLocs;
         SetFloatOnProgramLoc(_cloudProgram, cu.SunIntensity, settings.AtmosphereSunIntensity);
-        SetFloatOnProgramLoc(_cloudProgram, cu.SkyExposure, settings.AtmosphereSkyExposure);
         SetFloatOnProgramLoc(_cloudProgram, cu.LayerHeight, layerWorldY);
         SetFloatOnProgramLoc(_cloudProgram, cu.VolumeHeight, settings.CloudVolumeHeight);
         SetFloatOnProgramLoc(_cloudProgram, cu.Density, settings.CloudDensity);

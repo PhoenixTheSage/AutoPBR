@@ -26,14 +26,7 @@ uniform float uGroundWorldY;
 out vec4 FragColor;
 
 // Matches atmo_skyview.frag (linear RGB) when the LUT bake is unavailable on GLES.
-vec3 skyProceduralFromSun(vec3 viewDir, vec3 lightPropagationDir, float sunIntensity, float horizonBandScale)
-{
-    vec3 col = skyDayRadiance(viewDir, lightPropagationDir, sunIntensity, uTurbidity, uHorizonFalloff, horizonBandScale);
-    float dayAmt = skyDayFactor(lightPropagationDir, sunIntensity);
-    vec3 nightSky = skyNightZenith(viewDir);
-    col = mix(nightSky, col, dayAmt);
-    return max(col, vec3(0.0));
-}
+// skyProceduralRadiance lives in sky_radiance.glsl (via sky_dome.glsl).
 
 void main()
 {
@@ -43,7 +36,8 @@ void main()
 
     // Procedural radiance is continuous in view direction; the 2D sky-view LUT has an azimuth
     // seam on the -Z meridian that shows as a fixed world-space line when sampled per pixel.
-    vec3 lutSky = skyProceduralFromSun(viewDir, uLightDir, uSunIntensity, horizonBandScale);
+    vec3 lutSky = skyProceduralRadiance(viewDir, uLightDir, uSunIntensity, uTurbidity, uHorizonFalloff,
+        horizonBandScale);
 
     float starAmt = 1.0 - smoothstep(0.22, 0.62, dayAmt);
     vec3 nightSky = skyNightZenith(viewDir) + skyStars(viewDir, uRenderTime) * starAmt;
@@ -56,6 +50,15 @@ void main()
     vec3 sky = mix(nightSky, lutSky, dayAmt);
     sky += skyHorizonGlow(viewDir, dayAmt, sunTint, horizonBandScale);
     sky += skyBelowHorizonFog(viewDir, uHorizonFogStrength, horizonBandScale);
+
+    // Soften the world seam: mix a tight band above the horizon toward LOD fog radiance.
+    float aboveW = skyAboveHorizonHazeWeight(viewDir, uHorizonFogStrength, horizonBandScale);
+    if (aboveW > 1e-4)
+    {
+        vec3 hazeCol = skyProceduralRadiance(skySeamFogDir(viewDir), uLightDir, uSunIntensity, uTurbidity,
+            uHorizonFalloff, horizonBandScale);
+        sky = mix(sky, hazeCol, aboveW);
+    }
 
     // Keep the half-set sun vivid (per-pixel horizon cut handles the geometry);
     // a hard dayAmt gate here made the disc pop out while still above the horizon.

@@ -12,6 +12,10 @@ Directory.CreateDirectory(outDir);
 WriteBlob(outDir, "cloud_noise_shape_128.bin", PreviewCloudNoiseTextureGenerator.GenerateRgba8());
 WriteBlob(outDir, "cloud_noise_detail_32.bin", PreviewCloudNoiseTextureGenerator.GenerateDetailRgba8());
 WriteBlob(outDir, "cloud_coverage_256.bin", PreviewCloudCoverageMapGenerator.GenerateRgba8());
+WriteBlob(
+    outDir,
+    PreviewCloudSpatiotemporalBlueNoiseGenerator.AssetFileName,
+    PreviewCloudSpatiotemporalBlueNoiseGenerator.GenerateR8());
 
 Console.WriteLine($"Wrote preview cloud assets to {outDir}");
 return 0;

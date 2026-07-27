@@ -30,6 +30,7 @@ public readonly struct PreviewRenderSettingsSnapshot
     public float GridColorA { get; init; }
     public bool ShowGroundMesh { get; init; }
     public int ChunkViewDistance { get; init; }
+    public int LodRingChunks { get; init; }
     public int TerrainWorldSeed { get; init; }
     public float TerrainBiomeSize { get; init; }
     public float TerrainAmplification { get; init; }
@@ -158,6 +159,7 @@ public readonly struct PreviewRenderSettingsSnapshot
         GridColorA = s.GridColorA,
         ShowGroundMesh = s.ShowGroundMesh,
         ChunkViewDistance = s.ChunkViewDistance,
+        LodRingChunks = s.LodRingChunks,
         TerrainWorldSeed = s.TerrainWorldSeed,
         TerrainBiomeSize = s.TerrainBiomeSize,
         TerrainAmplification = s.TerrainAmplification,

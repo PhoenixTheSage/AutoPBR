@@ -456,6 +456,7 @@ public sealed partial class OpenGlPreviewBackend
         gl.ActiveTexture(TextureUnit.Texture0);
         gl.BindTexture(TextureTarget.Texture2D, raysTexture);
         SetIntOnProgramLoc(_godRayCompositeProgram, cu.Rays, 0);
+        SetIntOnProgramLoc(_godRayCompositeProgram, cu.CloudPresent, 0);
         var hasCloudMask = cloudMaskTexture != 0;
         SetIntOnProgramLoc(_godRayCompositeProgram, cu.HasCloudMask, hasCloudMask ? 1 : 0);
         if (hasCloudMask)

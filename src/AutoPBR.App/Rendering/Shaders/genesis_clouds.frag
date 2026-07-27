@@ -3,11 +3,9 @@
 
 //!include "common/common.glsl"
 //!include "common/atmosphere.glsl"
-//!include "common/sky_dome.glsl"
 //!include "common/cloud_shell.glsl"
 //!include "common/volumetric_clouds.glsl"
-//!include "common/volumetric_medium.glsl"
-//!include "common/volumetric_clouds_density_maps.glsl"
+//!include "common/volumetric_segment.glsl"
 //!include "common/cloud_temporal.glsl"
 //!include "common/ray_reconstruct.glsl"
 //!include "common/cloud_scene_depth.glsl"
@@ -17,11 +15,10 @@ uniform mat4 uInvViewProj;
 uniform vec3 uCameraPos;
 uniform vec3 uSunDir;
 uniform float uSunIntensity;
-uniform float uSkyExposure;
-uniform int uHdrPresent;
 uniform sampler2D uSkyViewLut;
 uniform sampler3D uCloudNoise;
 uniform sampler3D uDetailNoise;
+uniform sampler3D uCloudStbn;
 uniform sampler2D uCoverageMap;
 uniform sampler2D uSceneDepth;
 uniform float uGroundWorldY;
@@ -41,26 +38,80 @@ uniform int uDebugView;
 uniform int uHasSceneDepth;
 uniform int uHasCloudNoise;
 uniform int uHasDetailNoise;
+uniform int uHasCloudStbn;
 uniform int uHasCoverageMap;
 uniform int uHasSkyLut;
+uniform int uCloudDataDirect;
 uniform float uFramePhase;
+uniform int uCloudFrameIndex;
 
 layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 FragCloudData;
 
 const int CLOUD_MAX_STEPS = 64;
 const float CLOUD_HORIZON_FEATHER = 0.0025;
+const float CLOUD_STBN_WIDTH = 128.0;
+const float CLOUD_STBN_HEIGHT = 128.0;
+const float CLOUD_STBN_FRAMES = 64.0;
+const float SKY_VIEW_LUT_WIDTH = 192.0;
+const float SKY_VIEW_LUT_HEIGHT = 108.0;
+
+float cloudDayFactor(vec3 lightPropagationDir, float sunIntensity)
+{
+    vec3 towardLight = normalize(-lightPropagationDir);
+    float dayFromSun = smoothstep(-0.04, 0.22, towardLight.y);
+    float dayFromIntensity = smoothstep(0.08, 2.0, sunIntensity);
+    return clamp(dayFromSun * dayFromIntensity, 0.0, 1.0);
+}
+
+vec3 cloudNightZenith(vec3 viewDir)
+{
+    float gradient = clamp(viewDir.y * 0.5 + 0.5, 0.0, 1.0);
+    return mix(vec3(0.01, 0.012, 0.02), vec3(0.02, 0.035, 0.07), gradient);
+}
+
+float cloudPrimaryMarchJitter()
+{
+    if (uHasCloudStbn > 0 && uQuality >= 2)
+    {
+        vec2 stbnPixel = mod(
+            floor(gl_FragCoord.xy),
+            vec2(CLOUD_STBN_WIDTH, CLOUD_STBN_HEIGHT));
+        float frameSlice = mod(float(uCloudFrameIndex), CLOUD_STBN_FRAMES);
+        vec3 stbnUv = vec3(
+            (stbnPixel + vec2(0.5)) / vec2(CLOUD_STBN_WIDTH, CLOUD_STBN_HEIGHT),
+            (frameSlice + 0.5) / CLOUD_STBN_FRAMES);
+        float stbnValue = texture(uCloudStbn, stbnUv).r;
+        // Sample at the center of the represented R8 rank interval, never exactly 0 or 1.
+        return (stbnValue * 255.0 + 0.5) / 256.0;
+    }
+
+    vec2 ignCoord = gl_FragCoord.xy + uFramePhase * vec2(47.0, 17.0);
+    return fract(52.9829189 * fract(dot(ignCoord, vec2(0.06711056, 0.00583715))));
+}
+
+vec3 cloudSampleSkyViewLutSrgb(sampler2D skyLut, vec3 viewDir)
+{
+    vec3 direction = normalize(viewDir);
+    float azimuth = atan(direction.x, direction.z) * (0.5 / GEN_PI) + 0.5;
+    float zenith = acos(clamp(direction.y, -1.0, 1.0)) / GEN_PI;
+    vec2 lutSize = vec2(textureSize(skyLut, 0));
+    lutSize = max(lutSize, vec2(SKY_VIEW_LUT_WIDTH, SKY_VIEW_LUT_HEIGHT));
+    vec2 unitUv = vec2(fract(azimuth), clamp(zenith, 0.0, 1.0));
+    vec2 texelUv = unitUv * ((lutSize - 1.0) / lutSize) + (0.5 / lutSize);
+    return texture(skyLut, texelUv).rgb;
+}
 
 vec3 sampleSkyAmbient(vec3 rd, sampler2D skyLut, int hasSkyLut, float dayAmt)
 {
-    vec3 night = skyNightZenith(rd) * 2.0;
+    vec3 night = cloudNightZenith(rd) * 2.0;
     if (hasSkyLut < 1)
     {
         return mix(night, vec3(0.42, 0.50, 0.63), dayAmt);
     }
 
     vec3 ambientDir = normalize(vec3(rd.x * 0.35, max(rd.y, 0.45), rd.z * 0.35));
-    vec3 lut = srgbToLinear(sampleSkyViewLutSrgb(skyLut, ambientDir));
+    vec3 lut = srgbToLinear(cloudSampleSkyViewLutSrgb(skyLut, ambientDir));
     return mix(night, lut, dayAmt);
 }
 
@@ -134,7 +185,7 @@ void main()
         vec3 pos = uCameraPos + rd * tSample;
         vec2 weather = vcSampleWeather(uCoverageMap, uHasCoverageMap, pos, uVolumeSize, uWindOffset.xz);
         float cov = saturate1(weather.x * uCoverageScale);
-        cloudCol = vec3(cov, weather.y, 0.35);
+        cloudCol = vec3(cov, weather.y, 0.35) * slabHorizonVisibility;
         alpha = (cov > 0.02 ? 0.95 : 0.0) * slabHorizonVisibility;
         debugViewActive = true;
     }
@@ -145,9 +196,11 @@ void main()
         float density = vcCloudDensityEx(pos, planetCenter, planetRadius,
             layerBaseAltitude, layerTopAltitude, uDensity, uCoverageScale, uVolumeSize,
             uCloudNoise, uHasCloudNoise, uDetailNoise, uHasDetailNoise,
-            uCoverageMap, uHasCoverageMap, uWindOffset) * slabHorizonVisibility;
+            uCoverageMap, uHasCoverageMap, uWindOffset);
         cloudCol = vec3(density * 2.8, density * 1.4, density * 0.35);
         alpha = saturate1(density * 3.5);
+        cloudCol *= slabHorizonVisibility;
+        alpha *= slabHorizonVisibility;
         debugViewActive = true;
     }
 
@@ -158,7 +211,7 @@ void main()
     {
         vec3 sunToward = normalize(-uSunDir);
         float cosTheta = dot(rd, sunToward);
-        float dayAmt = skyDayFactor(uSunDir, uSunIntensity);
+        float dayAmt = cloudDayFactor(uSunDir, uSunIntensity);
         vec3 sunColor = vcCloudSunColor(sunToward, uSunIntensity);
         vec3 skyAmbient = sampleSkyAmbient(rd, uSkyViewLut, uHasSkyLut, dayAmt);
         vec3 accum = vec3(0.0);
@@ -181,13 +234,12 @@ void main()
             {
                 int steps = uMarchSteps > 0
                     ? clamp(uMarchSteps, 1, CLOUD_MAX_STEPS)
-                    : (uQuality <= 0 ? 16 : (uQuality >= 2 ? 32 : 24));
+                    : (uQuality <= 0 ? 16 : (uQuality >= 3 ? 48 : (uQuality >= 2 ? 32 : 24)));
                 float fineStep = max((tExit - tEnter) / float(steps), 0.01);
                 float coarseStep = fineStep * (uQuality <= 0 ? 4.0 : 3.0);
                 int lightSteps = uQuality >= 2 ? 4 : (uQuality <= 0 ? 2 : 3);
                 float weatherLod = uQuality <= 0 ? 3.0 : 2.0;
-                vec2 ignCoord = gl_FragCoord.xy + uFramePhase * vec2(47.0, 17.0);
-                float jitter01 = fract(52.9829189 * fract(dot(ignCoord, vec2(0.06711056, 0.00583715))));
+                float jitter01 = cloudPrimaryMarchJitter();
                 float t = tEnter + jitter01 * fineStep;
 
                 for (int i = 0; i < CLOUD_MAX_STEPS; ++i)
@@ -219,7 +271,7 @@ void main()
 
                     float density = vcCloudDensityFromBase(baseShape, worldPos, planetCenter, planetRadius,
                         layerBaseAltitude, layerTopAltitude, uDensity, uVolumeSize,
-                        uDetailNoise, uHasDetailNoise, uWindOffset) * slabHorizonVisibility;
+                        uDetailNoise, uHasDetailNoise, uWindOffset);
                     if (density > 1e-5)
                     {
                         float segmentLength = min(fineStep, tExit - t);
@@ -252,6 +304,16 @@ void main()
                     t += fineStep;
                 }
             }
+
+            // Fade the integrated premultiplied layer, not its input density. Scaling density
+            // before Beer-Lambert integration leaves thick clouds opaque through most of the
+            // transition and then collapses them into a visible horizontal cutoff.
+            if (slabHorizonVisibility < 1.0)
+            {
+                float cumulusAlpha = saturate1(1.0 - transmittance);
+                accum *= slabHorizonVisibility;
+                transmittance = 1.0 - cumulusAlpha * slabHorizonVisibility;
+            }
         }
 
         if (uCirrusStrength > 0.0 && cirrusHit)
@@ -280,9 +342,8 @@ void main()
             if (cirrusDensity > 1e-3)
             {
                 float slant = clamp((cirrusSeg.y - cirrusSeg.x) / cirrusThickness, 1.0, 3.0);
-                float cirrusOd = cirrusDensity * uCirrusStrength * 0.27 * slant *
-                    cirrusHorizonVisibility;
-                float cirrusAlpha = 1.0 - exp(-cirrusOd);
+                float cirrusOd = cirrusDensity * uCirrusStrength * 0.27 * slant;
+                float cirrusAlpha = (1.0 - exp(-cirrusOd)) * cirrusHorizonVisibility;
                 vec3 cirrusRad = vcSunScatter(sunColor, cosTheta, cirrusDensity * 0.62) * 0.42 +
                     skyAmbient * 0.54;
                 accum += transmittance * cirrusRad * cirrusAlpha;
@@ -299,12 +360,12 @@ void main()
         float clearAmt = (1.0 - transmittance) * mix(0.35, 0.55, dayAmt);
         accum += skyAmbient * clearAmt;
         alpha = saturate1(1.0 - transmittance);
-        // RGB is premultiplied volume radiance. Composite with ONE, ONE_MINUS_SRC_ALPHA.
-        vec3 linearCloud = skySoftKnee(accum * uSkyExposure, 0.08);
-        cloudCol = uHdrPresent > 0 ? linearCloud : linearToSrgb(linearCloud);
-
+        // CQ1.4: retain scene-referred linear premultiplied radiance through trace,
+        // history and reconstruction. Exposure/knee/display encoding happens once
+        // in the final cloud composite.
+        cloudCol = max(accum, vec3(0.0));
     }
 
     FragColor = vec4(cloudCol, alpha);
-    FragCloudData = vec4(ctEncodeDistance(representativeT), representativeKind, 1.0);
+    FragCloudData = ctEncodeMetadata(representativeT, representativeKind, true, uCloudDataDirect);
 }

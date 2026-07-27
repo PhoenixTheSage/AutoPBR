@@ -1,8 +1,15 @@
 #version 330 core
+
+//!include "common/cloud_present.glsl"
+
 in vec2 vUv;
 uniform sampler2D uRays;
 uniform sampler2D uCloudMask;
 uniform int uHasCloudMask;
+uniform int uCloudPresent;
+uniform float uCloudExposure;
+uniform int uHdrPresent;
+uniform int uApplyCloudEncoding;
 out vec4 FragColor;
 
 void main()
@@ -21,6 +28,12 @@ void main()
         {
             discard;
         }
+    }
+
+    if (uCloudPresent > 0)
+    {
+        rays.rgb = cpEncodeCloudRadiance(
+            rays.rgb, rays.a, uCloudExposure, uHdrPresent, uApplyCloudEncoding);
     }
 
     FragColor = rays;

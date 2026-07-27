@@ -57,6 +57,7 @@ public partial class MainWindowViewModel
     [ObservableProperty] private Color _preview3DGridColor = Color.FromUInt32(PreviewStageConstants.DefaultGridColorArgb);
     [ObservableProperty] private bool _preview3DShowGroundMesh = true;
     [ObservableProperty] private double _preview3DChunkViewDistance = PreviewStageConstants.TerrainDefaultChunkViewDistance;
+    [ObservableProperty] private double _preview3DLodRingChunks = PreviewStageConstants.TerrainDefaultLodRingChunks;
     [ObservableProperty] private bool _preview3DShowAxes = true;
     [ObservableProperty] private bool _preview3DShowFpsCounter;
     [ObservableProperty] private bool _preview3DvSyncEnabled;
@@ -159,7 +160,8 @@ public partial class MainWindowViewModel
     [
         LocalizedStrings.Preview3DVolumetricQualityLow,
         LocalizedStrings.Preview3DVolumetricQualityMedium,
-        LocalizedStrings.Preview3DVolumetricQualityHigh
+        LocalizedStrings.Preview3DVolumetricQualityHigh,
+        LocalizedStrings.Preview3DVolumetricQualityCinematic
     ];
 
     public string[] Preview3DTaaModeOptions { get; } =
@@ -678,7 +680,10 @@ public partial class MainWindowViewModel
         return new()
         {
             NormalStrength = (float)NormalIntensity,
-            HeightStrength = (float)Preview3DParallaxHeightStrength,
+            HeightStrength = (float)Math.Clamp(
+                Preview3DParallaxHeightStrength,
+                PreviewStageConstants.ParallaxHeightStrengthMin,
+                PreviewStageConstants.ParallaxHeightStrengthMax),
             RoughnessScale = (float)SmoothnessScale,
             EnableParallax = Preview3DEnableParallax,
             EnableNormalMap = Preview3DEnableNormalMap,
@@ -706,6 +711,10 @@ public partial class MainWindowViewModel
                 Preview3DChunkViewDistance,
                 PreviewStageConstants.TerrainMinChunkViewDistance,
                 PreviewStageConstants.TerrainMaxChunkViewDistance)),
+            LodRingChunks = (int)Math.Round(Math.Clamp(
+                Preview3DLodRingChunks,
+                PreviewStageConstants.TerrainMinLodRingChunks,
+                PreviewStageConstants.TerrainMaxLodRingChunks)),
             TerrainWorldSeed = worldGen.Seed,
             TerrainBiomeSize = worldGen.BiomeSize,
             TerrainAmplification = worldGen.Amplification,
@@ -719,7 +728,10 @@ public partial class MainWindowViewModel
             ParallaxRefineSteps = (int)Math.Round(Math.Clamp(Preview3DParallaxRefineSteps, 0.0, 8.0)),
             ParallaxShadowSamples = (int)Math.Round(Math.Clamp(Preview3DParallaxShadowSamples, 4.0, 64.0)),
             ParallaxShadowSoftness = (float)Math.Clamp(Preview3DParallaxShadowSoftness, 0.0, 4.0),
-            ParallaxMaxUvShift = (float)Math.Clamp(Preview3DParallaxMaxUvShift, 0.05, 0.75),
+            ParallaxMaxUvShift = (float)Math.Clamp(
+                Preview3DParallaxMaxUvShift,
+                PreviewStageConstants.ParallaxMaxUvShiftMin,
+                PreviewStageConstants.ParallaxMaxUvShiftMax),
             EnableTessellationDisplacement = Preview3DEnableTessellationDisplacement,
             TessellationLevel = (float)Math.Clamp(Preview3DTessellationLevel, 1.0, 16.0),
             TessellationDisplacementStrength = (float)Math.Clamp(Preview3DTessellationDisplacementStrength, 0.0, 0.20),
@@ -758,7 +770,7 @@ public partial class MainWindowViewModel
             EnableGodRays = Preview3DEnableGodRays,
             EnableVolumeGodRays = true,
             EnableVolumetricClouds = Preview3DEnableVolumetricClouds,
-            VolumetricQuality = Math.Clamp(Preview3DVolumetricQuality, 0, 2),
+            VolumetricQuality = PreviewVolumetricQuality.Clamp(Preview3DVolumetricQuality),
             GodRayStrength = (float)Preview3DGodRayStrength,
             GodRayScatterGain = (float)Preview3DGodRayScatterGain,
             GodRayExtinction = (float)Preview3DGodRayExtinction,
@@ -786,7 +798,7 @@ public partial class MainWindowViewModel
             PreviewTaaFxaaLumaEdgeScale = (float)Math.Clamp(Preview3DTaaFxaaLumaEdgeScale, 0.0, 2.0),
             PreviewTaaFxaaLumaThreshold = (float)Math.Clamp(Preview3DTaaFxaaLumaThreshold, 0.001, 0.12),
             PreviewTaaForceFxaa = Preview3DTaaForceFxaa,
-            CloudQuality = PreviewVolumetricQuality.Resolve(Math.Clamp(Preview3DVolumetricQuality, 0, 2)).CloudQuality,
+            CloudQuality = PreviewVolumetricQuality.Resolve(Preview3DVolumetricQuality).CloudQuality,
             LogVolumetricTiming = Preview3DLogVerbosePreviewDiagnostics,
             LogPreviewTaaDiagnostics = Preview3DLogVerbosePreviewDiagnostics,
             LogGpuPassTimings = Preview3DLogGpuPassTimings,

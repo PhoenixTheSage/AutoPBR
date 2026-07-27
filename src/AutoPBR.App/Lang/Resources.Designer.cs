@@ -519,6 +519,7 @@ public static class Resources
     public static string Preview3DVolumetricQualityLow => GetString("Preview3DVolumetricQualityLow");
     public static string Preview3DVolumetricQualityMedium => GetString("Preview3DVolumetricQualityMedium");
     public static string Preview3DVolumetricQualityHigh => GetString("Preview3DVolumetricQualityHigh");
+    public static string Preview3DVolumetricQualityCinematic => GetString("Preview3DVolumetricQualityCinematic");
     public static string Preview3DParallaxSection => GetString("Preview3DParallaxSection");
     public static string Preview3DParallaxHeightStrength => GetString("Preview3DParallaxHeightStrength");
     public static string Preview3DParallaxHeightStrengthTooltip => GetString("Preview3DParallaxHeightStrengthTooltip");
@@ -553,6 +554,8 @@ public static class Resources
     public static string Preview3DShowGroundMeshTooltip => GetString("Preview3DShowGroundMeshTooltip");
     public static string Preview3DChunkViewDistance => GetString("Preview3DChunkViewDistance");
     public static string Preview3DChunkViewDistanceTooltip => GetString("Preview3DChunkViewDistanceTooltip");
+    public static string Preview3DDistantLod => GetString("Preview3DDistantLod");
+    public static string Preview3DDistantLodTooltip => GetString("Preview3DDistantLodTooltip");
     public static string Preview3DWorldSeed => GetString("Preview3DWorldSeed");
     public static string Preview3DWorldSeedTooltip => GetString("Preview3DWorldSeedTooltip");
     public static string Preview3DWorldSeedRandomize => GetString("Preview3DWorldSeedRandomize");

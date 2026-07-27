@@ -20,4 +20,32 @@ float ctDecodeDistance(vec2 encoded)
     return CLOUD_DISTANCE_PACK_SCALE * normalizedDistance / max(1.0 - normalizedDistance, 1e-5);
 }
 
+// CQ1 metadata ABI. Desktop RG32F stores raw distance/type in RG and reserves a negative
+// type for invalid texels. The RGBA8 compatibility path keeps the original RG distance,
+// B type and A validity packing byte-for-byte.
+vec4 ctEncodeMetadata(float distanceToCloud, float cloudKind, bool valid, int directMetadata)
+{
+    if (directMetadata > 0)
+    {
+        return vec4(valid ? max(distanceToCloud, 0.0) : 0.0, valid ? cloudKind : -1.0, 0.0, 0.0);
+    }
+
+    return vec4(ctEncodeDistance(distanceToCloud), cloudKind, valid ? 1.0 : 0.0);
+}
+
+bool ctMetadataValid(vec4 metadata, int directMetadata)
+{
+    return directMetadata > 0 ? metadata.g >= 0.0 : metadata.a >= 0.5;
+}
+
+float ctMetadataDistance(vec4 metadata, int directMetadata)
+{
+    return directMetadata > 0 ? max(metadata.r, 0.0) : ctDecodeDistance(metadata.rg);
+}
+
+float ctMetadataKind(vec4 metadata, int directMetadata)
+{
+    return directMetadata > 0 ? metadata.g : metadata.b;
+}
+
 #endif // GENESIS_CLOUD_TEMPORAL_GLSL

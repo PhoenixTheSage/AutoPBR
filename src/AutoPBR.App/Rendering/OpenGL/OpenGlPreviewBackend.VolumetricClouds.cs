@@ -15,15 +15,19 @@ public sealed partial class OpenGlPreviewBackend
     private GlShaderProgram? _cloudProgram;
     private GlShaderProgram? _cloudTemporalProgram;
     private GlShaderProgram? _cloudUpsampleProgram;
+    private GlShaderProgram? _cloudRepairProgram;
     private uint _cloudQuadVao;
     private uint _cloudQuadVbo;
     private GlTexture3D? _cloudNoiseTex;
     private GlTexture3D? _cloudDetailTex;
+    private GlTexture3D? _cloudStbnTex;
     private GlTexture2D? _cloudCoverageTex;
     private GlCloudTemporalRenderTarget? _cloudRenderTarget;
     private GlCloudTemporalRenderTarget? _cloudResolveTarget;
     private GlCloudTemporalRenderTarget? _cloudHistoryTarget;
+    private GlCloudTemporalRenderTarget? _cloudRepairTarget;
     private GlCloudTemporalRenderTarget? _cloudCompositeTarget;
+    private GlCloudRenderFormatProfile _cloudRenderFormatProfile = GlCloudRenderFormatProfile.Compatibility;
     private Matrix4x4 _cloudPrevViewProj = Matrix4x4.Identity;
     private Vector3 _cloudPrevCameraPos;
     private Vector3 _cloudPrevWindOffset;
@@ -33,14 +37,26 @@ public sealed partial class OpenGlPreviewBackend
     private int _cloudHistorySettingsHash;
     private int _cloudHistoryW;
     private int _cloudHistoryH;
+    private int _cloudHistoryViewportW;
+    private int _cloudHistoryViewportH;
     private bool _loggedCloudDraw;
     private int _cloudDeferredCompositeRetries;
     private int _loggedCloudDeferredCompositeMiss;
     private int _cloudTierReadyWarmupDraws;
     private bool _cloudRuntimeFaulted;
+    private bool _loggedCloudFormatFallback;
+    private bool _cloudFloatingPointTargetsFaulted;
+    private bool _loggedCloudMomentFallback;
+    private bool _cloudTemporalMomentsFaulted;
+    private bool _cloudEdgeRepairFaulted;
+    private bool _loggedCloudEdgeRepairFallback;
+    private int _cloudHistoryConfidenceFrames;
     private PreviewCloudCameraRegion? _cloudCameraRegion;
+    private string _cloudStbnDiagnostic = "not-initialized";
+    private string _cloudMomentsDiagnostic = "not-initialized";
+    private string _cloudEdgeRepairDiagnostic = "not-initialized";
 
-    private void TryInitVolumetricClouds(GL gl, bool useOpenGlEs)
+    private void TryInitVolumetricClouds(GL gl, bool useOpenGlEs, int volumetricQuality)
     {
         DestroyVolumetricCloudResources();
         _cloudProgram = CreatePreviewProgram("genesis_godrays.vert", "genesis_clouds.frag", out var err);
@@ -81,6 +97,34 @@ public sealed partial class OpenGlPreviewBackend
             _cloudUpsampleUniformLocs = ResolveCloudUpsampleUniformLocs(_cloudUpsampleProgram);
         }
 
+        // CQ1.8 repair is an optional desktop-only stage. Compile/allocation/runtime failure
+        // keeps the CQ1.7 two-thirds trace and ordinary reconstruction path active.
+        if (!useOpenGlEs)
+        {
+            _cloudRepairProgram = CreatePreviewProgram(
+                "genesis_godrays.vert",
+                "genesis_clouds_repair.frag",
+                out var repairErr,
+                "clouds-edge-repair");
+            if (_cloudRepairProgram is not { IsValid: true })
+            {
+                _cloudEdgeRepairDiagnostic = "disabled (shader compile/link failed)";
+                EmitDiagnostic("[3D preview] CQ1.8 cloud edge repair unavailable: " +
+                    (repairErr ?? "link failed"));
+                _cloudRepairProgram?.Dispose();
+                _cloudRepairProgram = null;
+            }
+            else
+            {
+                _cloudRepairUniformLocs = ResolveCloudRepairUniformLocs(_cloudRepairProgram);
+                _cloudEdgeRepairDiagnostic = "available";
+            }
+        }
+        else
+        {
+            _cloudEdgeRepairDiagnostic = "disabled (GLES/ANGLE compatibility policy)";
+        }
+
         // Clouds need the opaque color/depth capture even when god rays and preview TAA are off.
         // Failure is non-fatal: the shader keeps its no-depth fallback for limited GLES drivers.
         if (!TryInitSceneCaptureCore(gl, useOpenGlEs, out var sceneCaptureErr))
@@ -116,9 +160,14 @@ public sealed partial class OpenGlPreviewBackend
                 ? coverageRgba
                 : PreviewCloudCoverageMapGenerator.GenerateRgba8(),
             nearestFilter: false);
-        _cloudRenderTarget = new GlCloudTemporalRenderTarget(gl);
-        _cloudResolveTarget = new GlCloudTemporalRenderTarget(gl);
-        _cloudHistoryTarget = new GlCloudTemporalRenderTarget(gl);
+        TryInitCloudSpatiotemporalBlueNoise(gl, useOpenGlEs);
+        CreateCloudRenderTargets(
+            gl,
+            GlCloudRenderFormatProfile.Select(_glCapabilities, volumetricQuality));
+        UpdateCloudMomentDiagnostic(volumetricQuality);
+        EmitDiagnostic(
+            $"[3D preview] CQ1 cloud render format selected: {_cloudRenderFormatProfile.DiagnosticLabel}; " +
+            $"moments={_cloudMomentsDiagnostic}; framebuffer completeness is verified on allocation.");
 
         Span<float> quad =
         [
@@ -139,27 +188,207 @@ public sealed partial class OpenGlPreviewBackend
         gl.BindVertexArray(0);
     }
 
-    private void TryWarmCloudOffscreenTargets(int fullWidth, int fullHeight)
+    private void TryInitCloudSpatiotemporalBlueNoise(GL gl, bool useOpenGlEs)
     {
-        var w = Math.Max(1, fullWidth / 2);
-        var h = Math.Max(1, fullHeight / 2);
-        _cloudHistoryW = w;
-        _cloudHistoryH = h;
+        _cloudStbnTex?.Dispose();
+        _cloudStbnTex = null;
+
+        if (useOpenGlEs)
+        {
+            _cloudStbnDiagnostic = "fallback-8-frame (GLES policy)";
+            return;
+        }
+
+        if (!PreviewCloudBakedAssetLoader.TryLoadSpatiotemporalBlueNoise(
+                out var stbnR8,
+                out var loadReason))
+        {
+            _cloudStbnDiagnostic = $"fallback-8-frame ({loadReason})";
+            EmitDiagnostic(
+                "[3D preview] CQ1.5 cloud STBN unavailable; " +
+                $"{_cloudStbnDiagnostic}.");
+            return;
+        }
+
+        GlTexture3D? candidate = null;
+        try
+        {
+            FlushPendingGlErrors(gl);
+            candidate = new GlTexture3D(gl);
+            candidate.UploadR8(
+                PreviewCloudSpatiotemporalBlueNoiseGenerator.Width,
+                PreviewCloudSpatiotemporalBlueNoiseGenerator.Height,
+                PreviewCloudSpatiotemporalBlueNoiseGenerator.FrameCount,
+                stbnR8);
+            var uploadError = gl.GetError();
+            if (uploadError != GLEnum.NoError)
+            {
+                throw new InvalidOperationException($"R8 3D texture upload produced {uploadError}.");
+            }
+
+            _cloudStbnTex = candidate;
+            candidate = null;
+            _cloudStbnDiagnostic =
+                $"asset-v{PreviewCloudSpatiotemporalBlueNoiseGenerator.AssetVersion}";
+        }
+        catch (Exception exception)
+        {
+            _cloudStbnDiagnostic =
+                $"fallback-8-frame (upload-{exception.GetType().Name})";
+            EmitDiagnostic(
+                "[3D preview] CQ1.5 cloud STBN upload failed; " +
+                $"{_cloudStbnDiagnostic}.");
+        }
+        finally
+        {
+            candidate?.Dispose();
+        }
+    }
+
+    private void TryWarmCloudOffscreenTargets(
+        int fullWidth,
+        int fullHeight,
+        int volumetricQuality)
+    {
+        var traceSize = PreviewCloudTraceSizing.Resolve(
+            fullWidth,
+            fullHeight,
+            volumetricQuality);
+        _cloudHistoryViewportW = Math.Max(1, fullWidth);
+        _cloudHistoryViewportH = Math.Max(1, fullHeight);
+        _cloudHistoryW = traceSize.Width;
+        _cloudHistoryH = traceSize.Height;
         InvalidateCloudTemporalHistory();
-        if (_cloudRenderTarget is not null)
+        _ = EnsureCloudRenderTargetSetSize(
+            traceSize.Width,
+            traceSize.Height,
+            requireTemporalTargets: true);
+    }
+
+    private void CreateCloudRenderTargets(GL gl, GlCloudRenderFormatProfile profile)
+    {
+        _cloudCompositeTarget = null;
+        _cloudRenderTarget?.Dispose();
+        _cloudResolveTarget?.Dispose();
+        _cloudHistoryTarget?.Dispose();
+        if (!profile.UsesDirectMetadata)
         {
-            _ = _cloudRenderTarget.EnsureSize(w, h);
+            _cloudRepairTarget?.Dispose();
+            _cloudRepairTarget = null;
         }
 
-        if (_cloudResolveTarget is not null)
+        _cloudRenderFormatProfile = profile;
+        _cloudRenderTarget = new GlCloudTemporalRenderTarget(gl, profile);
+        _cloudResolveTarget = new GlCloudTemporalRenderTarget(gl, profile);
+        _cloudHistoryTarget = new GlCloudTemporalRenderTarget(gl, profile);
+    }
+
+    private void EnsureCloudRenderFormatForQuality(GL gl, int volumetricQuality)
+    {
+        var requested = GlCloudRenderFormatProfile.Select(_glCapabilities, volumetricQuality);
+        if (_cloudTemporalMomentsFaulted && requested.UsesTemporalMoments)
         {
-            _ = _cloudResolveTarget.EnsureSize(w, h);
+            requested = GlCloudRenderFormatProfile.DesktopFloatingPoint;
         }
 
-        if (_cloudHistoryTarget is not null)
+        if (_cloudFloatingPointTargetsFaulted && requested.UsesDirectMetadata)
         {
-            _ = _cloudHistoryTarget.EnsureSize(w, h);
+            requested = GlCloudRenderFormatProfile.Compatibility;
         }
+
+        if (requested == _cloudRenderFormatProfile)
+        {
+            return;
+        }
+
+        CreateCloudRenderTargets(gl, requested);
+        UpdateCloudMomentDiagnostic(volumetricQuality);
+        InvalidateCloudTemporalHistory();
+        _loggedCloudDraw = false;
+        EmitDiagnostic(
+            $"[3D preview] CQ1 cloud render format changed with volumetric preset: " +
+            $"{_cloudRenderFormatProfile.DiagnosticLabel}.");
+    }
+
+    private bool EnsureCloudRenderTargetSetSize(int width, int height, bool requireTemporalTargets)
+    {
+        bool EnsureSelectedProfile() =>
+            _cloudRenderTarget is not null &&
+            _cloudRenderTarget.EnsureSize(width, height) &&
+            (!requireTemporalTargets ||
+                (_cloudResolveTarget is not null &&
+                 _cloudResolveTarget.EnsureSize(width, height) &&
+                 _cloudHistoryTarget is not null &&
+                 _cloudHistoryTarget.EnsureSize(width, height)));
+
+        if (EnsureSelectedProfile())
+        {
+            return true;
+        }
+
+        if (_cloudRenderFormatProfile.UsesTemporalMoments && _gl is not null)
+        {
+            if (!_loggedCloudMomentFallback)
+            {
+                _loggedCloudMomentFallback = true;
+                EmitDiagnostic(
+                    "[3D preview] CQ1.6 RG16F cloud moment attachment was incomplete; " +
+                    "continuing with FP16 radiance/direct metadata and neighborhood-only clipping.");
+            }
+
+            _cloudTemporalMomentsFaulted = true;
+            CreateCloudRenderTargets(_gl, GlCloudRenderFormatProfile.DesktopFloatingPoint);
+            _cloudMomentsDiagnostic = "disabled (RG16F MRT incomplete)";
+            InvalidateCloudTemporalHistory();
+            if (EnsureSelectedProfile())
+            {
+                return true;
+            }
+        }
+
+        if (!_cloudRenderFormatProfile.UsesDirectMetadata || _gl is null)
+        {
+            return false;
+        }
+
+        if (!_loggedCloudFormatFallback)
+        {
+            _loggedCloudFormatFallback = true;
+            EmitDiagnostic(
+                "[3D preview] CQ1 floating-point cloud MRT allocation was incomplete; " +
+                "falling back to the packed RGBA8 compatibility profile for this GPU session.");
+        }
+
+        _cloudFloatingPointTargetsFaulted = true;
+        CreateCloudRenderTargets(_gl, GlCloudRenderFormatProfile.Compatibility);
+        _cloudMomentsDiagnostic = "disabled (floating-point target fallback)";
+        InvalidateCloudTemporalHistory();
+        return EnsureSelectedProfile();
+    }
+
+    private void UpdateCloudMomentDiagnostic(int volumetricQuality)
+    {
+        if (_cloudRenderFormatProfile.UsesTemporalMoments)
+        {
+            _cloudMomentsDiagnostic = "RG16F enabled";
+            return;
+        }
+
+        if (PreviewVolumetricQuality.Clamp(volumetricQuality) < PreviewVolumetricQuality.High)
+        {
+            _cloudMomentsDiagnostic = "disabled by preset";
+            return;
+        }
+
+        if (_cloudTemporalMomentsFaulted)
+        {
+            _cloudMomentsDiagnostic = "disabled after allocation failure";
+            return;
+        }
+
+        _cloudMomentsDiagnostic = _glCapabilities?.CanUseCloudTemporalMoments == true
+            ? "disabled by format fallback"
+            : "disabled (fewer than 3 attachments/draw buffers or compatibility backend)";
     }
 
     private void DestroyVolumetricCloudResources()
@@ -171,10 +400,14 @@ public sealed partial class OpenGlPreviewBackend
         _cloudTemporalProgram = null;
         _cloudUpsampleProgram?.Dispose();
         _cloudUpsampleProgram = null;
+        _cloudRepairProgram?.Dispose();
+        _cloudRepairProgram = null;
         _cloudNoiseTex?.Dispose();
         _cloudNoiseTex = null;
         _cloudDetailTex?.Dispose();
         _cloudDetailTex = null;
+        _cloudStbnTex?.Dispose();
+        _cloudStbnTex = null;
         _cloudCoverageTex?.Dispose();
         _cloudCoverageTex = null;
         _cloudRenderTarget?.Dispose();
@@ -183,6 +416,8 @@ public sealed partial class OpenGlPreviewBackend
         _cloudResolveTarget = null;
         _cloudHistoryTarget?.Dispose();
         _cloudHistoryTarget = null;
+        _cloudRepairTarget?.Dispose();
+        _cloudRepairTarget = null;
         _cloudCompositeTarget = null;
         InvalidateCloudTemporalHistory();
         _loggedCloudDraw = false;
@@ -190,7 +425,23 @@ public sealed partial class OpenGlPreviewBackend
         _loggedCloudDeferredCompositeMiss = 0;
         _cloudTierReadyWarmupDraws = 0;
         _cloudRuntimeFaulted = false;
+        _cloudRenderFormatProfile = GlCloudRenderFormatProfile.Compatibility;
+        _loggedCloudFormatFallback = false;
+        _cloudFloatingPointTargetsFaulted = false;
+        _loggedCloudMomentFallback = false;
+        _cloudTemporalMomentsFaulted = false;
+        _cloudEdgeRepairFaulted = false;
+        _loggedCloudEdgeRepairFallback = false;
+        _cloudHistoryConfidenceFrames = 0;
+        _cloudHistoryW = 0;
+        _cloudHistoryH = 0;
+        _cloudHistoryViewportW = 0;
+        _cloudHistoryViewportH = 0;
         _cloudCameraRegion = null;
+        _cloudStbnDiagnostic = "not-initialized";
+        _cloudMomentsDiagnostic = "not-initialized";
+        _cloudEdgeRepairDiagnostic = "not-initialized";
+        _cloudFrameIndex = 0;
 
         if (gl is null)
         {
@@ -229,7 +480,239 @@ public sealed partial class OpenGlPreviewBackend
     private void InvalidateCloudTemporalHistory()
     {
         _cloudHistoryValid = false;
-        _cloudFrameIndex = 0;
+        _cloudHistoryConfidenceFrames = 0;
+    }
+
+    private bool TryApplyCloudEdgeRepair(
+        ref GlRenderFrame frame,
+        Matrix4x4 invViewProj,
+        float layerWorldY,
+        PreviewVolumetricQuality.Profile profile,
+        bool useSceneDepth,
+        Vector3 windOffset,
+        Vector2 cirrusWindOffset)
+    {
+        if (PreviewVolumetricQuality.Clamp(frame.Settings.VolumetricQuality) !=
+            PreviewVolumetricQuality.Cinematic)
+        {
+            _cloudEdgeRepairDiagnostic = "disabled by preset";
+            return false;
+        }
+
+        if (_useOpenGlEs)
+        {
+            _cloudEdgeRepairDiagnostic = "disabled (GLES/ANGLE compatibility policy)";
+            return false;
+        }
+
+        if (!_cloudRenderFormatProfile.UsesDirectMetadata)
+        {
+            _cloudEdgeRepairDiagnostic = "disabled (floating-point target unavailable)";
+            return false;
+        }
+
+        if (_cloudEdgeRepairFaulted)
+        {
+            return false;
+        }
+
+        var source = _cloudCompositeTarget;
+        var program = _cloudRepairProgram;
+        if (source is null || program is not { IsValid: true } || _cloudQuadVao == 0)
+        {
+            if (program is not { IsValid: true } &&
+                _cloudEdgeRepairDiagnostic is "available" or "not-initialized")
+            {
+                _cloudEdgeRepairDiagnostic = "disabled (shader unavailable)";
+            }
+
+            return false;
+        }
+
+        _cloudRepairTarget ??= new GlCloudTemporalRenderTarget(
+            frame.Gl,
+            GlCloudRenderFormatProfile.DesktopFloatingPoint);
+        if (!_cloudRepairTarget.EnsureSize(frame.Vw, frame.Vh))
+        {
+            DisableCloudEdgeRepair(
+                ref frame,
+                "full-resolution RGBA16F/RG32F framebuffer allocation was incomplete");
+            return false;
+        }
+
+        var gl = frame.Gl;
+        var priorBlend = gl.IsEnabled(EnableCap.Blend);
+        var priorDepth = gl.IsEnabled(EnableCap.DepthTest);
+        var priorScissor = gl.IsEnabled(EnableCap.ScissorTest);
+        var priorColorMask = new bool[4];
+        gl.GetBoolean(GetPName.ColorWritemask, priorColorMask);
+
+        try
+        {
+            _cloudRepairTarget.Clear();
+            _cloudRepairTarget.BindDraw(includeMoments: false);
+            gl.Disable(EnableCap.Blend);
+            gl.Disable(EnableCap.DepthTest);
+            gl.Disable(EnableCap.ScissorTest);
+            gl.ColorMask(true, true, true, true);
+            FlushPendingGlErrors(gl);
+
+            program.Use();
+            var ru = _cloudRepairUniformLocs;
+            gl.ActiveTexture(TextureUnit.Texture0);
+            gl.BindTexture(TextureTarget.Texture2D, source.ColorTextureHandle);
+            SetIntOnProgramLoc(program, ru.Clouds, 0);
+            gl.ActiveTexture(TextureUnit.Texture1);
+            gl.BindTexture(TextureTarget.Texture2D, source.DataTextureHandle);
+            SetIntOnProgramLoc(program, ru.CloudData, 1);
+
+            var depthFallback = _cloudCoverageTex?.Id ?? source.DataTextureHandle;
+            gl.ActiveTexture(TextureUnit.Texture2);
+            gl.BindTexture(
+                TextureTarget.Texture2D,
+                useSceneDepth && _sceneCapture is { IsValid: true }
+                    ? _sceneCapture.DepthTextureHandle
+                    : depthFallback);
+            SetIntOnProgramLoc(program, ru.SceneDepth, 2);
+
+            _cloudNoiseTex?.Bind(3);
+            SetIntOnProgramLoc(program, ru.CloudNoise, 3);
+            _cloudDetailTex?.Bind(4);
+            SetIntOnProgramLoc(program, ru.DetailNoise, 4);
+            (_cloudStbnTex ?? _cloudNoiseTex)?.Bind(5);
+            SetIntOnProgramLoc(program, ru.CloudStbn, 5);
+            _cloudCoverageTex?.Bind(6);
+            SetIntOnProgramLoc(program, ru.CoverageMap, 6);
+            gl.ActiveTexture(TextureUnit.Texture7);
+            gl.BindTexture(
+                TextureTarget.Texture2D,
+                _atmoLutsValid && _atmoSkyViewTex != 0
+                    ? _atmoSkyViewTex
+                    : depthFallback);
+            SetIntOnProgramLoc(program, ru.SkyViewLut, 7);
+
+            SetVec2OnProgramLoc(program, ru.CloudTexelSize, new Vector2(
+                1f / Math.Max(source.Width, 1),
+                1f / Math.Max(source.Height, 1)));
+            SetMatrixOnProgramLoc(program, ru.InvViewProj, invViewProj);
+            SetVec3OnProgramLoc(program, ru.CameraPos, frame.Eye);
+            SetVec3OnProgramLoc(program, ru.SunDir, frame.LightDir);
+            SetFloatOnProgramLoc(program, ru.SunIntensity, frame.Settings.AtmosphereSunIntensity);
+            SetFloatOnProgramLoc(program, ru.GroundWorldY, PreviewStageConstants.GroundPlaneWorldY);
+            SetFloatOnProgramLoc(program, ru.PlanetRadius, PreviewStageConstants.CloudPlanetRadius);
+            SetFloatOnProgramLoc(program, ru.LayerHeight, layerWorldY);
+            SetFloatOnProgramLoc(program, ru.VolumeHeight, frame.Settings.CloudVolumeHeight);
+            SetFloatOnProgramLoc(program, ru.Density, frame.Settings.CloudDensity);
+            SetFloatOnProgramLoc(program, ru.CoverageScale, frame.Settings.CloudCoverageScale);
+            SetFloatOnProgramLoc(program, ru.VolumeSize, frame.Settings.CloudVolumeSize);
+            SetVec3OnProgramLoc(program, ru.WindOffset, windOffset);
+            SetFloatOnProgramLoc(program, ru.CirrusStrength, frame.Settings.CloudCirrusStrength);
+            SetVec2OnProgramLoc(program, ru.CirrusWindOffset, cirrusWindOffset);
+            SetVec2OnProgramLoc(
+                program,
+                ru.CirrusWindDir,
+                ComputeCirrusWindDirection(frame.Settings));
+            SetIntOnProgramLoc(
+                program,
+                ru.MarchSteps,
+                Math.Clamp(frame.Settings.CloudMarchStepOverride, 0, 64));
+            SetIntOnProgramLoc(program, ru.HasSceneDepth, useSceneDepth ? 1 : 0);
+            SetIntOnProgramLoc(program, ru.HasCloudNoise, _cloudNoiseTex is not null ? 1 : 0);
+            SetIntOnProgramLoc(program, ru.HasDetailNoise, _cloudDetailTex is not null ? 1 : 0);
+            SetIntOnProgramLoc(
+                program,
+                ru.HasCloudStbn,
+                CanUseCloudStbn(
+                    _useOpenGlEs,
+                    profile.CloudQuality,
+                    _cloudStbnTex is not null)
+                    ? 1
+                    : 0);
+            SetIntOnProgramLoc(program, ru.HasCoverageMap, _cloudCoverageTex is not null ? 1 : 0);
+            SetIntOnProgramLoc(
+                program,
+                ru.HasSkyLut,
+                _atmoLutsValid && _atmoSkyViewTex != 0 ? 1 : 0);
+            SetIntOnProgramLoc(
+                program,
+                ru.SourceCloudDataDirect,
+                source.Profile.UsesDirectMetadata ? 1 : 0);
+            SetIntOnProgramLoc(program, ru.CloudFrameIndex, _cloudFrameIndex);
+
+            gl.BindVertexArray(_cloudQuadVao);
+            gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
+            gl.BindVertexArray(0);
+            var drawError = gl.GetError();
+            if (drawError != GLEnum.NoError)
+            {
+                throw new InvalidOperationException(
+                    $"CQ1.8 cloud edge-repair draw produced GL error {drawError}.");
+            }
+
+            _cloudCompositeTarget = _cloudRepairTarget;
+            _cloudEdgeRepairDiagnostic =
+                $"active full-res {frame.Vw}x{frame.Vh}, {PreviewCloudEdgeRepairClassifier.RepairStepCount}-step";
+            return true;
+        }
+        catch (Exception exception)
+        {
+            DisableCloudEdgeRepair(
+                ref frame,
+                $"{exception.GetType().Name}: {exception.Message}");
+            return false;
+        }
+        finally
+        {
+            gl.BindVertexArray(0);
+            gl.ColorMask(
+                priorColorMask[0],
+                priorColorMask[1],
+                priorColorMask[2],
+                priorColorMask[3]);
+            if (priorBlend)
+            {
+                gl.Enable(EnableCap.Blend);
+            }
+            else
+            {
+                gl.Disable(EnableCap.Blend);
+            }
+
+            if (priorDepth)
+            {
+                gl.Enable(EnableCap.DepthTest);
+            }
+            else
+            {
+                gl.Disable(EnableCap.DepthTest);
+            }
+
+            if (priorScissor)
+            {
+                gl.Enable(EnableCap.ScissorTest);
+            }
+            else
+            {
+                gl.Disable(EnableCap.ScissorTest);
+            }
+        }
+    }
+
+    private void DisableCloudEdgeRepair(ref GlRenderFrame frame, string reason)
+    {
+        _cloudEdgeRepairFaulted = true;
+        _cloudEdgeRepairDiagnostic = $"disabled after optional failure ({reason})";
+        _cloudRepairTarget?.Dispose();
+        _cloudRepairTarget = null;
+        if (!_loggedCloudEdgeRepairFallback)
+        {
+            _loggedCloudEdgeRepairFallback = true;
+            EmitDiagnostic(
+                "[3D preview] CQ1.8 cloud edge repair disabled for this GPU session; " +
+                $"continuing with CQ1.7 reconstruction ({reason}).");
+        }
+
+        BindDefaultFramebuffer(ref frame);
     }
 
     private void ObserveCloudCameraRegion(ref GlRenderFrame frame)
@@ -344,6 +827,7 @@ public sealed partial class OpenGlPreviewBackend
 
         var gl = frame.Gl;
         var profile = PreviewVolumetricQuality.Resolve(settings.VolumetricQuality);
+        EnsureCloudRenderFormatForQuality(gl, settings.VolumetricQuality);
         var layerWorldY = PreviewStageConstants.CloudLayerBaseWorldY(settings.CloudLayerHeight);
         var useSceneDepth = frame.GodRayCaptureActive && _sceneCapture is { IsValid: true };
         var windTime = settings.CloudFreezeWind ? 0.0 : frame.RenderTime;
@@ -359,14 +843,23 @@ public sealed partial class OpenGlPreviewBackend
         var temporalAvailable = _cloudTemporalProgram is { IsValid: true } &&
             _cloudRenderTarget is not null && _cloudResolveTarget is not null && _cloudHistoryTarget is not null;
         var useTemporalReproject = (forceTemporal ?? CanUseCloudTemporalReproject(settings)) && temporalAvailable;
-        // Every tier traces at half resolution. In particular, Low must never become the
-        // most expensive tier merely because its temporal weight is zero.
+        var traceSize = PreviewCloudTraceSizing.Resolve(
+            frame.Vw,
+            frame.Vh,
+            settings.VolumetricQuality);
         var useOffscreen = true;
 
         if (useOffscreen)
         {
-            var w = Math.Max(1, frame.Vw / 2);
-            var h = Math.Max(1, frame.Vh / 2);
+            var w = traceSize.Width;
+            var h = traceSize.Height;
+            if (_cloudHistoryViewportW != frame.Vw || _cloudHistoryViewportH != frame.Vh)
+            {
+                InvalidateCloudTemporalHistory();
+                _cloudHistoryViewportW = frame.Vw;
+                _cloudHistoryViewportH = frame.Vh;
+            }
+
             if (_cloudHistoryW != w || _cloudHistoryH != h)
             {
                 InvalidateCloudTemporalHistory();
@@ -374,7 +867,7 @@ public sealed partial class OpenGlPreviewBackend
                 _cloudHistoryH = h;
             }
 
-            if (_cloudRenderTarget is null || !_cloudRenderTarget.EnsureSize(w, h))
+            if (!EnsureCloudRenderTargetSetSize(w, h, requireTemporalTargets: useTemporalReproject))
             {
                 if (deferComposite)
                 {
@@ -395,8 +888,7 @@ public sealed partial class OpenGlPreviewBackend
             }
 
             if (useTemporalReproject &&
-                (_cloudResolveTarget is null || !_cloudResolveTarget.EnsureSize(w, h) ||
-                 _cloudHistoryTarget is null || !_cloudHistoryTarget.EnsureSize(w, h)))
+                (_cloudResolveTarget is null || _cloudHistoryTarget is null))
             {
                 useTemporalReproject = false;
                 InvalidateCloudTemporalHistory();
@@ -405,11 +897,11 @@ public sealed partial class OpenGlPreviewBackend
 
         if (useOffscreen)
         {
-            _cloudRenderTarget!.BindDraw();
             // Transparent black, not the scene clear color: discarded pixels must stay
             // alpha 0 or the composite stamps opaque near-black over the sky between clouds.
-            gl.ClearColor(0f, 0f, 0f, 0f);
-            gl.Clear(ClearBufferMask.ColorBufferBit);
+            // RG32F metadata uses a negative cloud-type sentinel in place of alpha validity.
+            _cloudRenderTarget!.Clear();
+            _cloudRenderTarget.BindDraw(includeMoments: false);
         }
 
         var jitterPhase = PreviewCloudTemporalJitter.Sample(_cloudFrameIndex);
@@ -488,6 +980,8 @@ public sealed partial class OpenGlPreviewBackend
                         _cloudPrevCirrusWindOffset = cirrusWindOffset;
                         _cloudHistorySettingsHash = settingsHash;
                         _cloudHistoryValid = true;
+                        _cloudHistoryConfidenceFrames =
+                            PreviewCloudTemporalMoments.AdvanceConfidence(_cloudHistoryConfidenceFrames);
                     }
                     else if (updateHistory)
                     {
@@ -500,6 +994,18 @@ public sealed partial class OpenGlPreviewBackend
                 InvalidateCloudTemporalHistory();
             }
 
+            using (BeginPassTimerScope(GlGpuTimerScope.CloudRepair))
+            {
+                _ = TryApplyCloudEdgeRepair(
+                    ref frame,
+                    invViewProj,
+                    layerWorldY,
+                    profile,
+                    useSceneDepth,
+                    windOffset,
+                    cirrusWindOffset);
+            }
+
             if (!deferComposite)
             {
                 using (BeginPassTimerScope(GlGpuTimerScope.CloudUpsample))
@@ -509,7 +1015,10 @@ public sealed partial class OpenGlPreviewBackend
             }
         }
 
-        _cloudFrameIndex = (_cloudFrameIndex + 1) % PreviewCloudTemporalJitter.Period;
+        _cloudFrameIndex = PreviewCloudTemporalJitter.AdvanceFrame(
+            _cloudFrameIndex,
+            settings.CloudDisableTemporal,
+            PreviewCloudSpatiotemporalBlueNoiseGenerator.FrameCount);
 
         if (useOffscreen && deferComposite)
         {
@@ -522,6 +1031,16 @@ public sealed partial class OpenGlPreviewBackend
             var godRays = frame.GodRayCaptureActive && _sceneCapture is { IsValid: true };
             EmitDiagnostic($"[3D preview] Curved-shell volumetric clouds active (sceneDepth={useSceneDepth}, " +
                 $"temporalResolve={useTemporalReproject}, cloudDepthHistory={useTemporalReproject}, godRays={godRays}, " +
+                $"volumetricPreset={PreviewVolumetricQuality.GetName(frame.Settings.VolumetricQuality)}, " +
+                $"cloudQuality={PreviewVolumetricQuality.Resolve(frame.Settings.VolumetricQuality).CloudQuality}, " +
+                $"cloudFormat={_cloudRenderFormatProfile.Name}, " +
+                $"trace={traceSize.Width}x{traceSize.Height}@{traceSize.Scale:0.###}, " +
+                "cloudColor=linear-trace-history/final-composite-encode, " +
+                $"stbn={_cloudStbnDiagnostic}, " +
+                $"stbnActive={CanUseCloudStbn(_useOpenGlEs, profile.CloudQuality, _cloudStbnTex is not null)}, " +
+                $"moments={_cloudMomentsDiagnostic}, " +
+                $"edgeRepair={_cloudEdgeRepairDiagnostic}, " +
+                $"historyConfidence={_cloudHistoryConfidenceFrames}/{PreviewCloudTemporalMoments.ConfidenceFrameCount}, " +
                 $"previewTaa={frame.Settings.EnablePreviewTaa}, warmupDraws={_cloudTierReadyWarmupDraws}, " +
                 $"noiseTex={_cloudNoiseTex is not null}, coverageMap={_cloudCoverageTex is not null}).");
         }
@@ -559,10 +1078,10 @@ public sealed partial class OpenGlPreviewBackend
         SetIntOnProgramLoc(program, cu.CoverageMap, 1);
         SetIntOnProgramLoc(program, cu.SkyViewLut, 2);
         SetIntOnProgramLoc(program, cu.DetailNoise, 3);
+        SetIntOnProgramLoc(program, cu.CloudStbn, 4);
         SetIntOnProgramLoc(program, cu.SceneDepth, 5);
 
         SetFloatOnProgramLoc(program, cu.SunIntensity, settings.AtmosphereSunIntensity);
-        SetFloatOnProgramLoc(program, cu.SkyExposure, settings.AtmosphereSkyExposure);
         SetFloatOnProgramLoc(program, cu.LayerHeight, layerWorldY);
         SetFloatOnProgramLoc(program, cu.VolumeHeight, settings.CloudVolumeHeight);
         SetFloatOnProgramLoc(program, cu.Density, settings.CloudDensity);
@@ -582,11 +1101,17 @@ public sealed partial class OpenGlPreviewBackend
         SetVec2OnProgramLoc(program, cu.CirrusWindDir, ComputeCirrusWindDirection(settings));
         SetIntOnProgramLoc(program, cu.HasSceneDepth, useSceneDepth ? 1 : 0);
         SetFloatOnProgramLoc(program, cu.FramePhase, jitterPhase);
+        SetIntOnProgramLoc(program, cu.CloudFrameIndex, _cloudFrameIndex);
         SetIntOnProgramLoc(program, cu.HasCloudNoise, _cloudNoiseTex is not null ? 1 : 0);
         SetIntOnProgramLoc(program, cu.HasDetailNoise, _cloudDetailTex is not null ? 1 : 0);
+        SetIntOnProgramLoc(
+            program,
+            cu.HasCloudStbn,
+            CanUseCloudStbn(_useOpenGlEs, profile.CloudQuality, _cloudStbnTex is not null) ? 1 : 0);
         SetIntOnProgramLoc(program, cu.HasCoverageMap, _cloudCoverageTex is not null ? 1 : 0);
         SetIntOnProgramLoc(program, cu.HasSkyLut, _atmoLutsValid && _atmoSkyViewTex != 0 ? 1 : 0);
-        SetIntOnProgramLoc(program, cu.HdrPresent, settings.HdrPresentActive ? 1 : 0);
+        SetIntOnProgramLoc(program, cu.CloudDataDirect,
+            _cloudRenderFormatProfile.UsesDirectMetadata ? 1 : 0);
 
         if (_cloudNoiseTex is not null)
         {
@@ -601,6 +1126,11 @@ public sealed partial class OpenGlPreviewBackend
         if (_cloudDetailTex is not null)
         {
             _cloudDetailTex.Bind(3);
+        }
+
+        if (_cloudStbnTex is not null)
+        {
+            _cloudStbnTex.Bind(4);
         }
 
         if (_atmoLutsValid && _atmoSkyViewTex != 0)
@@ -640,8 +1170,7 @@ public sealed partial class OpenGlPreviewBackend
         gl.GetBoolean(GetPName.ColorWritemask, priorColorMask);
 
         resolve.BindDraw();
-        gl.ClearColor(0f, 0f, 0f, 0f);
-        gl.Clear(ClearBufferMask.ColorBufferBit);
+        resolve.Clear();
         gl.Disable(EnableCap.Blend);
         gl.Disable(EnableCap.DepthTest);
         gl.Disable(EnableCap.ScissorTest);
@@ -662,6 +1191,9 @@ public sealed partial class OpenGlPreviewBackend
         gl.ActiveTexture(TextureUnit.Texture3);
         gl.BindTexture(TextureTarget.Texture2D, history.DataTextureHandle);
         SetIntOnProgramLoc(program, tu.HistoryCloudData, 3);
+        gl.ActiveTexture(TextureUnit.Texture4);
+        gl.BindTexture(TextureTarget.Texture2D, history.MomentTextureHandle);
+        SetIntOnProgramLoc(program, tu.HistoryCloudMoments, 4);
 
         SetMatrixOnProgramLoc(program, tu.InvViewProj, invViewProj);
         SetMatrixOnProgramLoc(program, tu.PrevViewProj, _cloudPrevViewProj);
@@ -675,7 +1207,21 @@ public sealed partial class OpenGlPreviewBackend
             new Vector2(1f / Math.Max(current.Width, 1), 1f / Math.Max(current.Height, 1)));
         SetFloatOnProgramLoc(program, tu.TemporalWeight,
             PreviewVolumetricQuality.EffectivePassTemporalWeight(profile.CloudTemporalWeight, frame.Settings));
+        var momentProfile = PreviewCloudTemporalMoments.Resolve(profile.CloudQuality);
+        var useMoments = momentProfile.Enabled &&
+            _cloudRenderFormatProfile.UsesTemporalMoments &&
+            resolve.MomentTextureHandle != 0 &&
+            history.MomentTextureHandle != 0;
+        SetFloatOnProgramLoc(program, tu.MomentSigma, momentProfile.Sigma);
+        SetFloatOnProgramLoc(program, tu.MomentMinBand, momentProfile.MinimumBand);
+        SetFloatOnProgramLoc(program, tu.HistoryConfidence,
+            useMoments
+                ? PreviewCloudTemporalMoments.ResolveConfidence(_cloudHistoryConfidenceFrames)
+                : 1f);
         SetIntOnProgramLoc(program, tu.HasHistory, _cloudHistoryValid ? 1 : 0);
+        SetIntOnProgramLoc(program, tu.HasMoments, useMoments ? 1 : 0);
+        SetIntOnProgramLoc(program, tu.CloudDataDirect,
+            _cloudRenderFormatProfile.UsesDirectMetadata ? 1 : 0);
 
         FlushPendingGlErrors(gl);
         gl.BindVertexArray(_cloudQuadVao);
@@ -726,9 +1272,17 @@ public sealed partial class OpenGlPreviewBackend
         hash.Add(settings.CloudMarchStepOverride);
         hash.Add(settings.CloudFreezeWind);
         hash.Add(settings.AtmosphereSunIntensity);
-        hash.Add(settings.AtmosphereSkyExposure);
+        hash.Add(PreviewCloudSpatiotemporalBlueNoiseGenerator.AssetVersion);
         return hash.ToHashCode();
     }
+
+    internal static bool CanUseCloudStbn(
+        bool useOpenGlEs,
+        int cloudQuality,
+        bool assetAvailable) =>
+        !useOpenGlEs &&
+        cloudQuality >= PreviewVolumetricQuality.High &&
+        assetAvailable;
 
     /// <summary>
     /// World-space wind drift for the cloud field. Components wrap at the weather-map period
@@ -810,6 +1364,16 @@ public sealed partial class OpenGlPreviewBackend
             SetVec3OnProgramLoc(program, upu.CameraPos, frame.Eye);
             SetFloatOnProgramLoc(program, upu.GroundWorldY, PreviewStageConstants.GroundPlaneWorldY);
             SetFloatOnProgramLoc(program, upu.PlanetRadius, PreviewStageConstants.CloudPlanetRadius);
+            SetIntOnProgramLoc(program, upu.CloudDataDirect,
+                source.Profile.UsesDirectMetadata ? 1 : 0);
+            SetFloatOnProgramLoc(program, upu.CloudExposure, frame.Settings.AtmosphereSkyExposure);
+            SetIntOnProgramLoc(program, upu.HdrPresent, frame.Settings.HdrPresentActive ? 1 : 0);
+            SetIntOnProgramLoc(program, upu.ApplyCloudEncoding,
+                frame.Settings.CloudDebugView == PreviewCloudDebugView.Off ? 1 : 0);
+            SetIntOnProgramLoc(
+                program,
+                upu.CloudSourceFullResolution,
+                ReferenceEquals(source, _cloudRepairTarget) ? 1 : 0);
             if (hasDepth)
             {
                 gl.ActiveTexture(TextureUnit.Texture1);
@@ -820,6 +1384,19 @@ public sealed partial class OpenGlPreviewBackend
         else
         {
             SetIntOnProgramLoc(program, _cloudCompositeUniformLocs.Rays, 0);
+            SetIntOnProgramLoc(program, _cloudCompositeUniformLocs.CloudPresent, 1);
+            SetFloatOnProgramLoc(
+                program,
+                _cloudCompositeUniformLocs.CloudExposure,
+                frame.Settings.AtmosphereSkyExposure);
+            SetIntOnProgramLoc(
+                program,
+                _cloudCompositeUniformLocs.HdrPresent,
+                frame.Settings.HdrPresentActive ? 1 : 0);
+            SetIntOnProgramLoc(
+                program,
+                _cloudCompositeUniformLocs.ApplyCloudEncoding,
+                frame.Settings.CloudDebugView == PreviewCloudDebugView.Off ? 1 : 0);
         }
 
         gl.DrawArrays(PrimitiveType.Triangles, 0, 6);

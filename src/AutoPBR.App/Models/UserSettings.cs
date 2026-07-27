@@ -221,6 +221,9 @@ public sealed class UserSettings
     /// <summary>Hard Full-detail terrain chunk radius (Chebyshev).</summary>
     public int Preview3DChunkViewDistance { get; set; } = 8;
 
+    /// <summary>Extra distant LOD chunk ring beyond hard view distance.</summary>
+    public int Preview3DLodRingChunks { get; set; } = 16;
+
     /// <summary>Deterministic seed for streamed preview terrain.</summary>
     public int Preview3DWorldSeed { get; set; } = 0x41504252;
 
@@ -275,7 +278,7 @@ public sealed class UserSettings
     /// <summary>When true, 3D preview applies LabPBR-style specular / metal interpretation (_s).</summary>
     public bool Preview3DEnableSpecularMap { get; set; } = true;
 
-    /// <summary>Genesis: shader-side parallax displacement scalar (height strength, 0..1).</summary>
+    /// <summary>Genesis: shader-side parallax displacement scalar (height strength, 0..4).</summary>
     public double Preview3DParallaxHeightStrength { get; set; } = 0.05;
 
     /// <summary>Genesis POM: primary height-field march layers (8..128).</summary>
@@ -290,7 +293,7 @@ public sealed class UserSettings
     /// <summary>Genesis POM: receiver-side self-shadow softness (0..4).</summary>
     public double Preview3DParallaxShadowSoftness { get; set; } = 1.25;
 
-    /// <summary>Genesis POM: maximum UV travel allowed for one trace (0.05..0.75).</summary>
+    /// <summary>Genesis POM: maximum UV travel allowed for one trace (0.05..4).</summary>
     public double Preview3DParallaxMaxUvShift { get; set; } = 0.45;
 
     /// <summary>Genesis high-end preview: tessellate triangles and displace height-map protrusions outward.</summary>

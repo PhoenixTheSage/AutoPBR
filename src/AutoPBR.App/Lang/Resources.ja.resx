@@ -1083,6 +1083,9 @@
   <data name="Preview3DVolumetricQualityHigh" xml:space="preserve">
     <value>高い</value>
   </data>
+  <data name="Preview3DVolumetricQualityCinematic" xml:space="preserve">
+    <value>シネマティック</value>
+  </data>
   <data name="Preview3DParallaxAoStrength" xml:space="preserve">
     <value>POMコンタクトAO</value>
   </data>

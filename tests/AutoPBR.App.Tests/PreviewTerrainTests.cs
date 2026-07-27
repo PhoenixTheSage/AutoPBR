@@ -481,22 +481,40 @@ public sealed class PreviewTerrainTests
     }
 
     [Fact]
-    public void BakeLodChunk_uses_Top_only_batch()
+    public void BakeLodChunk_flat_pad_uses_Top_batch()
     {
         var lod = PreviewTerrainLodMeshBaker.BakeLodChunk(new TerrainChunkKey(0, 0));
         Assert.NotNull(lod);
-        Assert.Single(lod.DrawBatches);
-        Assert.Equal(PreviewTerrainGrassSlots.Top, lod.DrawBatches[0].MaterialIndex);
+        Assert.NotEmpty(lod.DrawBatches);
+        Assert.All(lod.DrawBatches, b => Assert.InRange(b.MaterialIndex, 0, PreviewTerrainGrassSlots.MaxCount - 1));
+        Assert.Contains(lod.DrawBatches, b => b.MaterialIndex == PreviewTerrainGrassSlots.Top);
+    }
+
+    [Fact]
+    public void BakeLodChunk_emits_biome_material_slots_outside_flat_pad()
+    {
+        var settings = new PreviewTerrainGrassBakeSettings(
+            PreviewTerrainGrassMode.BlockModelFaces,
+            BetterGrassEnabled: true,
+            EmitOverlay: true,
+            HasStone: true,
+            HasSand: true,
+            HasGravel: true);
+        var lod = PreviewTerrainLodMeshBaker.BakeLodChunk(new TerrainChunkKey(3, -2), grassSettings: settings);
+        Assert.NotNull(lod);
+        Assert.NotEmpty(lod.DrawBatches);
+        Assert.All(lod.DrawBatches, b => Assert.InRange(b.MaterialIndex, 0, PreviewTerrainGrassSlots.MaxCount - 1));
     }
 
     [Fact]
     public void TerrainChunkStreamer_desired_rings_match_view_distance()
     {
         using var streamer = new TerrainChunkStreamer();
-        streamer.Tick(new Vector3(8f, 2f, 8f), chunkViewDistance: 3);
+        streamer.Tick(new Vector3(8f, 2f, 8f), chunkViewDistance: 3, lodRingChunks: 6);
         var desired = streamer.SnapshotDesired();
         Assert.Equal(3, streamer.HardRadiusChunks);
-        Assert.Equal(3 + PreviewStageConstants.TerrainLodRingChunks, streamer.LodRadiusChunks);
+        Assert.Equal(6, streamer.LodRingChunks);
+        Assert.Equal(9, streamer.LodRadiusChunks);
 
         var cam = TerrainChunkKey.FromWorld(8f, 8f);
         Assert.True(desired.TryGetValue(cam, out var camKind));
@@ -513,6 +531,19 @@ public sealed class PreviewTerrainTests
         var outside = cam with { X = cam.X + streamer.UnloadRadiusChunks + 1 };
         Assert.False(desired.ContainsKey(outside));
         Assert.True(streamer.ShouldUnload(outside));
+    }
+
+    [Fact]
+    public void TerrainChunkStreamer_lod_ring_setting_extends_desired_radius()
+    {
+        using var streamer = new TerrainChunkStreamer();
+        streamer.Tick(new Vector3(0f, 2f, 0f), chunkViewDistance: 2, lodRingChunks: 10);
+        Assert.Equal(12, streamer.LodRadiusChunks);
+        var desired = streamer.SnapshotDesired();
+        var cam = TerrainChunkKey.FromWorld(0f, 0f);
+        Assert.True(desired.TryGetValue(cam with { X = cam.X + 8 }, out var lodKind));
+        Assert.Equal(TerrainChunkLodKind.Lod, lodKind);
+        Assert.False(desired.ContainsKey(cam with { X = cam.X + 13 }));
     }
 
     [Fact]

@@ -4,6 +4,7 @@
 // camera is inside cloud. Four-tap reconstruction rejects taps across scene-depth edges.
 
 //!include "common/cloud_temporal.glsl"
+//!include "common/cloud_present.glsl"
 //!include "common/cloud_shell.glsl"
 //!include "common/ray_reconstruct.glsl"
 //!include "common/cloud_scene_depth.glsl"
@@ -18,6 +19,11 @@ uniform vec3 uCameraPos;
 uniform float uGroundWorldY;
 uniform float uPlanetRadius;
 uniform int uHasSceneDepth;
+uniform int uCloudDataDirect;
+uniform float uCloudExposure;
+uniform int uHdrPresent;
+uniform int uApplyCloudEncoding;
+uniform int uCloudSourceFullResolution;
 out vec4 FragColor;
 
 const float CLOUD_HORIZON_FEATHER = 0.0025;
@@ -43,15 +49,16 @@ float sceneDepthWeight(float centerDepth, vec2 tapUv)
 float cloudTapSceneVisibility(float sceneDistance, vec2 tapUv)
 {
     vec4 cloudData = texture(uCloudData, tapUv);
-    if (cloudData.a < 0.5)
+    if (!ctMetadataValid(cloudData, uCloudDataDirect))
     {
         return 0.0;
     }
 
-    return csdCloudInFrontOfScene(ctDecodeDistance(cloudData.rg), sceneDistance);
+    return csdCloudInFrontOfScene(
+        ctMetadataDistance(cloudData, uCloudDataDirect), sceneDistance);
 }
 
-float cloudPlanetVisibility(vec3 rayDir)
+float cloudPlanetReconstructionMask(vec3 rayDir)
 {
     float planetRadius = max(uPlanetRadius, 1.0);
     vec3 planetCenter = vec3(0.0, uGroundWorldY - planetRadius, 0.0);
@@ -60,11 +67,16 @@ float cloudPlanetVisibility(vec3 rayDir)
     vec4 cloudData = texture(uCloudData, vUv);
 
     if (planetDistance < 1e8 &&
-        (cloudData.a < 0.5 || ctDecodeDistance(cloudData.rg) >= planetDistance -
+        (!ctMetadataValid(cloudData, uCloudDataDirect) ||
+            ctMetadataDistance(cloudData, uCloudDataDirect) >= planetDistance -
             max(0.04, planetDistance * 0.002)))
     {
-        return vcsPlanetHorizonVisibility(
+        float horizonVisibility = vcsPlanetHorizonVisibility(
             uCameraPos, rayDir, planetCenter, planetRadius, CLOUD_HORIZON_FEATHER);
+        // Trace/history already contain the atmospheric horizon fade. Reconstruction only
+        // rejects fully hidden far-side samples; applying the full visibility again creates
+        // a quarter-opacity stripe at the tangent.
+        return horizonVisibility > 1e-4 ? 1.0 : 0.0;
     }
 
     return 1.0;
@@ -72,7 +84,9 @@ float cloudPlanetVisibility(vec3 rayDir)
 
 void main()
 {
-    vec2 o = uCloudTexelSize * 0.5;
+    vec2 o = uCloudSourceFullResolution > 0
+        ? vec2(0.0)
+        : uCloudTexelSize * 0.5;
     vec2 uv0 = vUv + vec2(-o.x, -o.y);
     vec2 uv1 = vUv + vec2(o.x, -o.y);
     vec2 uv2 = vUv + vec2(-o.x, o.y);
@@ -85,8 +99,8 @@ void main()
     vec3 rayDir = grWorldRayDir(vUv, uInvViewProj, uCameraPos);
     float sceneDistance = csdSceneRayDistanceFromDepth(
         centerDepth, vUv, uInvViewProj, uCameraPos, rayDir, uHasSceneDepth);
-    float planetVisibility = cloudPlanetVisibility(rayDir);
-    if (planetVisibility <= 1e-3)
+    float planetMask = cloudPlanetReconstructionMask(rayDir);
+    if (planetMask <= 1e-3)
     {
         discard;
     }
@@ -112,5 +126,7 @@ void main()
 
     // Cloud RGB is premultiplied integrated radiance, so filter it directly with opacity.
     vec3 rgb = (c0.rgb * w0 + c1.rgb * w1 + c2.rgb * w2 + c3.rgb * w3) / wSum;
-    FragColor = vec4(rgb, coverage) * planetVisibility;
+    vec3 presentedRgb = cpEncodeCloudRadiance(
+        rgb, coverage, uCloudExposure, uHdrPresent, uApplyCloudEncoding);
+    FragColor = vec4(presentedRgb, coverage) * planetMask;
 }

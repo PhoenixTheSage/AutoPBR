@@ -1251,6 +1251,9 @@
   <data name="Preview3DVolumetricQualityHigh" xml:space="preserve">
     <value>Hoch</value>
   </data>
+  <data name="Preview3DVolumetricQualityCinematic" xml:space="preserve">
+    <value>Kinematisch</value>
+  </data>
   <data name="Preview3DParallaxAoStrength" xml:space="preserve">
     <value>POM kontaktieren Sie AO</value>
   </data>

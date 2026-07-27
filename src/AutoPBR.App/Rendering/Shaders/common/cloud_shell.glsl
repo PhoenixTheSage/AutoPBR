@@ -96,9 +96,10 @@ float vcsPlanetOcclusionDistance(vec3 ro, vec3 rd, vec3 center, float planetRadi
     return 1e9;
 }
 
-// Soft visibility at the geometric planet horizon. Feather is expressed in direction
-// cosine space and is intentionally tiny; it hides half-resolution stair-stepping while
-// still allowing the cloud deck to appear to recede a few pixels behind the horizon.
+// Soft visibility at the geometric planet horizon. Most of the transition is biased behind
+// the tangent: a cloud reaching the visible horizon stays nearly opaque, then fades over a
+// few pixels on the far side. Centering the fade at 50% on the tangent creates a dark stripe
+// when the same reconstructed cloud spans both sides of the horizon.
 float vcsPlanetHorizonVisibility(vec3 ro, vec3 rd, vec3 center, float planetRadius, float feather)
 {
     vec3 oc = ro - center;
@@ -113,7 +114,7 @@ float vcsPlanetHorizonVisibility(vec3 ro, vec3 rd, vec3 center, float planetRadi
     float horizonMu = -sqrt(max(1.0 - radiusRatio * radiusRatio, 0.0));
     float viewMu = dot(normalize(rd), localUp);
     float width = max(feather, 1e-5);
-    return smoothstep(horizonMu - width, horizonMu + width, viewMu);
+    return smoothstep(horizonMu - width * 2.0, horizonMu + width * 0.25, viewMu);
 }
 
 #endif // GENESIS_CLOUD_SHELL_GLSL

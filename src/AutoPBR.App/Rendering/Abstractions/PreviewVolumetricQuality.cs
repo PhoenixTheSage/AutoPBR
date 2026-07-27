@@ -1,8 +1,15 @@
 namespace AutoPBR.App.Rendering.Abstractions;
 
-/// <summary>Low / medium / high volumetric effect cost profiles for froxel god rays and clouds.</summary>
+/// <summary>Volumetric effect cost profiles for froxel god rays and clouds.</summary>
 public static class PreviewVolumetricQuality
 {
+    public const int Low = 0;
+    public const int Medium = 1;
+    public const int High = 2;
+    public const int Cinematic = 3;
+    public const int Minimum = Low;
+    public const int Maximum = Cinematic;
+
     public readonly record struct Profile(
         int FroxelDivisor,
         int FroxelMinSize,
@@ -35,19 +42,37 @@ public static class PreviewVolumetricQuality
         float SilhouetteHistoryWeight,
         float FxaaEdgeStrength);
 
-    public static Profile Resolve(int quality) =>
-        Math.Clamp(quality, 0, 2) switch
+    public static int Clamp(int quality) => Math.Clamp(quality, Minimum, Maximum);
+
+    public static string GetName(int quality) =>
+        Clamp(quality) switch
         {
-            0 => new Profile(FroxelDivisor: 8, FroxelMinSize: 24, FroxelSlices: 12, FroxelDepthExp: 0f,
-                FroxelTemporal3DWeight: 0f, CloudTemporalWeight: 0f, CloudQuality: 0,
+            Low => nameof(Low),
+            High => nameof(High),
+            Cinematic => nameof(Cinematic),
+            _ => nameof(Medium),
+        };
+
+    public static Profile Resolve(int quality) =>
+        Clamp(quality) switch
+        {
+            Low => new Profile(FroxelDivisor: 8, FroxelMinSize: 24, FroxelSlices: 12, FroxelDepthExp: 0f,
+                FroxelTemporal3DWeight: 0f, CloudTemporalWeight: 0f, CloudQuality: Low,
                 VolumeIntegrateTemporalWeight: 0f, UpsampleTemporalWeight: 0f,
                 PreviewTaaWeight: 0f, PreviewTaaJitterScale: 0f),
-            2 => new Profile(FroxelDivisor: 3, FroxelMinSize: 48, FroxelSlices: 24, FroxelDepthExp: 4.2f,
-                FroxelTemporal3DWeight: 0.38f, CloudTemporalWeight: 0.55f, CloudQuality: 2,
+            High => new Profile(FroxelDivisor: 3, FroxelMinSize: 48, FroxelSlices: 24, FroxelDepthExp: 4.2f,
+                FroxelTemporal3DWeight: 0.38f, CloudTemporalWeight: 0.72f, CloudQuality: High,
+                VolumeIntegrateTemporalWeight: 0.42f, UpsampleTemporalWeight: 0.55f,
+                PreviewTaaWeight: 0.84f, PreviewTaaJitterScale: 1.0f),
+            Cinematic => new Profile(
+                // CQ1 keeps fog/god-ray froxels at the accepted High cost. Cinematic raises only
+                // cloud quality until dedicated CQ3 profiles are implemented.
+                FroxelDivisor: 3, FroxelMinSize: 48, FroxelSlices: 24, FroxelDepthExp: 4.2f,
+                FroxelTemporal3DWeight: 0.38f, CloudTemporalWeight: 0.84f, CloudQuality: Cinematic,
                 VolumeIntegrateTemporalWeight: 0.42f, UpsampleTemporalWeight: 0.55f,
                 PreviewTaaWeight: 0.84f, PreviewTaaJitterScale: 1.0f),
             _ => new Profile(FroxelDivisor: 4, FroxelMinSize: 32, FroxelSlices: 20, FroxelDepthExp: 2.8f,
-                FroxelTemporal3DWeight: 0.28f, CloudTemporalWeight: 0.42f, CloudQuality: 1,
+                FroxelTemporal3DWeight: 0.28f, CloudTemporalWeight: 0.42f, CloudQuality: Medium,
                 VolumeIntegrateTemporalWeight: 0.35f, UpsampleTemporalWeight: 0.45f,
                 PreviewTaaWeight: 0.78f, PreviewTaaJitterScale: 1.0f),
         };

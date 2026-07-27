@@ -66,6 +66,11 @@ public sealed class PreviewRenderSettings
     /// </summary>
     public int ChunkViewDistance { get; init; } = 8;
 
+    /// <summary>
+    /// Extra Chebyshev chunks beyond <see cref="ChunkViewDistance"/> kept as distant LOD meshes.
+    /// </summary>
+    public int LodRingChunks { get; init; } = 16;
+
     /// <summary>Deterministic world seed for streamed terrain (pad under subject stays flat).</summary>
     public int TerrainWorldSeed { get; init; } = 0x41504252;
 
@@ -107,7 +112,7 @@ public sealed class PreviewRenderSettings
     /// <summary>Genesis POM: receiver-side softness for parallax self-shadow visibility.</summary>
     public float ParallaxShadowSoftness { get; init; } = 1.25f;
 
-    /// <summary>Genesis POM: maximum UV travel allowed for one parallax trace.</summary>
+    /// <summary>Genesis POM: maximum UV travel allowed for one parallax trace (see PreviewStageConstants).</summary>
     public float ParallaxMaxUvShift { get; init; } = 0.45f;
 
     /// <summary>Genesis high-end preview: tessellate triangles and displace high height-map regions outward.</summary>

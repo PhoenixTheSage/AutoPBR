@@ -5,9 +5,14 @@
 
 // Contract published by the detailed cloud trace/temporal resolve:
 //   cloudColor.a = integrated view opacity
-//   cloudData.rg = packed representative distance
-//   cloudData.b = layer identity, cloudData.a = valid shell ray
-vec2 cstResolveViewSignal(sampler2D cloudColor, sampler2D cloudData, vec2 uv, int hasSignal)
+//   compatibility cloudData = packed RG distance, B layer identity, A validity
+//   desktop cloudData = direct R distance, G layer identity; negative G means invalid
+vec2 cstResolveViewSignal(
+    sampler2D cloudColor,
+    sampler2D cloudData,
+    vec2 uv,
+    int hasSignal,
+    int directMetadata)
 {
     if (hasSignal < 1)
     {
@@ -15,12 +20,12 @@ vec2 cstResolveViewSignal(sampler2D cloudColor, sampler2D cloudData, vec2 uv, in
     }
 
     vec4 data = texture(cloudData, uv);
-    if (data.a < 0.5)
+    if (!ctMetadataValid(data, directMetadata))
     {
         return vec2(0.0, 1e9);
     }
 
-    return vec2(saturate1(texture(cloudColor, uv).a), ctDecodeDistance(data.rg));
+    return vec2(saturate1(texture(cloudColor, uv).a), ctMetadataDistance(data, directMetadata));
 }
 
 // Treat the integrated detailed cloud as a thin extinction sheet at its representative

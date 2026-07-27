@@ -24,9 +24,11 @@ public sealed class TerrainChunkStreamer : IDisposable
     private CancellationTokenSource? _cts;
     private Task[]? _workers;
     private int _chunkViewDistance = PreviewStageConstants.TerrainDefaultChunkViewDistance;
+    private int _lodRingChunks = PreviewStageConstants.TerrainDefaultLodRingChunks;
     private TerrainChunkKey _cameraChunk;
     private TerrainChunkKey _lastDesiredCameraChunk;
     private int _lastDesiredViewDistance = int.MinValue;
+    private int _lastDesiredLodRingChunks = int.MinValue;
     private PreviewTerrainGrassBakeSettings _grassBakeSettings = PreviewTerrainGrassBakeSettings.BuiltIn;
     private PreviewTerrainWorldGenSettings _worldGenSettings = PreviewTerrainWorldGenSettings.Default;
     private PreviewTerrainVegetationBakePlan? _vegetationBakePlan;
@@ -95,9 +97,18 @@ public sealed class TerrainChunkStreamer : IDisposable
             PreviewStageConstants.TerrainMaxChunkViewDistance);
     }
 
+    public int LodRingChunks
+    {
+        get => _lodRingChunks;
+        set => _lodRingChunks = Math.Clamp(
+            value,
+            PreviewStageConstants.TerrainMinLodRingChunks,
+            PreviewStageConstants.TerrainMaxLodRingChunks);
+    }
+
     public int HardRadiusChunks => ChunkViewDistance;
 
-    public int LodRadiusChunks => ChunkViewDistance + PreviewStageConstants.TerrainLodRingChunks;
+    public int LodRadiusChunks => ChunkViewDistance + LodRingChunks;
 
     public int UnloadRadiusChunks =>
         LodRadiusChunks + PreviewStageConstants.TerrainUnloadHysteresisChunks;
@@ -176,13 +187,20 @@ public sealed class TerrainChunkStreamer : IDisposable
         Stop();
     }
 
-    public void Tick(Vector3 eye, int chunkViewDistance)
+    public void Tick(Vector3 eye, int chunkViewDistance, int? lodRingChunks = null)
     {
         ChunkViewDistance = chunkViewDistance;
+        if (lodRingChunks is int ring)
+        {
+            LodRingChunks = ring;
+        }
+
         var cam = TerrainChunkKey.FromWorld(eye.X, eye.Z);
         _cameraChunk = cam;
 
-        if (cam.Equals(_lastDesiredCameraChunk) && ChunkViewDistance == _lastDesiredViewDistance)
+        if (cam.Equals(_lastDesiredCameraChunk) &&
+            ChunkViewDistance == _lastDesiredViewDistance &&
+            LodRingChunks == _lastDesiredLodRingChunks)
         {
             return;
         }
@@ -208,6 +226,7 @@ public sealed class TerrainChunkStreamer : IDisposable
 
         _lastDesiredCameraChunk = cam;
         _lastDesiredViewDistance = ChunkViewDistance;
+        _lastDesiredLodRingChunks = LodRingChunks;
     }
 
     public IReadOnlyDictionary<TerrainChunkKey, TerrainChunkLodKind> SnapshotDesired()
@@ -309,7 +328,7 @@ public sealed class TerrainChunkStreamer : IDisposable
                 var vegetation = VegetationBakePlan;
                 PreviewTerrainChunkMesh? mesh = needLod == TerrainChunkLodKind.Full
                     ? PreviewTerrainMeshBaker.BakeFullChunk(jobKey, grassSettings, worldGen, vegetation)
-                    : PreviewTerrainLodMeshBaker.BakeLodChunk(jobKey, worldGen);
+                    : PreviewTerrainLodMeshBaker.BakeLodChunk(jobKey, worldGen, grassSettings, vegetation);
 
                 if (mesh is not null)
                 {

@@ -9,6 +9,10 @@ internal static class GlslSourceAdapter
 
     public static string Adapt(string source, ShaderType type, bool useOpenGlEs)
     {
+        // NVIDIA desktop GLSL and ANGLE both report unexpected EOF / end-of-shader syntax
+        // errors when comments contain en/em dashes or other non-ASCII bytes.
+        source = StripNonAscii(source);
+
         if (!useOpenGlEs)
         {
             return source;
@@ -16,10 +20,8 @@ internal static class GlslSourceAdapter
 
         if (!TryStripDesktopVersionHeader(source, out var body))
         {
-            return StripNonAscii(source);
+            return source;
         }
-
-        body = StripNonAscii(body);
 
         var prec = type == ShaderType.FragmentShader
             ? "precision highp float;\nprecision highp int;\n"
@@ -33,8 +35,8 @@ internal static class GlslSourceAdapter
         return "#version 300 es\n" + prec + "#define GENESIS_GLES 1\n" + body;
     }
 
-    // ANGLE's GLSL ES lexer can choke on non-ASCII bytes (e.g. en/em dashes in comments),
-    // reporting a bogus "syntax error" at end-of-shader. Desktop GL tolerates them, ES does not.
+    // GLSL lexers (NVIDIA desktop + ANGLE ES) can choke on non-ASCII bytes in comments
+    // (e.g. en/em dashes), reporting a bogus "syntax error" / unexpected EOF at end-of-shader.
     // Replace every non-ASCII char with '-' so 1:1 length (and line/column) is preserved.
     internal static string StripNonAscii(string source)
     {

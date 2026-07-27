@@ -138,6 +138,7 @@ public sealed class GlGpuTimingSnapshotTests
         Assert.Contains("scene=0.03ms", diagnostic, StringComparison.Ordinal);
         Assert.Contains("cloudTrace=0.06ms", diagnostic, StringComparison.Ordinal);
         Assert.Contains("cloudTemporal=0.07ms", diagnostic, StringComparison.Ordinal);
+        Assert.Contains("cloudRepair=0ms", diagnostic, StringComparison.Ordinal);
         Assert.Contains("cloudUpsample=0.08ms", diagnostic, StringComparison.Ordinal);
         Assert.Contains("godRayInject=0.09ms", diagnostic, StringComparison.Ordinal);
         Assert.Contains("godRayIntegrate=0.1ms", diagnostic, StringComparison.Ordinal);
@@ -146,6 +147,32 @@ public sealed class GlGpuTimingSnapshotTests
         Assert.Contains("postOther=0.04ms", diagnostic, StringComparison.Ordinal);
         Assert.Contains("overlay=0.05ms", diagnostic, StringComparison.Ordinal);
         Assert.Contains("total=0.78ms", diagnostic, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CloudRepairTiming_IsReportedAndIncludedInPostTotal()
+    {
+        var snapshot = new GlGpuTimingSnapshot(
+            SetupMs: 0,
+            ShadowMs: 0,
+            SceneMs: 0,
+            PostMs: 0,
+            OverlayMs: 0,
+            CloudTraceMs: 0,
+            CloudTemporalMs: 0,
+            CloudUpsampleMs: 0,
+            GodRayInjectMs: 0,
+            GodRayIntegrateMs: 0,
+            GodRayResolveMs: 0,
+            TaaMs: 0,
+            CloudRepairMs: 0.25);
+
+        Assert.Equal(0.25, snapshot.PostTotalMs, precision: 6);
+        Assert.Equal(0.25, snapshot.TotalMs, precision: 6);
+        Assert.Contains("Cloud Repair 0.3 ms", snapshot.FormatHudLine(expanded: true),
+            StringComparison.Ordinal);
+        Assert.Contains("cloudRepair=0.25ms", snapshot.FormatDiagnostic(),
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -183,5 +210,3 @@ public sealed class GlGpuTimingSnapshotTests
         Assert.DoesNotContain("Cloud Upsample", afterDelay, StringComparison.Ordinal);
     }
 }
-
-

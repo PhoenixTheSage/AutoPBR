@@ -218,7 +218,7 @@
                                                     <StackPanel Spacing="8">
                                                         <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
                                                             <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DParallaxHeightStrength}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DParallaxHeightStrengthTooltip}" />
-                                                            <ctrls:OverlaySlider Grid.Column="1" Minimum="0.00" Maximum="1.00" SmallChange="0.005" LargeChange="0.05" TickFrequency="0.10" Value="{Binding Preview3DParallaxHeightStrength, Mode=TwoWay}" Increment="0.005" FormatString="F3" ToolTip.Tip="{Binding Strings.Preview3DParallaxHeightStrengthTooltip}" IsEnabled="{Binding Preview3DEnableParallax}" HorizontalAlignment="Left" />
+                                                            <ctrls:OverlaySlider Grid.Column="1" Minimum="{x:Static stage:PreviewStageConstants.ParallaxHeightStrengthMin}" Maximum="{x:Static stage:PreviewStageConstants.ParallaxHeightStrengthMax}" SmallChange="0.01" LargeChange="0.10" TickFrequency="0.50" Value="{Binding Preview3DParallaxHeightStrength, Mode=TwoWay}" Increment="0.01" FormatString="F3" ToolTip.Tip="{Binding Strings.Preview3DParallaxHeightStrengthTooltip}" IsEnabled="{Binding Preview3DEnableParallax}" HorizontalAlignment="Left" />
                                                         </Grid>
                                                         <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
                                                             <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DParallaxTraceLayers}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DParallaxTraceLayersTooltip}" />
@@ -230,7 +230,7 @@
                                                         </Grid>
                                                         <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
                                                             <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DParallaxMaxUvShift}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DParallaxMaxUvShiftTooltip}" />
-                                                            <ctrls:OverlaySlider Grid.Column="1" Minimum="0.05" Maximum="0.75" SmallChange="0.01" LargeChange="0.05" TickFrequency="0.10" Value="{Binding Preview3DParallaxMaxUvShift, Mode=TwoWay}" Increment="0.01" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DParallaxMaxUvShiftTooltip}" IsEnabled="{Binding Preview3DEnableParallax}" HorizontalAlignment="Left" />
+                                                            <ctrls:OverlaySlider Grid.Column="1" Minimum="{x:Static stage:PreviewStageConstants.ParallaxMaxUvShiftMin}" Maximum="{x:Static stage:PreviewStageConstants.ParallaxMaxUvShiftMax}" SmallChange="0.05" LargeChange="0.25" TickFrequency="0.50" Value="{Binding Preview3DParallaxMaxUvShift, Mode=TwoWay}" Increment="0.05" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DParallaxMaxUvShiftTooltip}" IsEnabled="{Binding Preview3DEnableParallax}" HorizontalAlignment="Left" />
                                                         </Grid>
                                                         <CheckBox IsChecked="{Binding Preview3DEnableParallaxShadow, Mode=TwoWay}"
                                                                   ToolTip.Tip="{Binding Strings.Preview3DEnableParallaxShadowTooltip}">
@@ -290,6 +290,21 @@
                                                                                     Value="{Binding Preview3DChunkViewDistance, Mode=TwoWay}"
                                                                                     Increment="1" FormatString="F0"
                                                                                     ToolTip.Tip="{Binding Strings.Preview3DChunkViewDistanceTooltip}"
+                                                                                    HorizontalAlignment="Left" />
+                                                            </Grid>
+                                                            <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                                                           Text="{Binding Strings.Preview3DDistantLod}"
+                                                                           TextWrapping="Wrap"
+                                                                           ToolTip.Tip="{Binding Strings.Preview3DDistantLodTooltip}" />
+                                                                <ctrls:OverlaySlider Grid.Column="1"
+                                                                                    Minimum="2" Maximum="32"
+                                                                                    SmallChange="1" LargeChange="2"
+                                                                                    TickFrequency="1"
+                                                                                    IsSnapToTickEnabled="True"
+                                                                                    Value="{Binding Preview3DLodRingChunks, Mode=TwoWay}"
+                                                                                    Increment="1" FormatString="F0"
+                                                                                    ToolTip.Tip="{Binding Strings.Preview3DDistantLodTooltip}"
                                                                                     HorizontalAlignment="Left" />
                                                             </Grid>
                                                             <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="10" MinWidth="0">

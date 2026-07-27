@@ -139,6 +139,47 @@ public sealed class PreviewTerrainTreePlacementTests
     }
 
     [Fact]
+    public void BakeLodChunk_with_vegetation_emits_leaf_or_log_batches()
+    {
+        var plan = MakeOakPlan();
+        var grass = PreviewTerrainGrassBakeSettings.BuiltIn with
+        {
+            VegetationIdentity = plan.Identity,
+        };
+
+        PreviewTerrainChunkMesh? meshWithTrees = null;
+        for (var seed = 1; seed < 400 && meshWithTrees is null; seed++)
+        {
+            var gen = PreviewTerrainWorldGenSettings.Default with { Seed = seed };
+            for (var cz = 2; cz <= 8 && meshWithTrees is null; cz++)
+            {
+                for (var cx = 2; cx <= 8 && meshWithTrees is null; cx++)
+                {
+                    var mesh = PreviewTerrainLodMeshBaker.BakeLodChunk(
+                        new TerrainChunkKey(cx, cz),
+                        gen,
+                        grass,
+                        plan);
+                    if (mesh is null)
+                    {
+                        continue;
+                    }
+
+                    if (mesh.DrawBatches.Any(b => b.MaterialIndex >= PreviewTerrainGrassSlots.VegetationBase))
+                    {
+                        meshWithTrees = mesh;
+                    }
+                }
+            }
+        }
+
+        Assert.NotNull(meshWithTrees);
+        Assert.Contains(
+            meshWithTrees.DrawBatches,
+            b => b.MaterialIndex >= PreviewTerrainGrassSlots.VegetationBase);
+    }
+
+    [Fact]
     public void BakeFullChunk_without_vegetation_identity_skips_trees()
     {
         var plan = MakeOakPlan();

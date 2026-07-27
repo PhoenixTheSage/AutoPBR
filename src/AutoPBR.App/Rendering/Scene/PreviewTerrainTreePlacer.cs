@@ -2,7 +2,7 @@
 namespace AutoPBR.App.Rendering.Scene;
 
 /// <summary>
-/// Deterministic biome-aware tree / cactus placement for Full terrain chunks.
+/// Deterministic biome-aware tree / cactus placement for Full and distant LOD terrain chunks.
 /// Skips the subject flat pad and requires a vegetation bake plan with textures.
 /// </summary>
 public static class PreviewTerrainTreePlacer

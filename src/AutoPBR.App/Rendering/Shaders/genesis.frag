@@ -86,6 +86,10 @@ uniform float uAtmosphereSunIntensity;
 uniform float uAerialFogStrength;
 uniform float uTerrainFogStart;
 uniform float uTerrainFogEnd;
+uniform float uTurbidity;
+uniform float uHorizonFalloff;
+uniform float uGroundWorldY;
+uniform float uSkyExposure;
 
 // Genesis directional shadow map (Phase 2).
 uniform mat4  uLightViewProj;
@@ -217,18 +221,25 @@ vec3 applyTerrainAerialFog(vec3 color)
     // Smoothstep so the LOD unload rim softens instead of a hard pop.
     fogT = fogT * fogT * (3.0 - 2.0 * fogT);
     float fogAmt = fogT * saturate1(uAerialFogStrength) * 0.92;
-    vec3 fogCol = previewAerialFogRadiance(
+    // Same linear procedural sky as the dome, then present-match before post-tonemap mix.
+    vec3 fogLin = previewAerialFogRadiance(
         vWorldPos, uCameraPos, uLightDir, uLightColor, uAtmosphereSunIntensity,
-        uSkyTint, uGroundTint, uEnableAtmosphericSky, uAtmoSkyViewLut);
+        uSkyTint, uGroundTint, uEnableAtmosphericSky, uTurbidity, uHorizonFalloff,
+        uGroundWorldY, uAtmoSkyViewLut) * uSkyExposure * 1.4;
+    vec3 fogCol;
     if (uHdrPresent > 0)
     {
-        // Fog is authored for SDR post-ACES mixing. presentEncodeScRgb then multiplies those
-        // midtones by paperWhite/80, which turns the night LOD band into a bright HDR slab.
-        // Undo that scale while the scene light is moon-dim so night matches SDR.
+        fogCol = tonemapAcesNarkowicz(fogLin);
+        // presentEncodeScRgb multiplies midtones by paperWhite/80, which turns the night LOD
+        // band into a bright HDR slab. Undo that scale while the scene light is moon-dim.
         float lightLum = dot(uLightColor, vec3(0.2126, 0.7152, 0.0722));
         float nightAmt = 1.0 - smoothstep(0.08, 0.72, lightLum);
         float paperScale = max(uHdrPaperWhiteNits, 80.0) / 80.0;
         fogCol *= mix(1.0, 1.0 / max(paperScale, 1.0), nightAmt);
+    }
+    else
+    {
+        fogCol = skyTonemapLum(fogLin);
     }
     return mix(color, fogCol, fogAmt);
 }
@@ -281,12 +292,15 @@ void main()
     vec2 uvDisp = vUv;
     vec2 uv = vUv;
     float pomDepth = 0.0;
+    float pomStrengthEff = pomStrengthTrace;
 #if defined(GENESIS_ENABLE_POM)
     bool  pomActive = pomActiveEarly;
     if (pomActive)
     {
-        // Trace in tile-local space; height/albedo/normal/spec samples wrap so repeated ground tiles and cube-face edges stay seamless.
-        uvDisp = traceParallaxPom(uHeight, vUv, Vtan, pomStrengthTrace, uvDx, uvDy, pomDepth);
+        // Ground uses world-continuous UVs (march across tiles). Subject faces stay tile-bounded.
+        // pomStrengthEff is strength after UV-travel limiting - keep shadow/AO on the same scale.
+        uvDisp = traceParallaxPom(
+            uHeight, vUv, Vtan, pomStrengthTrace, uIsGroundPass > 0, pomDepth, pomStrengthEff);
         uv = uvDisp;
     }
 #else
@@ -344,14 +358,14 @@ void main()
 #if defined(GENESIS_ENABLE_POM_SHADOW)
         if (genesisEnableParallaxShadow(uEnableParallaxShadow) > 0)
         {
-            float tracedShadow = traceParallaxShadow(uHeight, uv, Ltan, pomDepth, pomStrengthTrace, uvDx, uvDy);
+            float tracedShadow = traceParallaxShadow(uHeight, uv, Ltan, pomDepth, pomStrengthEff, uvDx, uvDy);
             pomShadow = mix(1.0, tracedShadow, groundPomFade);
         }
 #endif
 #if defined(GENESIS_ENABLE_POM_AO)
         if (genesisEnableParallaxAo(uEnableParallaxAo) > 0)
         {
-            float tracedAo = traceParallaxAo(uHeight, uv, pomDepth, pomStrengthTrace, uParallaxAoStrength, uvDx, uvDy);
+            float tracedAo = traceParallaxAo(uHeight, uv, pomDepth, pomStrengthEff, uParallaxAoStrength, uvDx, uvDy);
             pomAo = mix(1.0, tracedAo, groundPomFade);
         }
 #endif
@@ -425,8 +439,8 @@ void main()
     vec3 emission = albedoLinear * mat.emissionStrength * uEmissionStrength;
 
     vec3 hdr = (direct + indirect + emission) * uExposure;
-    // Aerial fog colors are authored for post-ACES mixing (SDR). Apply fog there for both
-    // paths; HDR inverts ACES so presentEncodeScRgb's tonemap restores the same midtones.
+    // Aerial fog samples procedural sky (linear), present-matches (skyTonemapLum / ACES),
+    // then mixes in post-tonemap space. HDR inverts ACES so presentEncodeScRgb restores midtones.
     vec3 foggedMapped = applyTerrainAerialFog(tonemapAcesNarkowicz(hdr));
     vec3 outRgb;
     if (uHdrPresent > 0)

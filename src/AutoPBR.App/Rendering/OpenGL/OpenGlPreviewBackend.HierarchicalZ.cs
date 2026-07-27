@@ -206,7 +206,8 @@ public sealed partial class OpenGlPreviewBackend
             cameraChunk,
             frame.Settings.ChunkViewDistance,
             worldGen,
-            _terrainOccluderWorldGenRevision);
+            _terrainOccluderWorldGenRevision,
+            frame.Settings.LodRingChunks);
         _terrainOccluderAtlas.PumpUpload();
         if (_terrainOccluderAtlas.IsValid)
         {
@@ -245,12 +246,14 @@ public sealed partial class OpenGlPreviewBackend
         _terrainOccluderAtlas ??= new GlTerrainOccluderAtlas(gl);
         PreviewTerrainWorldGenSettings worldGen;
         int viewDistance;
+        int lodRingChunks;
         float eyeX;
         float eyeZ;
         lock (_sync)
         {
             worldGen = _terrainWorldGenSettings;
             viewDistance = _settings.ChunkViewDistance;
+            lodRingChunks = _settings.LodRingChunks;
             if (_flyEngaged)
             {
                 eyeX = _flyPosition.X;
@@ -271,7 +274,8 @@ public sealed partial class OpenGlPreviewBackend
             cameraChunk,
             viewDistance,
             _terrainStreamer.WorldGenSettings,
-            _terrainOccluderWorldGenRevision);
+            _terrainOccluderWorldGenRevision,
+            lodRingChunks);
         _terrainOccluderAtlas.PumpUpload();
     }
 

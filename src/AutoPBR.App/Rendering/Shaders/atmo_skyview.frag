@@ -15,7 +15,10 @@ void main()
 {
     vec3 viewDir = skyViewDirFromLutUv(vUv);
 
-    vec3 trans = srgbToLinear(texture(uTransmittanceLut, vec2(vUv.x, clamp(vUv.y, 0.0, 1.0))).rgb);
+    // Transmittance LUT varies with elevation only. Sampling it with azimuth UV previously
+    // pulled ClampToEdge left/right columns apart at the sky-view wrap, baking a meridian seam
+    // into cloud ambient / IBL even though both edge view directions are identical.
+    vec3 trans = srgbToLinear(texture(uTransmittanceLut, vec2(0.5, clamp(vUv.y, 0.0, 1.0))).rgb);
     vec3 col = skyDayRadiance(viewDir, uSunDir, uSunIntensity, uTurbidity, uHorizonFalloff, 1.0);
     col *= mix(vec3(1.0), trans + vec3(0.06), 0.35);
 

@@ -1,5 +1,5 @@
 // Final present encode helpers (SDR vs scRGB HDR).
-// No #version — included from entry fragments only.
+// No #version - included from entry fragments only.
 
 #ifndef GENESIS_PRESENT_ENCODE_GLSL
 #define GENESIS_PRESENT_ENCODE_GLSL
