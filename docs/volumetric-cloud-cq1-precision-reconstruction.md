@@ -1,6 +1,6 @@
 # CQ1 — Volumetric cloud precision and reconstruction
 
-**Status:** In progress
+**Status:** Complete (accepted 2026-07-28)
 **Roadmap:** [Volumetric cloud quality roadmap](volumetric-cloud-quality-roadmap.md)  
 **Implementation handoff:** [Volumetric cloud implementation handoff](volumetric-cloud-implementation-handoff.md)
 **Depends on:** Green build and recorded Phase 6 baseline  
@@ -226,8 +226,8 @@ Framebuffer incompleteness, shader failure, invalid texture handles, or GL error
 - [x] CQ1.5: Add deterministic STBN generation/loading and march jitter.
 - [x] CQ1.6: Add moment allocation, reprojection, variance clipping, and confidence.
 - [x] CQ1.7: Add two-thirds Cinematic sizing and history invalidation.
-- [x] CQ1.8: Add classification and bounded full-resolution edge repair.
-- [ ] CQ1.9: Complete automated, live-GL, artifact, and performance acceptance.
+- [x] CQ1.8: Add classification and bounded full-resolution edge repair. Empty footprints bypass retracing. The failed permanent-underlay mitigation was reduced to startup-only. A post-quarantine production capture reproduced terrain loss with P5.4 disabled, so voxel DDA is enabled by default again. Long-lived diagnostics instead found unchecked streamed-terrain VBO/EBO doubling. Growth is transactional and bounded; the targeted allocator independently reuses/grows vertex and index ranges and reaches all 2,401 desired chunks at 685 MiB reserved. The 2026-07-28 user runtime check confirmed terrain remains stable, clearing the gate before CQ1.9.
+- [x] CQ1.9: Complete automated, live-GL, artifact, and performance acceptance. The 2026-07-28 user-provided Cinematic runtime capture is the accepted visual screenshot. A repeatable hidden-WGL matrix adds four dense-overcast preset captures and eight additional Cinematic camera/weather captures at 1920×1080, with 32 warm-up frames and 240 raw GPU samples per case.
 
 ## Test matrix
 
@@ -272,6 +272,21 @@ Framebuffer incompleteness, shader failure, invalid texture handles, or GL error
 
 - High GPU cloud time does not exceed `1.15×` the Phase 6 High median on the same reference capture.
 - Cinematic cloud time is recorded separately and must remain within the roadmap's interactive preview budget; it is not allowed to weaken High to compensate.
+
+### CQ1.9 acceptance evidence
+
+The accepted automated run used desktop GL `4.6.0 NVIDIA 610.74` on an NVIDIA GeForce RTX 2080 Ti, a fixed `6.64 h` sun pose, frozen wind, and a `1920×1080` viewport. Each of twelve cases discarded 32 warm-up frames and retained 240 pass-scoped GPU-query samples.
+
+| Preset, dense overcast | Trace p50/p95 | Temporal p50/p95 | Repair p50/p95 | Cloud total p50/p95 |
+|------------------------|---------------|------------------|----------------|---------------------|
+| Low | `0.375/0.384 ms` | `0/0 ms` | `0.001/0.001 ms` | `0.447/0.739 ms` |
+| Medium | `0.523/0.539 ms` | `0.588/1.307 ms` | `0.001/0.002 ms` | `1.180/1.908 ms` |
+| High | `0.757/0.782 ms` | `0.620/1.311 ms` | `0.001/0.001 ms` | `1.453/2.146 ms` |
+| Cinematic | `2.261/2.849 ms` | `0.075/0.900 ms` | `2.628/3.127 ms` | `5.040/5.612 ms` |
+
+The Cinematic camera/weather fixtures cover ground/below-layer, inside cumulus, above cumulus, grazing horizon, broken cumulus, dense overcast, cirrus-heavy, inside cirrus, and above both layers. Their cloud-total p95 range is `2.288–6.229 ms`; the highest full-frame p95 is `8.409 ms`. High and Cinematic diagnostics require `stbn=asset-v1` with `stbnActive=True`, direct floating-point metadata, and RG16F moments. Low verifies packed RGBA8/no-moments operation, while Medium verifies FP16/direct metadata without moments.
+
+The original Phase 6 evidence was an instantaneous screenshot rather than a controlled 240-frame High window, so its exact `1.15×` normalized comparison cannot be recomputed. The user accepted the CQ1.9 production screenshot and this current High measurement is frozen as the CQ2 baseline. Generated PNG/JSON/CSV evidence remains under the opt-in artifact workflow rather than source control.
 
 ## Exit criteria
 

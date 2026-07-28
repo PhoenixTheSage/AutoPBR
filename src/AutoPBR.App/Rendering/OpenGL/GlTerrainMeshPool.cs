@@ -14,9 +14,12 @@ internal sealed class GlTerrainMeshPool : IDisposable
     private const int FloatsPerVertex = 12;
     private const int InitialVertexFloatCapacity = 256 * 1024;
     private const int InitialIndexCapacity = 512 * 1024;
+    private const int GrowthAlignmentElements = 256 * 1024;
+    internal const long DefaultMaxTotalBufferBytes = 768L * 1024L * 1024L;
 
     private readonly GL _gl;
     private readonly uint _vao;
+    private readonly long _maxTotalBufferBytes;
     private uint _vbo;
     private uint _ebo;
     private readonly List<FreeBlock> _freeVertices = new(32);
@@ -29,13 +32,24 @@ internal sealed class GlTerrainMeshPool : IDisposable
     private bool _disposed;
     private uint[]? _indexRemapScratch;
 
-    public GlTerrainMeshPool(GL gl)
+    public GlTerrainMeshPool(GL gl, long maxTotalBufferBytes = DefaultMaxTotalBufferBytes)
     {
         _gl = gl;
+        _maxTotalBufferBytes = Math.Max(
+            maxTotalBufferBytes,
+            (long)InitialVertexFloatCapacity * sizeof(float) +
+            (long)InitialIndexCapacity * sizeof(uint));
         _vao = _gl.GenVertexArray();
         _vbo = _gl.GenBuffer();
         _ebo = _gl.GenBuffer();
-        EnsureGpuCapacity(InitialVertexFloatCapacity, InitialIndexCapacity);
+        if (!EnsureGpuCapacity(InitialVertexFloatCapacity, InitialIndexCapacity))
+        {
+            _gl.DeleteBuffer(_vbo);
+            _gl.DeleteBuffer(_ebo);
+            _gl.DeleteVertexArray(_vao);
+            throw new InvalidOperationException("Unable to allocate the initial terrain mesh pool.");
+        }
+
         ConfigureVertexAttribs();
         _gl.BindVertexArray(0);
     }
@@ -43,6 +57,17 @@ internal sealed class GlTerrainMeshPool : IDisposable
     public bool IsValid => !_disposed && _vao != 0;
 
     public DrawElementsType IndexElementType => DrawElementsType.UnsignedInt;
+
+    internal long VertexCapacityBytes => (long)_vertexFloatCapacity * sizeof(float);
+    internal long IndexCapacityBytes => (long)_indexCapacity * sizeof(uint);
+    internal long VertexHighWaterBytes => (long)_vertexFloatHighWater * sizeof(float);
+    internal long IndexHighWaterBytes => (long)_indexHighWater * sizeof(uint);
+    internal long TotalCapacityBytes => VertexCapacityBytes + IndexCapacityBytes;
+    internal long MaxTotalBufferBytes => _maxTotalBufferBytes;
+    internal int GrowthCount { get; private set; }
+    internal int AllocationFailureCount { get; private set; }
+    internal GLEnum LastFailure { get; private set; } = GLEnum.NoError;
+    internal string LastFailureReason { get; private set; } = "none";
 
     public readonly struct Allocation
     {
@@ -72,10 +97,16 @@ internal sealed class GlTerrainMeshPool : IDisposable
         var vertexFloats = interleavedVertices.Length;
         if (!TryAllocate(vertexFloats, indices.Length, out var vertexFloatOffset, out var indexOffset))
         {
-            GrowToFit(vertexFloats, indices.Length);
+            if (!GrowToFit(vertexFloats, indices.Length))
+            {
+                AllocationFailureCount++;
+                return default;
+            }
+
             if (!TryAllocate(vertexFloats, indices.Length, out vertexFloatOffset, out indexOffset))
             {
-                throw new InvalidOperationException("Terrain mesh pool failed to allocate after grow.");
+                AllocationFailureCount++;
+                return default;
             }
         }
 
@@ -87,6 +118,7 @@ internal sealed class GlTerrainMeshPool : IDisposable
             remap[i] = indices[i] + baseVertex;
         }
 
+        ClearGlErrors();
         BindVertexArray();
         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
         _gl.BufferSubData<float>(
@@ -99,6 +131,19 @@ internal sealed class GlTerrainMeshPool : IDisposable
             indexOffset * sizeof(uint),
             remap.AsSpan(0, indices.Length));
         UnbindVertexArray();
+        var uploadError = _gl.GetError();
+        if (uploadError != GLEnum.NoError)
+        {
+            LastFailure = uploadError;
+            LastFailureReason = "buffer-subdata";
+            AllocationFailureCount++;
+            InsertFree(_freeVertices, vertexFloatOffset, vertexFloats);
+            InsertFree(_freeIndices, indexOffset, indices.Length);
+            return default;
+        }
+
+        LastFailure = GLEnum.NoError;
+        LastFailureReason = "none";
 
         return new Allocation
         {
@@ -322,8 +367,24 @@ internal sealed class GlTerrainMeshPool : IDisposable
         vertexFloatOffset = -1;
         indexOffset = -1;
 
-        var gotVerts = TryTakeFree(_freeVertices, vertexFloats, out var vertOff);
-        var gotIndices = TryTakeFree(_freeIndices, indexCount, out var indexOff);
+        var vertsFromFree = TryTakeFree(_freeVertices, vertexFloats, out var vertOff);
+        var gotVerts = vertsFromFree;
+        if (!gotVerts && _vertexFloatHighWater + vertexFloats <= _vertexFloatCapacity)
+        {
+            vertOff = _vertexFloatHighWater;
+            _vertexFloatHighWater += vertexFloats;
+            gotVerts = true;
+        }
+
+        var indicesFromFree = TryTakeFree(_freeIndices, indexCount, out var indexOff);
+        var gotIndices = indicesFromFree;
+        if (!gotIndices && _indexHighWater + indexCount <= _indexCapacity)
+        {
+            indexOff = _indexHighWater;
+            _indexHighWater += indexCount;
+            gotIndices = true;
+        }
+
         if (gotVerts && gotIndices)
         {
             vertexFloatOffset = vertOff;
@@ -333,89 +394,300 @@ internal sealed class GlTerrainMeshPool : IDisposable
 
         if (gotVerts)
         {
-            InsertFree(_freeVertices, vertOff, vertexFloats);
+            if (vertsFromFree)
+            {
+                InsertFree(_freeVertices, vertOff, vertexFloats);
+            }
+            else
+            {
+                _vertexFloatHighWater -= vertexFloats;
+            }
         }
 
         if (gotIndices)
         {
-            InsertFree(_freeIndices, indexOff, indexCount);
-        }
-
-        if (_vertexFloatHighWater + vertexFloats <= _vertexFloatCapacity &&
-            _indexHighWater + indexCount <= _indexCapacity)
-        {
-            vertexFloatOffset = _vertexFloatHighWater;
-            indexOffset = _indexHighWater;
-            _vertexFloatHighWater += vertexFloats;
-            _indexHighWater += indexCount;
-            return true;
+            if (indicesFromFree)
+            {
+                InsertFree(_freeIndices, indexOff, indexCount);
+            }
+            else
+            {
+                _indexHighWater -= indexCount;
+            }
         }
 
         return false;
     }
 
-    private void GrowToFit(int vertexFloats, int indexCount)
+    private bool GrowToFit(int vertexFloats, int indexCount)
     {
-        var needVerts = Math.Max(_vertexFloatCapacity * 2, _vertexFloatHighWater + vertexFloats);
-        var needIndices = Math.Max(_indexCapacity * 2, _indexHighWater + indexCount);
-        EnsureGpuCapacity(needVerts, needIndices);
+        var verticesFit = CanAllocate(
+            _freeVertices,
+            _vertexFloatHighWater,
+            _vertexFloatCapacity,
+            vertexFloats);
+        var indicesFit = CanAllocate(
+            _freeIndices,
+            _indexHighWater,
+            _indexCapacity,
+            indexCount);
+        var requiredVerts = verticesFit
+            ? _vertexFloatCapacity
+            : _vertexFloatHighWater + vertexFloats;
+        var requiredIndices = indicesFit
+            ? _indexCapacity
+            : _indexHighWater + indexCount;
+        var needVerts = verticesFit
+            ? _vertexFloatCapacity
+            : GrowCapacity(_vertexFloatCapacity, requiredVerts);
+        var needIndices = indicesFit
+            ? _indexCapacity
+            : GrowCapacity(_indexCapacity, requiredIndices);
+        ConstrainGrowthToBudget(
+            ref needVerts,
+            ref needIndices,
+            requiredVerts,
+            requiredIndices,
+            growVerts: !verticesFit,
+            growIndices: !indicesFit);
+        return EnsureGpuCapacity(needVerts, needIndices);
     }
 
-    private void EnsureGpuCapacity(int vertexFloatCapacity, int indexCapacity)
+    private void ConstrainGrowthToBudget(
+        ref int vertexCapacity,
+        ref int indexCapacity,
+        int requiredVertexCapacity,
+        int requiredIndexCapacity,
+        bool growVerts,
+        bool growIndices)
+    {
+        var proposedBytes =
+            (long)vertexCapacity * sizeof(float) +
+            (long)indexCapacity * sizeof(uint);
+        if (proposedBytes <= _maxTotalBufferBytes)
+        {
+            return;
+        }
+
+        var requiredBytes =
+            (long)requiredVertexCapacity * sizeof(float) +
+            (long)requiredIndexCapacity * sizeof(uint);
+        if (requiredBytes > _maxTotalBufferBytes)
+        {
+            return;
+        }
+
+        if (growVerts && !growIndices)
+        {
+            var maxVertexCapacity =
+                (int)Math.Min(
+                    int.MaxValue,
+                    (_maxTotalBufferBytes - (long)indexCapacity * sizeof(uint)) / sizeof(float));
+            vertexCapacity = Math.Min(
+                maxVertexCapacity,
+                GrowCapacityConservatively(_vertexFloatCapacity, requiredVertexCapacity));
+            return;
+        }
+
+        if (growIndices && !growVerts)
+        {
+            var maxIndexCapacity =
+                (int)Math.Min(
+                    int.MaxValue,
+                    (_maxTotalBufferBytes - (long)vertexCapacity * sizeof(float)) / sizeof(uint));
+            indexCapacity = Math.Min(
+                maxIndexCapacity,
+                GrowCapacityConservatively(_indexCapacity, requiredIndexCapacity));
+            return;
+        }
+
+        // Simultaneous pressure at the hard ceiling is rare. Commit only the minimum
+        // required stores so neither independently over-reserves the other's budget.
+        vertexCapacity = requiredVertexCapacity;
+        indexCapacity = requiredIndexCapacity;
+    }
+
+    private static bool CanAllocate(
+        List<FreeBlock> blocks,
+        int highWater,
+        int capacity,
+        int count)
+    {
+        if (highWater + count <= capacity)
+        {
+            return true;
+        }
+
+        foreach (var block in blocks)
+        {
+            if (block.Count >= count)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static int GrowCapacity(int current, int required)
+    {
+        var increment = Math.Max(current / 2, GrowthAlignmentElements);
+        var target = Math.Max((long)required, (long)current + increment);
+        target = ((target + GrowthAlignmentElements - 1) / GrowthAlignmentElements) *
+                 GrowthAlignmentElements;
+        return checked((int)target);
+    }
+
+    private static int GrowCapacityConservatively(int current, int required)
+    {
+        var increment = Math.Max(current / 4, GrowthAlignmentElements);
+        var target = Math.Max((long)required, (long)current + increment);
+        target = ((target + GrowthAlignmentElements - 1) / GrowthAlignmentElements) *
+                 GrowthAlignmentElements;
+        return checked((int)target);
+    }
+
+    private bool EnsureGpuCapacity(int vertexFloatCapacity, int indexCapacity)
     {
         var growVerts = vertexFloatCapacity > _vertexFloatCapacity;
         var growIndices = indexCapacity > _indexCapacity;
         if (!growVerts && !growIndices && _vertexFloatCapacity > 0)
         {
-            return;
+            return true;
+        }
+
+        var targetVertexCapacity = growVerts || _vertexFloatCapacity == 0
+            ? vertexFloatCapacity
+            : _vertexFloatCapacity;
+        var targetIndexCapacity = growIndices || _indexCapacity == 0
+            ? indexCapacity
+            : _indexCapacity;
+        var targetBytes =
+            (long)targetVertexCapacity * sizeof(float) +
+            (long)targetIndexCapacity * sizeof(uint);
+        if (targetBytes > _maxTotalBufferBytes)
+        {
+            LastFailure = GLEnum.NoError;
+            LastFailureReason = "budget-ceiling";
+            return false;
         }
 
         BindVertexArray();
+        uint candidateVbo = 0;
+        uint candidateEbo = 0;
         if (growVerts || _vertexFloatCapacity == 0)
         {
-            GrowBuffer(
+            if (!TryCreateReplacementBuffer(
                 BufferTargetARB.ArrayBuffer,
-                ref _vbo,
+                _vbo,
                 _vertexFloatCapacity * sizeof(float),
                 vertexFloatCapacity * sizeof(float),
-                copyBytes: _vertexFloatHighWater * sizeof(float));
-            _vertexFloatCapacity = vertexFloatCapacity;
+                copyBytes: _vertexFloatHighWater * sizeof(float),
+                out candidateVbo))
+            {
+                RestoreLiveBindings();
+                UnbindVertexArray();
+                return false;
+            }
         }
 
         if (growIndices || _indexCapacity == 0)
         {
-            GrowBuffer(
+            if (!TryCreateReplacementBuffer(
                 BufferTargetARB.ElementArrayBuffer,
-                ref _ebo,
+                _ebo,
                 _indexCapacity * sizeof(uint),
                 indexCapacity * sizeof(uint),
-                copyBytes: _indexHighWater * sizeof(uint));
+                copyBytes: _indexHighWater * sizeof(uint),
+                out candidateEbo))
+            {
+                if (candidateVbo != 0)
+                {
+                    _gl.DeleteBuffer(candidateVbo);
+                }
+
+                RestoreLiveBindings();
+                UnbindVertexArray();
+                return false;
+            }
+        }
+
+        var oldVbo = _vbo;
+        var oldEbo = _ebo;
+        if (candidateVbo != 0)
+        {
+            _vbo = candidateVbo;
+            _vertexFloatCapacity = vertexFloatCapacity;
+        }
+
+        if (candidateEbo != 0)
+        {
+            _ebo = candidateEbo;
             _indexCapacity = indexCapacity;
         }
 
-        // EBO binding is VAO state; rebind after possible EBO recreation.
+        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
         _gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, _ebo);
         ConfigureVertexAttribs();
+        if (candidateVbo != 0 && oldVbo != 0)
+        {
+            _gl.DeleteBuffer(oldVbo);
+        }
+
+        if (candidateEbo != 0 && oldEbo != 0)
+        {
+            _gl.DeleteBuffer(oldEbo);
+        }
+
         UnbindVertexArray();
+        GrowthCount++;
+        LastFailure = GLEnum.NoError;
+        LastFailureReason = "none";
+        return true;
     }
 
-    private void GrowBuffer(
+    private bool TryCreateReplacementBuffer(
         BufferTargetARB target,
-        ref uint buffer,
+        uint oldBuffer,
         int oldBytes,
         int newBytes,
-        int copyBytes)
+        int copyBytes,
+        out uint newBuffer)
     {
-        var newBuffer = _gl.GenBuffer();
+        newBuffer = 0;
+        ClearGlErrors();
+        newBuffer = _gl.GenBuffer();
+        if (newBuffer == 0)
+        {
+            LastFailure = _gl.GetError();
+            if (LastFailure == GLEnum.NoError)
+            {
+                LastFailure = GLEnum.OutOfMemory;
+            }
+
+            LastFailureReason = "buffer-handle";
+            return false;
+        }
+
         _gl.BindBuffer(target, newBuffer);
         unsafe
         {
             _gl.BufferData(target, (nuint)newBytes, null, BufferUsageARB.DynamicDraw);
         }
 
-        if (buffer != 0 && copyBytes > 0 && oldBytes > 0)
+        var allocationError = _gl.GetError();
+        if (allocationError != GLEnum.NoError)
         {
-            _gl.BindBuffer(BufferTargetARB.CopyReadBuffer, buffer);
+            LastFailure = allocationError;
+            LastFailureReason = "buffer-data";
+            _gl.DeleteBuffer(newBuffer);
+            newBuffer = 0;
+            return false;
+        }
+
+        if (oldBuffer != 0 && copyBytes > 0 && oldBytes > 0)
+        {
+            _gl.BindBuffer(BufferTargetARB.CopyReadBuffer, oldBuffer);
             _gl.BindBuffer(BufferTargetARB.CopyWriteBuffer, newBuffer);
             _gl.CopyBufferSubData(
                 GLEnum.CopyReadBuffer,
@@ -425,15 +697,35 @@ internal sealed class GlTerrainMeshPool : IDisposable
                 (nuint)Math.Min(copyBytes, Math.Min(oldBytes, newBytes)));
             _gl.BindBuffer(BufferTargetARB.CopyReadBuffer, 0);
             _gl.BindBuffer(BufferTargetARB.CopyWriteBuffer, 0);
+            var copyError = _gl.GetError();
+            if (copyError != GLEnum.NoError)
+            {
+                LastFailure = copyError;
+                LastFailureReason = "buffer-copy";
+                _gl.DeleteBuffer(newBuffer);
+                newBuffer = 0;
+                return false;
+            }
         }
 
-        if (buffer != 0)
+        return true;
+    }
+
+    private void RestoreLiveBindings()
+    {
+        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
+        _gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, _ebo);
+        if (_vbo != 0)
         {
-            _gl.DeleteBuffer(buffer);
+            ConfigureVertexAttribs();
         }
+    }
 
-        buffer = newBuffer;
-        _gl.BindBuffer(target, buffer);
+    private void ClearGlErrors()
+    {
+        for (var i = 0; i < 16 && _gl.GetError() != GLEnum.NoError; i++)
+        {
+        }
     }
 
     private void ConfigureVertexAttribs()

@@ -8,6 +8,8 @@ namespace AutoPBR.App.Rendering.OpenGL;
 internal static class PreviewCloudBakedAssetLoader
 {
     private const string AssetRoot = "avares://AutoPBR.App/Assets/Preview/";
+    private static readonly StandardAssetLoader BundledAssetLoader =
+        new StandardAssetLoader(typeof(PreviewCloudBakedAssetLoader).Assembly);
 
     public static bool TryLoadShapeNoise(out byte[] rgba)
     {
@@ -120,13 +122,13 @@ internal static class PreviewCloudBakedAssetLoader
         var uri = new Uri(AssetRoot + fileName);
         try
         {
-            if (!AssetLoader.Exists(uri))
+            if (!BundledAssetLoader.Exists(uri))
             {
                 reason = "missing";
                 return false;
             }
 
-            using var stream = AssetLoader.Open(uri);
+            using var stream = BundledAssetLoader.Open(uri);
             using var ms = new MemoryStream();
             stream.CopyTo(ms);
             data = ms.ToArray();

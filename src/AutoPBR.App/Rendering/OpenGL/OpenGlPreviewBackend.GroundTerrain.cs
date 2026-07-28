@@ -47,6 +47,9 @@ public sealed partial class OpenGlPreviewBackend
     private GlTerrainMeshPool.MultiDrawElementsIndirectCountProc? _terrainMultiDrawIndirectCount;
     private bool _loggedTerrainMeshPoolReady;
     private bool _loggedTerrainMultiDraw;
+    private bool _loggedTerrainPoolLimit;
+    private readonly HashSet<TerrainChunkKey> _terrainDeferredChunks = [];
+    private TerrainChunkKey? _terrainDeferredCameraChunk;
 
     private void ApplyTerrainGrassBakeSettings(PreviewTerrainGrassBakeSettings settings)
     {
@@ -135,6 +138,13 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         _terrainGpuChunks.Clear();
+        foreach (var key in _terrainDeferredChunks)
+        {
+            _terrainStreamer?.NotifyUnloaded(key);
+        }
+
+        _terrainDeferredChunks.Clear();
+        _terrainDeferredCameraChunk = null;
         _terrainCandidatesChunkVersion++;
         InvalidateTerrainShadowWorldAabbCache();
     }
@@ -200,6 +210,21 @@ public sealed partial class OpenGlPreviewBackend
         EnsureTerrainStreamer();
         var viewDist = frame.Settings.ChunkViewDistance;
         _terrainStreamer!.Tick(frame.Eye, viewDist, frame.Settings.LodRingChunks);
+        var cameraChunk = _terrainStreamer.CameraChunk;
+        if (_terrainDeferredCameraChunk is { } deferredCamera && deferredCamera != cameraChunk)
+        {
+            foreach (var key in _terrainDeferredChunks)
+            {
+                _terrainStreamer.NotifyUnloaded(key);
+            }
+
+            _terrainDeferredChunks.Clear();
+            _terrainDeferredCameraChunk = cameraChunk;
+        }
+        else
+        {
+            _terrainDeferredCameraChunk ??= cameraChunk;
+        }
 
         // Rebuilds when desired LOD differs from resident.
         var desired = _terrainStreamer.SnapshotDesired();
@@ -217,10 +242,6 @@ public sealed partial class OpenGlPreviewBackend
             : PreviewStageConstants.TerrainMaxChunkUploadsPerFrame;
         var uploads = new List<PreviewTerrainChunkMesh>(uploadCap);
         _terrainStreamer.DrainReady(uploads, uploadCap);
-        foreach (var cpu in uploads)
-        {
-            UploadTerrainChunk(frame.Gl, cpu);
-        }
 
         var disposed = 0;
         List<TerrainChunkKey>? toRemove = null;
@@ -259,10 +280,49 @@ public sealed partial class OpenGlPreviewBackend
             }
         }
 
+        // Reclaim hysteresis-expired ranges before processing new camera-local uploads.
+        // This lets a bounded pool reuse storage rather than deferring a visible chunk
+        // merely because its old, now-distant replacement had not been freed yet.
+        foreach (var cpu in uploads)
+        {
+            if (_terrainDeferredChunks.Contains(cpu.Key) &&
+                !_terrainGpuChunks.ContainsKey(cpu.Key))
+            {
+                continue;
+            }
+
+            UploadTerrainChunk(frame.Gl, cpu);
+        }
+
+        if (_terrainDeferredChunks.Count > 0)
+        {
+            List<TerrainChunkKey>? deferredToRemove = null;
+            foreach (var key in _terrainDeferredChunks)
+            {
+                if (desired.ContainsKey(key) && !_terrainStreamer.ShouldUnload(key))
+                {
+                    continue;
+                }
+
+                deferredToRemove ??= [];
+                deferredToRemove.Add(key);
+            }
+
+            if (deferredToRemove is not null)
+            {
+                foreach (var key in deferredToRemove)
+                {
+                    _terrainDeferredChunks.Remove(key);
+                    _terrainStreamer.NotifyUnloaded(key);
+                }
+            }
+        }
+
         RefreshTerrainEnvBounds();
 
         var desiredCount = desired.Count;
-        var needsFrames = _terrainGpuChunks.Count < desiredCount || uploads.Count > 0;
+        var accountedChunks = _terrainGpuChunks.Count + _terrainDeferredChunks.Count;
+        var needsFrames = accountedChunks < desiredCount || uploads.Count > 0;
         lock (_sync)
         {
             _terrainStreamingNeedsFrames = needsFrames;
@@ -275,8 +335,18 @@ public sealed partial class OpenGlPreviewBackend
         var pool = _terrainMeshPool!;
         if (_terrainGpuChunks.TryGetValue(cpu.Key, out var existing))
         {
+            var replacement = pool.Upload(cpu.InterleavedVertices, cpu.Indices);
+            if (replacement.IsEmpty)
+            {
+                // Preserve the last visible LOD. Treat the desired LOD as resident until
+                // a camera recenter or settings invalidation gives the pool another chance.
+                _terrainStreamer?.NotifyUploaded(cpu.Key, cpu.Lod);
+                EmitTerrainPoolLimitDiagnostic(pool, cpu.Key, replacingVisibleChunk: true);
+                return;
+            }
+
             pool.Free(existing.Allocation);
-            existing.Allocation = pool.Upload(cpu.InterleavedVertices, cpu.Indices);
+            existing.Allocation = replacement;
             existing.Lod = cpu.Lod;
             existing.DrawBatches = RemapBatchesToPool(cpu.DrawBatches, existing.Allocation);
             existing.BoundsCenter = cpu.BoundsCenter;
@@ -290,6 +360,23 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         var allocation = pool.Upload(cpu.InterleavedVertices, cpu.Indices);
+        if (allocation.IsEmpty)
+        {
+            _terrainDeferredChunks.Add(cpu.Key);
+            _terrainDeferredCameraChunk ??= _terrainStreamer?.CameraChunk;
+            // Mark this desired LOD as logically handled so workers do not continuously
+            // rebake a far chunk that cannot fit inside the bounded GPU pool.
+            _terrainStreamer?.NotifyUploaded(cpu.Key, cpu.Lod);
+            if (pool.LastFailureReason == "budget-ceiling")
+            {
+                DeferRemainingTerrainChunksAtPoolLimit();
+            }
+
+            EmitTerrainPoolLimitDiagnostic(pool, cpu.Key, replacingVisibleChunk: false);
+            return;
+        }
+
+        _terrainDeferredChunks.Remove(cpu.Key);
         _terrainGpuChunks[cpu.Key] = new TerrainGpuChunk
         {
             Lod = cpu.Lod,
@@ -303,6 +390,68 @@ public sealed partial class OpenGlPreviewBackend
         _terrainStreamer?.NotifyUploaded(cpu.Key, cpu.Lod);
         _terrainCandidatesChunkVersion++;
         InvalidateTerrainShadowWorldAabbCache();
+    }
+
+    private void DeferRemainingTerrainChunksAtPoolLimit()
+    {
+        if (_terrainStreamer is null)
+        {
+            return;
+        }
+
+        foreach (var (key, lod) in _terrainStreamer.SnapshotDesired())
+        {
+            if (_terrainGpuChunks.ContainsKey(key) || !_terrainDeferredChunks.Add(key))
+            {
+                continue;
+            }
+
+            _terrainStreamer.NotifyUploaded(key, lod);
+        }
+    }
+
+    private void EmitTerrainPoolLimitDiagnostic(
+        GlTerrainMeshPool pool,
+        TerrainChunkKey key,
+        bool replacingVisibleChunk)
+    {
+        if (_loggedTerrainPoolLimit)
+        {
+            return;
+        }
+
+        _loggedTerrainPoolLimit = true;
+        long fullVertexBytes = 0;
+        long fullIndexBytes = 0;
+        long lodVertexBytes = 0;
+        long lodIndexBytes = 0;
+        foreach (var chunk in _terrainGpuChunks.Values)
+        {
+            var vertexBytes = (long)chunk.Allocation.VertexFloatCount * sizeof(float);
+            var indexBytes = (long)chunk.Allocation.IndexCount * sizeof(uint);
+            if (chunk.Lod == TerrainChunkLodKind.Full)
+            {
+                fullVertexBytes += vertexBytes;
+                fullIndexBytes += indexBytes;
+            }
+            else
+            {
+                lodVertexBytes += vertexBytes;
+                lodIndexBytes += indexBytes;
+            }
+        }
+
+        EmitDiagnostic(
+            $"[3D preview] Terrain mesh pool reached its safe GPU budget; preserving existing terrain " +
+            $"and deferring additional chunks (capacity={pool.TotalCapacityBytes / (1024 * 1024)} MiB, " +
+            $"budget={pool.MaxTotalBufferBytes / (1024 * 1024)} MiB, " +
+            $"highWater={pool.VertexHighWaterBytes / (1024 * 1024)} MiB-vbo/" +
+            $"{pool.IndexHighWaterBytes / (1024 * 1024)} MiB-ebo, " +
+            $"fullLive={fullVertexBytes / (1024 * 1024)} MiB-vbo/{fullIndexBytes / (1024 * 1024)} MiB-ebo, " +
+            $"lodLive={lodVertexBytes / (1024 * 1024)} MiB-vbo/{lodIndexBytes / (1024 * 1024)} MiB-ebo, " +
+            $"failure={pool.LastFailureReason}, glError={pool.LastFailure}, " +
+            $"residentChunks={_terrainGpuChunks.Count}, deferredKey={key}, " +
+            $"replacement={replacingVisibleChunk}).");
     }
 
     private static PreviewDrawBatch[] RemapBatchesToPool(
@@ -366,6 +515,14 @@ public sealed partial class OpenGlPreviewBackend
     }
 
     private bool HasTerrainChunksToDraw => _terrainGpuChunks.Count > 0;
+
+    private bool HasTerrainStreamerCameraChunk() =>
+        _terrainStreamer is not null &&
+        HasTerrainChunk(_terrainStreamer.CameraChunk);
+
+    private bool HasTerrainChunk(TerrainChunkKey key) =>
+        _terrainGpuChunks.TryGetValue(key, out var chunk) &&
+        chunk.IndexCount > 0;
 
     private float TerrainEnvironmentHalfExtent
     {
@@ -1122,7 +1279,10 @@ public sealed partial class OpenGlPreviewBackend
                 _loggedTerrainMultiDraw = true;
                 EmitDiagnostic(
                     $"[3D preview] Terrain MultiDrawIndirect enabled: items={itemCount}, " +
-                    $"arrays={(useArrays ? "on" : "off")}, shadow={(shadowPass ? "yes" : "no")}.");
+                    $"arrays={(useArrays ? "on" : "off")}, shadow={(shadowPass ? "yes" : "no")}, " +
+                    $"residentChunks={_terrainGpuChunks.Count}, " +
+                    $"desiredChunks={_terrainStreamer?.SnapshotDesired().Count ?? 0}, " +
+                    $"cameraChunkResident={HasTerrainStreamerCameraChunk()}, safetyUnderlay=startup-only.");
             }
 
             return true;
@@ -1207,7 +1367,10 @@ public sealed partial class OpenGlPreviewBackend
             _loggedTerrainMultiDraw = true;
             EmitDiagnostic(
                 $"[3D preview] Terrain MultiDrawIndirect enabled: items={itemCount}, " +
-                $"arrays={(useArrays ? "on" : "off")}, shadow={(shadowPass ? "yes" : "no")}.");
+                $"arrays={(useArrays ? "on" : "off")}, shadow={(shadowPass ? "yes" : "no")}, " +
+                $"residentChunks={_terrainGpuChunks.Count}, " +
+                $"desiredChunks={_terrainStreamer?.SnapshotDesired().Count ?? 0}, " +
+                $"cameraChunkResident={HasTerrainStreamerCameraChunk()}, safetyUnderlay=startup-only.");
         }
 
         return true;

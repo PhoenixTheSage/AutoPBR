@@ -95,6 +95,22 @@ public sealed class PreviewCloudEdgeRepairClassifierTests
     }
 
     [Fact]
+    public void EmptySourceFootprint_DoesNotBecomeAFullScreenRepair()
+    {
+        var result = PreviewCloudEdgeRepairClassifier.Classify(
+        [
+            Tap(0f, false, 0f, 0f, 0f),
+            Tap(0f, false, 0f, 0f, 0f),
+            Tap(0f, false, 0f, 0f, 0f),
+            Tap(0f, false, 0f, 0f, 0f),
+        ],
+        shellIntersects: true);
+
+        Assert.False(result.LowValidWeight);
+        Assert.False(result.ShouldRepair);
+    }
+
+    [Fact]
     public void Contract_UsesExactlyEightRepairSteps()
     {
         Assert.Equal(8, PreviewCloudEdgeRepairClassifier.RepairStepCount);

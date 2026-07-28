@@ -195,6 +195,104 @@ public sealed partial class PreviewRenderingTests
     }
 
     [Fact]
+    public void TerrainMeshPool_GrowthIsTransactionalAndBounded()
+    {
+        var pool = LoadSource(
+            ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "GlTerrainMeshPool.cs");
+        var ground = LoadSource(
+            ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.GroundTerrain.cs");
+
+        Assert.Contains("DefaultMaxTotalBufferBytes = 768L * 1024L * 1024L", pool, StringComparison.Ordinal);
+        Assert.Contains("targetBytes > _maxTotalBufferBytes", pool, StringComparison.Ordinal);
+        Assert.Contains("TryCreateReplacementBuffer(", pool, StringComparison.Ordinal);
+        Assert.Contains("RestoreLiveBindings();", pool, StringComparison.Ordinal);
+        Assert.Contains("vertsFromFree", pool, StringComparison.Ordinal);
+        Assert.Contains("indicesFromFree", pool, StringComparison.Ordinal);
+        Assert.Contains("GrowCapacity(_vertexFloatCapacity", pool, StringComparison.Ordinal);
+        Assert.Contains("GrowCapacity(_indexCapacity", pool, StringComparison.Ordinal);
+        Assert.Contains("ConstrainGrowthToBudget(", pool, StringComparison.Ordinal);
+        Assert.Contains("GrowCapacityConservatively(", pool, StringComparison.Ordinal);
+        Assert.Contains("AllocationFailureCount++", pool, StringComparison.Ordinal);
+        Assert.Contains("preserving existing terrain", ground, StringComparison.Ordinal);
+        Assert.Contains("_terrainDeferredChunks", ground, StringComparison.Ordinal);
+        Assert.Contains("DeferRemainingTerrainChunksAtPoolLimit();", ground, StringComparison.Ordinal);
+
+        var replacementUpload = ground.IndexOf(
+            "var replacement = pool.Upload(cpu.InterleavedVertices, cpu.Indices);",
+            StringComparison.Ordinal);
+        var oldAllocationFree = ground.IndexOf(
+            "pool.Free(existing.Allocation);",
+            replacementUpload,
+            StringComparison.Ordinal);
+        Assert.True(
+            replacementUpload >= 0 && oldAllocationFree > replacementUpload,
+            "A replacement upload must succeed before the last visible allocation is freed.");
+    }
+
+    [Fact]
+    public void ScenePass_StreamingSafetyUnderlayIsStartupOnlyTwoSidedWithoutPom()
+    {
+        var bootstrap = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.Bootstrap.cs");
+        var scenePass = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.Render.PassScene.cs");
+
+        Assert.Contains("PreviewMeshFactory.CreatePreviewGroundPlane(", bootstrap, StringComparison.Ordinal);
+        Assert.Contains("worldY: PreviewStageConstants.GroundPlaneWorldY - 0.015f", bootstrap, StringComparison.Ordinal);
+        Assert.DoesNotContain("HasTerrainCameraChunk(frame.Eye)", scenePass, StringComparison.Ordinal);
+        Assert.Contains("safetyUnderlay=startup-only", LoadSource(
+            ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.GroundTerrain.cs"), StringComparison.Ordinal);
+
+        var fallbackStart = scenePass.IndexOf(
+            "if (!HasTerrainChunksToDraw && _groundMesh is { IndexCount: > 0 })",
+            StringComparison.Ordinal);
+        Assert.True(fallbackStart >= 0);
+        var fallbackEnd = scenePass.IndexOf(
+            "TryEnsureGroundTextureArrays(frame.Gl);",
+            fallbackStart,
+            StringComparison.Ordinal);
+        Assert.True(fallbackEnd > fallbackStart);
+        var fallbackBlock = scenePass[fallbackStart..fallbackEnd];
+        var disableCull = fallbackBlock.IndexOf(
+            "frame.Gl.Disable(EnableCap.CullFace);",
+            StringComparison.Ordinal);
+        var draw = fallbackBlock.IndexOf(
+            "_groundMesh.Draw(_mainProgramUsesTessellation);",
+            StringComparison.Ordinal);
+        var restoreCull = fallbackBlock.IndexOf(
+            "frame.Gl.Enable(EnableCap.CullFace);",
+            draw,
+            StringComparison.Ordinal);
+        Assert.True(disableCull >= 0);
+        Assert.True(draw > disableCull);
+        Assert.True(restoreCull > draw);
+        Assert.Contains("SetIntLoc(u.EnableParallax, 0);", fallbackBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void GenesisProgram_IdleFramesSkipTessellationProgram()
     {
         var source = LoadSource(ThisFilePath(),

@@ -191,7 +191,8 @@ public sealed partial class OpenGlPreviewBackend
             }
 
             if (frame.Settings.ShowGroundMesh &&
-                _grassGroundReady && _grassGroundAlbedo is not null && HasTerrainChunksToDraw)
+                _grassGroundReady && _grassGroundAlbedo is not null &&
+                (HasTerrainChunksToDraw || _groundMesh is { IndexCount: > 0 }))
             {
                 using (BeginCpuTimerScope(GlGpuTimerScope.TerrainDraw))
                 {
@@ -232,8 +233,37 @@ public sealed partial class OpenGlPreviewBackend
                     SetIntLoc(u.Normal, 1);
                     SetIntLoc(u.Specular, 2);
                     SetIntLoc(u.Height, 3);
+                    // Keep the legacy pad as a startup fallback only. Drawing it beneath
+                    // resident terrain hid terrain-path failures and exposed the selected
+                    // pack material as a large striped plane.
+                    if (!HasTerrainChunksToDraw && _groundMesh is { IndexCount: > 0 })
+                    {
+                        SetIntLoc(u.GenesisUseMaterialTextureArray, 0);
+                        SetIntLoc(u.GenesisUseMaterialDrawRecord, 0);
+                        SetIntLoc(u.GenesisDrawRecordIndex, 0);
+                        // Avoid letting a malformed or extreme height map displace the safety
+                        // surface. The streamed near chunks restore the configured POM state.
+                        SetIntLoc(u.EnableParallax, 0);
+                        SetIntLoc(u.EnableParallaxAo, 0);
+                        SetIntLoc(u.EnableParallaxShadow, 0);
+                        // The legacy pad is intentionally two-sided. Its historical winding
+                        // is not shared by streamed terrain, so inheriting terrain back-face
+                        // culling can remove the entire fallback when viewed from above.
+                        frame.Gl.Disable(EnableCap.CullFace);
+                        _groundMesh.Draw(_mainProgramUsesTessellation);
+                        frame.Gl.Enable(EnableCap.CullFace);
+                        frame.Gl.CullFace(TriangleFace.Back);
+                        SetIntLoc(u.EnableParallax, groundParallax ? 1 : 0);
+                        SetIntLoc(u.EnableParallaxAo, groundParallax && frame.Settings.EnableParallaxAo ? 1 : 0);
+                        SetIntLoc(
+                            u.EnableParallaxShadow,
+                            groundParallax && frame.Settings.EnableParallaxShadow ? 1 : 0);
+                    }
+
                     TryEnsureGroundTextureArrays(frame.Gl);
-                    if (_groundTextureArraysReady && _activeGenesisProgramKey.MaterialTextureArrays)
+                    if (HasTerrainChunksToDraw &&
+                        _groundTextureArraysReady &&
+                        _activeGenesisProgramKey.MaterialTextureArrays)
                     {
                         SetIntLoc(u.GenesisUseMaterialTextureArray, 1);
                         SetIntLoc(u.GenesisUseMaterialDrawRecord, 1);
@@ -249,18 +279,21 @@ public sealed partial class OpenGlPreviewBackend
                     var enableParallaxAo = frame.Settings.EnableParallaxAo;
                     var enableParallaxShadow = frame.Settings.EnableParallaxShadow;
                     // Tessellation programs require patch primitives; PatchParameter is set once inside the draw path.
-                    DrawGroundTerrainChunks(
-                        frame.Gl,
-                        viewProjection,
-                        frame.Eye,
-                        patches: _mainProgramUsesTessellation,
-                        enableParallaxSetting: groundParallax,
-                        setParallaxEnabled: pom =>
-                        {
-                            SetIntLoc(u.EnableParallax, pom ? 1 : 0);
-                            SetIntLoc(u.EnableParallaxAo, pom && enableParallaxAo ? 1 : 0);
-                            SetIntLoc(u.EnableParallaxShadow, pom && enableParallaxShadow ? 1 : 0);
-                        });
+                    if (HasTerrainChunksToDraw)
+                    {
+                        DrawGroundTerrainChunks(
+                            frame.Gl,
+                            viewProjection,
+                            frame.Eye,
+                            patches: _mainProgramUsesTessellation,
+                            enableParallaxSetting: groundParallax,
+                            setParallaxEnabled: pom =>
+                            {
+                                SetIntLoc(u.EnableParallax, pom ? 1 : 0);
+                                SetIntLoc(u.EnableParallaxAo, pom && enableParallaxAo ? 1 : 0);
+                                SetIntLoc(u.EnableParallaxShadow, pom && enableParallaxShadow ? 1 : 0);
+                            });
+                    }
                     SetIntLoc(u.IsGroundPass, 0);
                     if (!restoreCull)
                     {

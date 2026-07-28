@@ -250,6 +250,8 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private string? _entityBindPosePrepDiagKey;
     private string? _latestGpuTimingHudText;
     private string? _latestCpuTimingHudText;
+    private GlGpuTimingSnapshot? _latestGpuTimingSnapshot;
+    private long _gpuTimingSnapshotSequence;
     private double _lastGpuTimingDiagnosticSeconds = double.NegativeInfinity;
 
     /// <summary>Orbit camera is re-synced from the scene only when this changes (block vs item), so texture swaps keep user framing.</summary>
@@ -313,6 +315,23 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
             {
                 return _latestCpuTimingHudText;
             }
+        }
+    }
+
+    internal bool TryGetLatestGpuTimingSnapshot(out GlGpuTimingSnapshot snapshot, out long sequence)
+    {
+        lock (_sync)
+        {
+            if (_latestGpuTimingSnapshot is not { } latest)
+            {
+                snapshot = default;
+                sequence = _gpuTimingSnapshotSequence;
+                return false;
+            }
+
+            snapshot = latest;
+            sequence = _gpuTimingSnapshotSequence;
+            return true;
         }
     }
     public string? LastErrorMessage => _lastError;
@@ -1001,6 +1020,11 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
             var prev = _settings;
             _settings = PreviewRenderSettingsSnapshot.From(settings);
             _settingsRevision++;
+            if (_settings.VolumetricQuality != prev.VolumetricQuality)
+            {
+                _gpuTimingWindow.Clear();
+                _latestGpuTimingSnapshot = null;
+            }
             if (_settings.DrawPreviewSubject != prev.DrawPreviewSubject ||
                 _settings.EnableEntityAnimation != prev.EnableEntityAnimation ||
                 _settings.ForceEntityCpuSkinning != prev.ForceEntityCpuSkinning ||
@@ -1097,6 +1121,27 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
                     out eye, out lookTarget);
             }
             return true;
+        }
+    }
+
+    internal void SetCameraDebugPose(Vector3 eye, Vector3 lookTarget)
+    {
+        lock (_sync)
+        {
+            var offset = eye - lookTarget;
+            var distance = offset.Length();
+            if (!float.IsFinite(distance) || distance < 1e-4f)
+            {
+                throw new ArgumentOutOfRangeException(nameof(eye), "Camera eye and target must be finite and distinct.");
+            }
+
+            _orbitPan = lookTarget - _orbitBaseTarget;
+            _orbitDistance = Math.Clamp(distance, 1.05f, 120f);
+            YawPitchFromForward(offset / distance, out _orbitYaw, out _orbitPitch);
+            _debugFlyRmbHeld = false;
+            _flyEngaged = false;
+            _flyMoveVelocity = Vector3.Zero;
+            InvalidateVolumetricTemporalHistories();
         }
     }
 

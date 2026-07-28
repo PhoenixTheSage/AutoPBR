@@ -229,6 +229,15 @@ void main()
         }
     }
 
+    // No source metadata means there is no representative boundary around which to place
+    // the bounded eight-sample retrace. Exit before shell/density work so clear sky and
+    // opaque terrain footprints remain a cheap empty write.
+    if (validCount <= 0.0 && alphaMax <= 1e-4)
+    {
+        writeEmpty();
+        return;
+    }
+
     if (weightSum > 1e-5)
     {
         reconstructed /= weightSum;
@@ -282,7 +291,8 @@ void main()
     bool kindEdge = validCount > 1.0 &&
         kindMax - kindMin > CLOUD_REPAIR_KIND_THRESHOLD;
     float normalizedValidWeight = clamp(validWeight * 0.25, 0.0, 1.0);
-    bool lowValidWeight = normalizedValidWeight < CLOUD_REPAIR_VALID_WEIGHT_MIN;
+    bool lowValidWeight = validCount > 0.0 &&
+        normalizedValidWeight < CLOUD_REPAIR_VALID_WEIGHT_MIN;
     bool alphaEdge = alphaMax - alphaMin > CLOUD_REPAIR_ALPHA_THRESHOLD;
     bool needsRepair = alphaEdge || distanceEdge || validityEdge || kindEdge || lowValidWeight;
 

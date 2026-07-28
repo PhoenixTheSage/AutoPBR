@@ -2,13 +2,19 @@ using System.Globalization;
 
 namespace AutoPBR.App.Rendering.OpenGL;
 
-internal sealed class GlGpuTimingWindow(int capacity = 120)
+internal sealed class GlGpuTimingWindow(int capacity = 240)
 {
     private readonly Queue<double> _cloudTrace = new(Math.Max(capacity, 1));
     private readonly Queue<double> _cloudComposite = new(Math.Max(capacity, 1));
     private readonly int _capacity = Math.Max(capacity, 1);
 
     public int Count => _cloudTrace.Count;
+
+    public void Clear()
+    {
+        _cloudTrace.Clear();
+        _cloudComposite.Clear();
+    }
 
     public void Add(in GlGpuTimingSnapshot snapshot)
     {

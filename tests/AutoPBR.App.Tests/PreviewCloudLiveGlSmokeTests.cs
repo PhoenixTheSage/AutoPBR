@@ -533,6 +533,45 @@ public sealed class PreviewCloudLiveGlSmokeTests
                 outputSize,
                 outputSize);
             Assert.All(repaired, value => Assert.True(float.IsFinite(value)));
+
+            // The full-resolution repair target is later composited over the already
+            // presented scene. Prove an opaque scene hit clears repaired cloud output,
+            // rather than allowing the optional retrace to cover terrain or a subject.
+            var sceneDepth = gl.GenTexture();
+            try
+            {
+                AllocateR32f(
+                    gl,
+                    sceneDepth,
+                    outputSize,
+                    outputSize,
+                    Enumerable.Repeat(0.5f, outputSize * outputSize).ToArray());
+                gl.ActiveTexture(TextureUnit.Texture2);
+                gl.BindTexture(TextureTarget.Texture2D, sceneDepth);
+                SetUniform1(gl, repair, "uHasSceneDepth", 1);
+                output.Clear();
+                output.BindDraw(includeMoments: false);
+                repair.Use();
+                gl.BindVertexArray(quadVao);
+                gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
+                gl.BindVertexArray(0);
+                Assert.Equal(GLEnum.NoError, gl.GetError());
+
+                var occluded = ReadTextureRgbaFloat(
+                    gl,
+                    output.ColorTextureHandle,
+                    outputSize,
+                    outputSize);
+                for (var i = 3; i < occluded.Length; i += 4)
+                {
+                    Assert.InRange(occluded[i], 0f, 1e-4f);
+                }
+            }
+            finally
+            {
+                SetUniform1(gl, repair, "uHasSceneDepth", 0);
+                gl.DeleteTexture(sceneDepth);
+            }
         }
         finally
         {
@@ -682,6 +721,38 @@ public sealed class PreviewCloudLiveGlSmokeTests
             gl.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, (uint)width, (uint)height,
                 PixelFormat.RG, PixelType.Float, ptr);
         }
+    }
+
+    private static unsafe void AllocateR32f(
+        GL gl,
+        uint texture,
+        int width,
+        int height,
+        float[] pixels)
+    {
+        gl.BindTexture(TextureTarget.Texture2D, texture);
+        fixed (float* ptr = pixels)
+        {
+            gl.TexImage2D(
+                TextureTarget.Texture2D,
+                0,
+                InternalFormat.R32f,
+                (uint)width,
+                (uint)height,
+                0,
+                PixelFormat.Red,
+                PixelType.Float,
+                ptr);
+        }
+
+        gl.TexParameter(
+            TextureTarget.Texture2D,
+            TextureParameterName.TextureMinFilter,
+            (int)GLEnum.Nearest);
+        gl.TexParameter(
+            TextureTarget.Texture2D,
+            TextureParameterName.TextureMagFilter,
+            (int)GLEnum.Nearest);
     }
 
     private static unsafe void UploadRgba32f(GL gl, uint texture, int width, int height, float[] pixels)

@@ -82,13 +82,19 @@ tools/MlSpecularTrainer/shuffle_dataset/
 
 # Local scratch / agent export (root + nested)
 .build-out/
+.build-outlang/
 .build-verify/
 .build-test-out/
+.build-test-outlang/
 .tmpbuild/
 .tmpanim/
 **/.tmpbuild/
 tmp-build-*/
 .phase6/
+.phase6*/
+.clouddepth/
+.clouddepth*/
+.artifacts/
 agent-tools/
 tests/_obj*/
 tests/_out*/

@@ -138,7 +138,16 @@ public sealed partial class OpenGlPreviewBackend
                 return;
             }
 
-            _gpuTimingWindow.Add(snapshot);
+            string cloudWindow;
+            lock (_sync)
+            {
+                _latestGpuTimingSnapshot = snapshot;
+                _gpuTimingSnapshotSequence++;
+                _gpuTimingWindow.Add(snapshot);
+                cloudWindow = _gpuTimingWindow.Count >= 8
+                    ? "; " + _gpuTimingWindow.FormatCloudDiagnostic()
+                    : string.Empty;
+            }
             var expanded = _settings.ShowExpandedGpuTimingHud;
             var hud = snapshot.FormatHudLine(
                 "GPU",
@@ -155,9 +164,6 @@ public sealed partial class OpenGlPreviewBackend
                 renderTimeSeconds - _lastGpuTimingDiagnosticSeconds >= 2.0)
             {
                 _lastGpuTimingDiagnosticSeconds = renderTimeSeconds;
-                var cloudWindow = _gpuTimingWindow.Count >= 8
-                    ? "; " + _gpuTimingWindow.FormatCloudDiagnostic()
-                    : string.Empty;
                 EmitDiagnostic("[3D preview] P8 GPU timings: " + snapshot.FormatDiagnostic() + cloudWindow + ".");
             }
         }
@@ -198,6 +204,7 @@ public sealed partial class OpenGlPreviewBackend
     {
         _gpuTimerProfiler?.Dispose();
         _gpuTimerProfiler = null;
+        _latestGpuTimingSnapshot = null;
         _gpuTimingHudLinger.Reset();
     }
 
@@ -205,6 +212,7 @@ public sealed partial class OpenGlPreviewBackend
     {
         _gpuTimerProfiler = null;
         _latestGpuTimingHudText = null;
+        _latestGpuTimingSnapshot = null;
         _cpuTimerProfiler = null;
         _latestCpuTimingHudText = null;
         _gpuTimingHudLinger.Reset();

@@ -68,6 +68,22 @@ public sealed class PreviewCloudSpatiotemporalBlueNoiseGeneratorTests
     }
 
     [Fact]
+    public void BundledAssetLoader_WorksWithoutAvaloniaApplicationBootstrap()
+    {
+        Assert.True(
+            PreviewCloudBakedAssetLoader.TryLoadSpatiotemporalBlueNoise(
+                out var loaded,
+                out var reason),
+            reason);
+        Assert.Equal(
+            PreviewCloudSpatiotemporalBlueNoiseGenerator.ByteLength,
+            loaded.Length);
+        Assert.Equal(
+            $"asset-v{PreviewCloudSpatiotemporalBlueNoiseGenerator.AssetVersion}",
+            reason);
+    }
+
+    [Fact]
     public void RuntimePolicy_UsesAssetOnlyForDesktopHighAndCinematic()
     {
         Assert.False(OpenGlPreviewBackend.CanUseCloudStbn(

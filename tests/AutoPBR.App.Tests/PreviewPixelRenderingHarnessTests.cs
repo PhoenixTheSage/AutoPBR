@@ -1,7 +1,13 @@
 using System.Text.Json;
 using System.Globalization;
+using System.Numerics;
+using System.Reflection;
 
+using AutoPBR.App.Rendering;
+using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.OpenGL;
+using AutoPBR.App.Rendering.Scene;
+using AutoPBR.Core.Models;
 using AutoPBR.Preview;
 
 using Avalonia.OpenGL;
@@ -94,6 +100,318 @@ public sealed class PreviewPixelRenderingHarnessTests
             Assert.Contains(run.Comparisons, item =>
                 item.ExpectedName == "legacy-material-samplers" && item.ActualName == "material-texture-array");
         }
+    }
+
+    [Fact]
+    public void HiddenWglContext_IdleStageRendersResidentTerrainPixels()
+    {
+        if (!IsEnabled())
+        {
+            return;
+        }
+
+        Assert.True(OperatingSystem.IsWindows(), "Live terrain rendering harness requires Windows WGL.");
+        // Match the production preview size used by the terrain/cloud regression capture.
+        const int width = 862;
+        const int height = 683;
+        var diagnostics = new List<string>();
+        var groundFixture = LoadGroundFixture();
+        GlPixelSnapshot? snapshot;
+        using (var context = PreviewDesktopWglContext.TryCreate(
+                   [
+                       new GlVersion(GlProfileType.OpenGL, 4, 6),
+                       new GlVersion(GlProfileType.OpenGL, 4, 0),
+                       new GlVersion(GlProfileType.OpenGL, 3, 3),
+                   ],
+                   IntPtr.Zero,
+                   diagnostics.Add,
+                   probePresentationAdapter: false))
+        {
+            Assert.NotNull(context);
+            snapshot = context!.Invoke(
+                () =>
+                {
+                    using (context.BindOnOwnerThread())
+                    {
+                        context.EnsureRenderTargetCore(width, height);
+                        using var backend = new OpenGlPreviewBackend();
+                        backend.SetDiagnosticLog(diagnostics.Add);
+                        backend.Initialize(new RenderPreviewInitializationOptions());
+                        var settings = new PreviewRenderSettings
+                        {
+                            AutoRotate = false,
+                            DrawPreviewSubject = true,
+                            ShowGroundMesh = true,
+                            ShowBackgroundGrid = false,
+                            ShowCornerAxes = false,
+                            EnableVolumetricClouds = true,
+                            VolumetricQuality = PreviewVolumetricQuality.Cinematic,
+                        };
+                        backend.SetRenderSettings(settings);
+                        backend.SetScene(BlockPreviewSceneFactory.Create(settings));
+                        var blockSubject = CreateDdaTransitionSubject();
+                        backend.SetBlockModelPreview(
+                            blockSubject,
+                            [.. blockSubject.Materials.Select(maps => PreviewMaterialMapper.FromCoreMaps(maps))]);
+                        backend.SetCameraSensitivities(
+                            orbitRadPerPx: 0.006f,
+                            panPerPixel: 0.02f,
+                            zoomPerWheelStep: 0.12f,
+                            flyLookRadPerPx: 0.006f,
+                            invertLookY: false,
+                            flyMoveSpeed: 1f,
+                            flySmoothAcceleration: true);
+                        backend.SetTerrainGrassBakeSettings(groundFixture.BakeSettings);
+                        backend.SetTerrainVegetationBakePlan(groundFixture.VegetationPlan);
+                        backend.SetGroundMaterials(
+                            groundFixture.Materials,
+                            overlayIsCutout: true,
+                            groundFixture.CutoutBySlot);
+                        backend.GlInitNativeWglPresenter(context.GlInterface);
+                        try
+                        {
+                            var chunksField = typeof(OpenGlPreviewBackend).GetField(
+                                "_terrainGpuChunks",
+                                BindingFlags.Instance | BindingFlags.NonPublic);
+                            var poolField = typeof(OpenGlPreviewBackend).GetField(
+                                "_terrainMeshPool",
+                                BindingFlags.Instance | BindingFlags.NonPublic);
+                            var lastResident = -1;
+                            long lastVertexCapacity = -1;
+                            long lastIndexCapacity = -1;
+                            var firstPoolFailureFrame = -1;
+                            var fullResidencyFrame = -1;
+                            var postResidencyRecenterFrame = -1;
+                            var desiredDiameter =
+                                (settings.ChunkViewDistance + settings.LodRingChunks) * 2 + 1;
+                            var expectedResidentChunks = desiredDiameter * desiredDiameter;
+                            for (var frame = 0; frame < 1200; frame++)
+                            {
+                                if (frame == 48)
+                                {
+                                    backend.ApplyCameraPanPixels(-665f, -65f);
+                                }
+                                else if (fullResidencyFrame >= 0 &&
+                                         postResidencyRecenterFrame < 0 &&
+                                         frame >= fullResidencyFrame + 20)
+                                {
+                                    backend.ApplyCameraPanPixels(-1200f, 0f);
+                                    postResidencyRecenterFrame = frame;
+                                    diagnostics.Add(
+                                        $"[terrain harness] frame={frame} post-residency camera recenter.");
+                                }
+
+                                backend.RenderFrame(TimeSpan.FromSeconds(1.0 / 60.0));
+                                backend.GlRenderNativeWglPresenter(width, height, context.RenderFbo);
+                                if (backend.GpuInitProgress.CoreReady && frame >= 32)
+                                {
+                                    Thread.Sleep(5);
+                                }
+
+                                var resident = chunksField?.GetValue(backend) is System.Collections.ICollection chunks
+                                    ? chunks.Count
+                                    : -1;
+                                var pool = poolField?.GetValue(backend) as GlTerrainMeshPool;
+                                var vertexCapacity = pool?.VertexCapacityBytes ?? -1;
+                                var indexCapacity = pool?.IndexCapacityBytes ?? -1;
+                                if (vertexCapacity != lastVertexCapacity || indexCapacity != lastIndexCapacity)
+                                {
+                                    diagnostics.Add(
+                                        $"[terrain harness] frame={frame} pool={vertexCapacity / (1024 * 1024)}MiB-vbo/" +
+                                        $"{indexCapacity / (1024 * 1024)}MiB-ebo resident={resident}.");
+                                    lastVertexCapacity = vertexCapacity;
+                                    lastIndexCapacity = indexCapacity;
+                                }
+
+                                if (pool is { AllocationFailureCount: > 0 } && firstPoolFailureFrame < 0)
+                                {
+                                    firstPoolFailureFrame = frame;
+                                    diagnostics.Add(
+                                        $"[terrain harness] frame={frame} bounded pool rejected growth; " +
+                                        $"capacity={pool.TotalCapacityBytes / (1024 * 1024)}MiB, " +
+                                        $"budget={pool.MaxTotalBufferBytes / (1024 * 1024)}MiB, " +
+                                        $"resident={resident}.");
+                                }
+
+                                if (resident >= expectedResidentChunks && fullResidencyFrame < 0)
+                                {
+                                    fullResidencyFrame = frame;
+                                    diagnostics.Add(
+                                        $"[terrain harness] frame={frame} full residency reached: " +
+                                        $"resident={resident}/{expectedResidentChunks}, " +
+                                        $"capacity={pool?.TotalCapacityBytes / (1024 * 1024)}MiB, " +
+                                        $"highWater={pool?.VertexHighWaterBytes / (1024 * 1024)}MiB-vbo/" +
+                                        $"{pool?.IndexHighWaterBytes / (1024 * 1024)}MiB-ebo.");
+                                }
+
+                                if (resident / 64 != lastResident / 64)
+                                {
+                                    diagnostics.Add($"[terrain harness] frame={frame} resident={resident}.");
+                                }
+
+                                lastResident = resident;
+                                if ((firstPoolFailureFrame >= 0 && frame >= firstPoolFailureFrame + 60) ||
+                                    (postResidencyRecenterFrame >= 0 &&
+                                     frame >= postResidencyRecenterFrame + 100))
+                                {
+                                    break;
+                                }
+                            }
+
+                            context.Gl.Finish();
+                            if (backend.TryGetCameraDebugPose(out var eye, out var target))
+                            {
+                                diagnostics.Add(
+                                    FormattableString.Invariant(
+                                        $"[terrain harness] final eye={eye}, target={target}."));
+                            }
+
+                            return ReadFramebufferSnapshot(
+                                context.Gl,
+                                context.RenderFbo,
+                                width,
+                                height,
+                                "idle-stage-resident-terrain");
+                        }
+                        finally
+                        {
+                            backend.GlDeinit(context.GlInterface);
+                        }
+                    }
+                },
+                TimeSpan.FromSeconds(45));
+        }
+
+        Assert.NotNull(snapshot);
+        var configured = Environment.GetEnvironmentVariable(ArtifactDirectoryEnv);
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            var directory = Path.IsPathRooted(configured)
+                ? Path.GetFullPath(configured)
+                : Path.GetFullPath(Path.Combine(FindRepoRoot(), configured));
+            Directory.CreateDirectory(directory);
+            WritePng(snapshot, Path.Combine(directory, snapshot.Name + ".png"));
+            File.WriteAllLines(
+                Path.Combine(directory, snapshot.Name + ".log"),
+                diagnostics);
+        }
+
+        var rgba = snapshot.Rgba.Span;
+        var terrainPixels = 0;
+        for (var y = snapshot.Height / 2; y < snapshot.Height; y++)
+        {
+            for (var x = 0; x < snapshot.Width; x++)
+            {
+                var i = (y * snapshot.Width + x) * 4;
+                var r = rgba[i];
+                var g = rgba[i + 1];
+                var b = rgba[i + 2];
+                var green = g > 35 && g > r * 1.12f && g > b * 1.08f;
+                var mineral = Math.Max(r, Math.Max(g, b)) - Math.Min(r, Math.Min(g, b)) <= 28 &&
+                              r is > 35 and < 245;
+                var sand = r > b + 10 && g > b + 5 && r > 55;
+                if (green || mineral || sand)
+                {
+                    terrainPixels++;
+                }
+            }
+        }
+
+        var lowerHalfPixels = snapshot.Width * (snapshot.Height - snapshot.Height / 2);
+        Assert.True(
+            terrainPixels >= lowerHalfPixels / 4,
+            $"Resident terrain produced too few visible lower-frame pixels ({terrainPixels}/{lowerHalfPixels}). " +
+            string.Join(Environment.NewLine, diagnostics.TakeLast(24)));
+        Assert.Contains(
+            diagnostics,
+            line => line.Contains("cameraChunkResident=True", StringComparison.Ordinal));
+        Assert.Contains(
+            diagnostics,
+            line => line.Contains("full residency reached", StringComparison.Ordinal));
+        Assert.Contains(
+            diagnostics,
+            line => line.Contains("post-residency camera recenter", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            diagnostics,
+            line => line.Contains("bounded pool rejected growth", StringComparison.Ordinal) ||
+                    line.Contains("preserving existing terrain", StringComparison.Ordinal));
+    }
+
+    private static PreviewModelSubject CreateDdaTransitionSubject()
+    {
+        const int materialCount = 4;
+        const int stride = PreviewMesh.FloatsPerVertex;
+        var vertices = new float[materialCount * 4 * stride];
+        var indices = new uint[materialCount * 6];
+        var batches = new PreviewDrawBatch[materialCount];
+        var materials = new PreviewTextureMaps[materialCount];
+        for (var batch = 0; batch < materialCount; batch++)
+        {
+            var x0 = (batch - 1.5f) * 0.45f;
+            var vertexBase = batch * 4;
+            WriteDdaTransitionVertex(vertices, (vertexBase + 0) * stride, x0, 0f, 0f, 0f);
+            WriteDdaTransitionVertex(vertices, (vertexBase + 1) * stride, x0 + 0.4f, 0f, 0f, 1f);
+            WriteDdaTransitionVertex(vertices, (vertexBase + 2) * stride, x0 + 0.4f, 0.8f, 0f, 1f);
+            WriteDdaTransitionVertex(vertices, (vertexBase + 3) * stride, x0, 0.8f, 0f, 0f);
+
+            var firstIndex = batch * 6;
+            indices[firstIndex + 0] = (uint)(vertexBase + 0);
+            indices[firstIndex + 1] = (uint)(vertexBase + 1);
+            indices[firstIndex + 2] = (uint)(vertexBase + 2);
+            indices[firstIndex + 3] = (uint)(vertexBase + 2);
+            indices[firstIndex + 4] = (uint)(vertexBase + 3);
+            indices[firstIndex + 5] = (uint)(vertexBase + 0);
+            batches[batch] = new PreviewDrawBatch(firstIndex, 6, batch)
+            {
+                BoundsCenter = new Vector3(x0 + 0.2f, 0.4f, 0f),
+                BoundsRadius = 0.5f,
+            };
+
+            var tint = (byte)(70 + batch * 35);
+            materials[batch] = new PreviewTextureMaps
+            {
+                Width = 2,
+                Height = 2,
+                DiffuseRgba =
+                [
+                    tint, (byte)(150 - batch * 15), (byte)(65 + batch * 10), 255,
+                    (byte)(tint + 16), (byte)(135 - batch * 10), 55, 255,
+                    (byte)(tint + 8), (byte)(165 - batch * 12), 75, 255,
+                    (byte)(tint + 24), (byte)(145 - batch * 8), 60, 255,
+                ],
+            };
+        }
+
+        return new PreviewModelSubject
+        {
+            InterleavedVertices = vertices,
+            Indices = indices,
+            DrawBatches = batches,
+            Materials = materials,
+            PrimaryMaterialIndex = 0,
+        };
+    }
+
+    private static void WriteDdaTransitionVertex(
+        float[] vertices,
+        int offset,
+        float x,
+        float y,
+        float u,
+        float v)
+    {
+        vertices[offset + 0] = x;
+        vertices[offset + 1] = y;
+        vertices[offset + 2] = 0f;
+        vertices[offset + 3] = 0f;
+        vertices[offset + 4] = 0f;
+        vertices[offset + 5] = 1f;
+        vertices[offset + 6] = u;
+        vertices[offset + 7] = v;
+        vertices[offset + 8] = 1f;
+        vertices[offset + 9] = 0f;
+        vertices[offset + 10] = 0f;
+        vertices[offset + 11] = 1f;
     }
 
     private static GlPixelHarnessRun RunPixelMatrix(GL gl, string version, List<string> diagnostics)
@@ -444,6 +762,175 @@ public sealed class PreviewPixelRenderingHarnessTests
         using var image = Image.LoadPixelData<Rgba32>(snapshot.Rgba.Span, snapshot.Width, snapshot.Height);
         image.Save(path);
     }
+
+    private static unsafe GlPixelSnapshot ReadFramebufferSnapshot(
+        GL gl,
+        int framebuffer,
+        int width,
+        int height,
+        string name)
+    {
+        gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, (uint)framebuffer);
+        gl.ReadBuffer(ReadBufferMode.ColorAttachment0);
+        var bottomUp = new byte[checked(width * height * 4)];
+        fixed (byte* pixels = bottomUp)
+        {
+            gl.ReadPixels(
+                0,
+                0,
+                (uint)width,
+                (uint)height,
+                PixelFormat.Rgba,
+                PixelType.UnsignedByte,
+                pixels);
+        }
+
+        return GlPixelSnapshot.FromBottomUpRgba8(name, width, height, bottomUp);
+    }
+
+    private static PreviewMaterial LoadRepoBundledGroundMaterial()
+    {
+        var previewDirectory = Path.Combine(
+            FindRepoRoot(),
+            "src",
+            "AutoPBR.App",
+            "Assets",
+            "Preview");
+        using var albedoStream = File.OpenRead(Path.Combine(previewDirectory, "grass_block_top.png"));
+        Assert.True(
+            PreviewGrassTextureLoader.TryDecodeTinted(
+                albedoStream,
+                out var albedo,
+                out var width,
+                out var height));
+
+        byte[] LoadMap(string fileName)
+        {
+            using var stream = File.OpenRead(Path.Combine(previewDirectory, fileName));
+            Assert.True(
+                PreviewGrassTextureLoader.TryDecodeRgba(
+                    stream,
+                    out var rgba,
+                    out var mapWidth,
+                    out var mapHeight));
+            Assert.Equal((width, height), (mapWidth, mapHeight));
+            return rgba;
+        }
+
+        var normal = LoadMap("grass_block_top_n.png");
+        var specular = LoadMap("grass_block_top_s.png");
+        var heightRgba = new byte[checked(width * height * 4)];
+        for (var i = 0; i < width * height; i++)
+        {
+            var source = normal[i * 4 + 3];
+            var offset = i * 4;
+            heightRgba[offset] = source;
+            heightRgba[offset + 1] = source;
+            heightRgba[offset + 2] = source;
+            heightRgba[offset + 3] = 255;
+        }
+
+        return new PreviewMaterial
+        {
+            Width = width,
+            Height = height,
+            AlbedoRgba = albedo,
+            NormalRgba = normal,
+            SpecularRgba = specular,
+            HeightRgba = heightRgba,
+            GlUploadFlipRows = false,
+        };
+    }
+
+    private static GroundFixture LoadGroundFixture()
+    {
+        var fallback = LoadRepoBundledGroundMaterial();
+        var assetSource = Environment.GetEnvironmentVariable("AUTOPBR_TERRAIN_ASSET_SOURCE");
+        var packSource = Environment.GetEnvironmentVariable("AUTOPBR_TERRAIN_PACK_SOURCE");
+        if (string.IsNullOrWhiteSpace(assetSource) && string.IsNullOrWhiteSpace(packSource))
+        {
+            var aliases = new PreviewMaterial[PreviewTerrainGrassSlots.MaxCount];
+            Array.Fill(aliases, fallback);
+            return new GroundFixture(
+                aliases,
+                PreviewTerrainGrassBakeSettings.BuiltIn,
+                PreviewTerrainVegetationBakePlan.Empty,
+                null);
+        }
+
+        var options = new AutoPBROptions
+        {
+            FastSpecular = true,
+            SpecularData = SpecularData.LoadFromFile(
+                Path.Combine(
+                    FindRepoRoot(),
+                    "src",
+                    "AutoPBR.Core",
+                    "Data",
+                    "textures_data.json")),
+        };
+        var grass = PreviewTerrainGrassKitResolver.TryResolveAsync(
+                packSource,
+                preferScannedPack: !string.IsNullOrWhiteSpace(packSource),
+                assetSource,
+                options)
+            .GetAwaiter()
+            .GetResult();
+        var vegetation = PreviewTerrainVegetationKitResolver.TryResolveAsync(
+                packSource,
+                preferScannedPack: !string.IsNullOrWhiteSpace(packSource),
+                assetSource,
+                options)
+            .GetAwaiter()
+            .GetResult();
+        var count = Math.Max(
+            PreviewTerrainGrassSlots.MaxCount,
+            vegetation.HasAny ? vegetation.TotalSlotCount : PreviewTerrainGrassSlots.MaxCount);
+        var materials = new PreviewMaterial?[count];
+        PreviewMaterial Map(PreviewTextureMaps? maps, string? path, PreviewMaterial alias) =>
+            maps is null ? alias : PreviewMaterialMapper.FromCoreMaps(maps, path);
+        var top = Map(grass.Top, grass.TopArchivePath, fallback);
+        materials[PreviewTerrainGrassSlots.Top] = top;
+        materials[PreviewTerrainGrassSlots.Side] = Map(grass.Side, grass.SideArchivePath, top);
+        materials[PreviewTerrainGrassSlots.Dirt] = Map(grass.Dirt, grass.DirtArchivePath, top);
+        materials[PreviewTerrainGrassSlots.Overlay] =
+            Map(grass.Overlay, grass.OverlayArchivePath, top);
+        materials[PreviewTerrainGrassSlots.Stone] = Map(grass.Stone, grass.StoneArchivePath, top);
+        materials[PreviewTerrainGrassSlots.Sand] = Map(grass.Sand, grass.SandArchivePath, top);
+        materials[PreviewTerrainGrassSlots.Gravel] = Map(grass.Gravel, grass.GravelArchivePath, top);
+        foreach (var species in vegetation.Species)
+        {
+            materials[species.LogSlot] =
+                PreviewMaterialMapper.FromCoreMaps(species.LogMaps, species.LogArchivePath);
+            materials[species.LeavesOrTopSlot] =
+                PreviewMaterialMapper.FromCoreMaps(
+                    species.LeavesOrTopMaps,
+                    species.LeavesOrTopArchivePath);
+            if (species is { LogTopSlot: { } topSlot, LogTopMaps: { } logTopMaps })
+            {
+                materials[topSlot] =
+                    PreviewMaterialMapper.FromCoreMaps(logTopMaps, species.LogTopArchivePath);
+            }
+        }
+
+        var finalized = new PreviewMaterial[materials.Length];
+        for (var i = 0; i < finalized.Length; i++)
+        {
+            finalized[i] = materials[i] ?? top;
+        }
+
+        return new GroundFixture(
+            finalized,
+            PreviewTerrainGrassBakeSettings.FromKit(grass, vegetation),
+            vegetation.HasAny ? vegetation.ToBakePlan() : PreviewTerrainVegetationBakePlan.Empty,
+            vegetation.CutoutBySlot);
+    }
+
+    private sealed record GroundFixture(
+        PreviewMaterial[] Materials,
+        PreviewTerrainGrassBakeSettings BakeSettings,
+        PreviewTerrainVegetationBakePlan VegetationPlan,
+        bool[]? CutoutBySlot);
 
     private static string? ResolveArtifactDirectory(GlPixelHarnessRun run)
     {

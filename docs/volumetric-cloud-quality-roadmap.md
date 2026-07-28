@@ -41,15 +41,15 @@ Increasing the existing fog-froxel resolution is therefore not a substitute for 
 
 - [x] Restore a green solution/test build. Verified 2026-07-25 with a successful app solution build and all 475 app tests passing.
 - [x] Capture an initial fixed-scene screenshot and GPU timer sample before CQ1 changes existing render formats. The accepted 2026-07-25 user capture is recorded in the implementation handoff.
-- [ ] Expand the acceptance matrix with Low/Medium/High captures, GL vendor/renderer/context, sun pose, and a controlled warm-up/sample window before CQ1.9 phase acceptance. The user accepted the CQ1.3 runtime build as stable on 2026-07-25 before CQ1.4 landed.
-- [ ] Preserve the Phase 6 contracts: safe below/inside/above height transitions, subtle 72,000-unit curvature, atmospheric horizon feather, opaque scene depth ordering, terrain occlusion, and no cloud rendering over nearby subjects.
-- [x] Keep the live hidden-WGL cloud compile/depth-ordering smoke test green before each phase begins. Verified through CQ1.8 on 2026-07-26 for packed/direct metadata, linear HDR presentation, R8 STBN upload, the RG16F temporal-moment path, odd-viewport Cinematic/High target resizing, and full-resolution FP16/direct-metadata edge-repair compilation, allocation, draw, and readback.
+- [x] Expand the acceptance matrix with Low/Medium/High captures, GL vendor/renderer/context, sun pose, and a controlled warm-up/sample window before CQ1.9 phase acceptance. Completed 2026-07-28 with twelve 1080p cases, 32 warm-up frames, and 240 GPU samples per case on desktop GL 4.6.
+- [x] Preserve the Phase 6 contracts: safe below/inside/above height transitions, subtle 72,000-unit curvature, atmospheric horizon feather, opaque scene depth ordering, terrain occlusion, and no cloud rendering over nearby subjects. Covered by the accepted production screenshot, long-lived terrain/depth fixtures, and the CQ1.9 height/camera matrix.
+- [x] Keep the live hidden-WGL cloud compile/depth-ordering smoke test green before each phase begins. Verified through the CQ1.8 regression correction on 2026-07-27 for packed/direct metadata, linear HDR presentation, R8 STBN upload, the RG16F temporal-moment path, odd-viewport Cinematic/High target resizing, full-resolution FP16/direct-metadata edge-repair compilation/allocation/draw/readback, and opaque scene-depth rejection in the repair pass.
 
 ## Phase tracker
 
 | Phase | Deliverable | Depends on | Compatibility fallback | Status | Exit summary |
 |------|-------------|------------|------------------------|--------|--------------|
-| CQ1 | Linear HDR targets, precise metadata, STBN temporal reconstruction, Cinematic trace/edge repair | Baseline and green build | Current RGBA8 shell target/history | In progress | Stable HDR reconstruction without depth regressions or new temporal trails |
+| CQ1 | Linear HDR targets, precise metadata, STBN temporal reconstruction, Cinematic trace/edge repair | Baseline and green build | Current RGBA8 shell target/history | Complete | Accepted 2026-07-28 with stable HDR reconstruction, depth ordering, deterministic STBN, and 1080p timing evidence |
 | CQ2 | Versioned shape/detail/weather assets and explicit ray-footprint LOD | CQ1 | Existing v1 128³/32³/256² assets | Proposed | Finer, non-repeating structure with bounded density-stage cost |
 | CQ3 | Snapped light-aligned cloud-light cascades, long-range shadowing, cloud AO and ground contribution | CQ2 | Current per-sample short light march | Proposed | Coherent deep self-shadowing and terrain shadows without swimming |
 | CQ4 | Desktop sparse brick/SDF density backend and deterministic cloud envelope library | CQ3 | CQ3 shell renderer | Proposed | Stable fly-through density with bounded residency, memory, and traversal cost |
@@ -66,8 +66,8 @@ Increasing the existing fog-froxel resolution is therefore not a substitute for 
 - [x] CQ1.5: Add deterministic spatiotemporal blue-noise sampling and march jitter.
 - [x] CQ1.6: Add temporal moments, variance clipping, and confidence.
 - [x] CQ1.7: Add two-thirds Cinematic trace sizing and invalidation.
-- [x] CQ1.8: Add bounded full-resolution edge repair.
-- [ ] CQ1.9: Complete desktop, GLES-source, live-GL, temporal, depth, HDR, artifact, and performance acceptance.
+- [x] CQ1.8: Add bounded full-resolution edge repair. The 2026-07-28 production check confirmed stable terrain with DDA enabled. The final terrain-pool correction keeps transactional failure handling and the 768 MiB ceiling, grows vertex/index stores independently, and reaches the complete 2,401-chunk 16-ring target at 685 MiB reserved instead of deferring the outer ring.
+- [x] CQ1.9: Complete desktop, GLES-source, live-GL, temporal, depth, HDR, artifact, and performance acceptance. The 2026-07-28 user-provided Cinematic capture is the accepted visual screenshot. The repeatable desktop matrix captured twelve 1920×1080 cases with 32 warm-up frames and 240 GPU samples each on an RTX 2080 Ti; High dense-overcast measured `1.453/2.146 ms` cloud p50/p95 and Cinematic measured `5.040/5.612 ms`. App tests pass `528/528`, and the live packed/floating-point shader/MRT smoke passes. Phase 6 did not preserve a controlled 240-frame High median, so the historical `1.15×` ratio is not reconstructible; this accepted High result is the comparison baseline for CQ2.
 
 ### CQ2 — Density textures and weather data
 

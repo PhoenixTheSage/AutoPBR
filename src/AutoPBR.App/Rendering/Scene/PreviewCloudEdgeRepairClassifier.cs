@@ -68,7 +68,11 @@ internal static class PreviewCloudEdgeRepairClassifier
         var validityEdge = validCount > 0 && validCount < taps.Length;
         var kindEdge = validCount > 1 && kindMax - kindMin > KindRangeThreshold;
         var normalizedValidWeight = validWeight / taps.Length;
-        var lowValidWeight = normalizedValidWeight < MinimumValidWeight;
+        // An entirely empty source footprint contains no recoverable boundary location.
+        // Treating it as "low weight" retraces every clear shell pixel and turns the bounded
+        // edge pass into a second full-screen cloud march.
+        var lowValidWeight = validCount > 0 &&
+                             normalizedValidWeight < MinimumValidWeight;
         var shouldRepair =
             alphaEdge || distanceEdge || validityEdge || kindEdge || lowValidWeight;
 

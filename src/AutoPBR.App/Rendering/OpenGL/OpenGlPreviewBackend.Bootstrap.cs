@@ -1,5 +1,6 @@
 
 using AutoPBR.App.Lang;
+using AutoPBR.App.Rendering.Scene;
 
 namespace AutoPBR.App.Rendering.OpenGL;
 
@@ -533,6 +534,17 @@ public sealed partial class OpenGlPreviewBackend
                 _height = new GlTexture2D(gl);
                 _mesh = new GlMeshBuffer(gl);
                 _groundMesh = new GlMeshBuffer(gl);
+                // Keep a cheap depth-writing pad under streamed terrain. Residency only proves
+                // that a chunk was uploaded, not that its current material/draw path produced
+                // visible samples. The pad therefore remains a two-triangle safety underlay;
+                // true terrain sits above it and replaces it without z-fighting.
+                var groundFallback = PreviewMeshFactory.CreatePreviewGroundPlane(
+                    name: "terrain_streaming_fallback",
+                    halfExtent: PreviewStageConstants.TerrainFlatPadHalfExtent,
+                    worldY: PreviewStageConstants.GroundPlaneWorldY - 0.015f);
+                _groundMesh.Upload(
+                    groundFallback.InterleavedVertices,
+                    groundFallback.Indices);
                 InitTerrainStreaming(gl);
                 _neutralNormal = new GlTexture2D(gl);
                 _neutralNormal.UploadRgba(1, 1, [128, 128, 255, 255]);
