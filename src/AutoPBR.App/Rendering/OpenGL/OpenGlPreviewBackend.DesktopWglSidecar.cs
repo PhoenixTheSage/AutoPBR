@@ -62,6 +62,7 @@ public sealed partial class OpenGlPreviewBackend
             _presentationGlInterface = presentationGlInterface;
             _gpuInitStopwatch.Restart();
             PreviewShaderPrewarm.EnsureStarted();
+            PreviewBundledGpuAssetPrewarm.EnsureStarted();
 
             if (PreviewOpenGlSession.RequestedDesktopGl4)
             {
@@ -84,6 +85,7 @@ public sealed partial class OpenGlPreviewBackend
             _presentationGlInterface = nativeGlInterface;
             _gpuInitStopwatch.Restart();
             PreviewShaderPrewarm.EnsureStarted();
+            PreviewBundledGpuAssetPrewarm.EnsureStarted();
             _pendingDesktopWglSidecar = false;
             _desktopWglSidecarInitState = SidecarInitDone;
             _nativeWglPresenterActive = true;

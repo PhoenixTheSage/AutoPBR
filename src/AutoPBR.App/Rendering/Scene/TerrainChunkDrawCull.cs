@@ -12,6 +12,13 @@ public static class TerrainChunkDrawCull
 {
     /// <summary>Match shadow-cascade parallel gate; tiny candidate sets stay single-threaded.</summary>
     public const int ParallelFilterMinCandidates = 64;
+    private static readonly ParallelOptions FilterParallelOptions = new()
+    {
+        MaxDegreeOfParallelism = Math.Clamp(
+            Environment.ProcessorCount / 2,
+            1,
+            4),
+    };
 
     public readonly struct Candidate
     {
@@ -77,14 +84,16 @@ public static class TerrainChunkDrawCull
         int fallbackCount,
         bool fullOnly,
         List<int> selected,
-        float maxCasterDistanceXz = 0f)
+        float maxCasterDistanceXz = 0f,
+        bool allowParallel = true)
     {
         selected.Clear();
         Span<Vector4> planes = stackalloc Vector4[PreviewFrustumPlanes.PlaneCount];
         PreviewFrustumPlanes.Extract(viewProjection, planes);
         var maxDist = maxCasterDistanceXz > 0f ? maxCasterDistanceXz : float.PositiveInfinity;
 
-        if (candidates.Count >= ParallelFilterMinCandidates)
+        if (allowParallel &&
+            candidates.Count >= ParallelFilterMinCandidates)
         {
             CollectFrustumHitsParallel(candidates, planes, cameraPosition, fullOnly, maxDist, selected);
         }
@@ -168,7 +177,7 @@ public static class TerrainChunkDrawCull
         var plane4 = planes[4];
         var plane5 = planes[5];
         var bag = new ConcurrentBag<int>();
-        Parallel.For(0, candidates.Count, i =>
+        Parallel.For(0, candidates.Count, FilterParallelOptions, i =>
         {
             Span<Vector4> localPlanes = stackalloc Vector4[PreviewFrustumPlanes.PlaneCount];
             localPlanes[0] = plane0;

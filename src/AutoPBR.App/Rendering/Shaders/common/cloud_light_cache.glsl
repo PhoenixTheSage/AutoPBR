@@ -38,8 +38,9 @@ vec2 cqlSampleCascadeExplicitDepth(
     float slice0 = floor(slicePosition);
     float slice1 = min(slice0 + 1.0, depth - 1.0);
     float fraction = slicePosition - slice0;
-    vec2 value0 = texture(cacheTexture, vec3(clamp(unitPosition.xy, 0.0, 1.0), slice0)).rg;
-    vec2 value1 = texture(cacheTexture, vec3(clamp(unitPosition.xy, 0.0, 1.0), slice1)).rg;
+    vec2 uv = clamp(unitPosition.xy, 0.0, 1.0);
+    vec2 value0 = texture(cacheTexture, vec3(uv, slice0)).rg;
+    vec2 value1 = texture(cacheTexture, vec3(uv, slice1)).rg;
     return mix(value0, value1, fraction);
 }
 
@@ -103,6 +104,30 @@ vec3 cqlResolveLighting(
         nearWorldSpan,
         nearLightDepthMin,
         nearLightDepthSpan);
+    bool nearAvailable = hasNear > 0 && cqlUnitInside(nearUnit);
+    if (nearAvailable)
+    {
+        float overlap = clamp(nearOverlapFraction, 0.001, 0.999);
+        float nearEdge = max(
+            abs(nearUnit.x - 0.5),
+            abs(nearUnit.y - 0.5)) * 2.0;
+        // Most occupied samples are comfortably inside the near cascade. Return before
+        // constructing far coordinates so High does three light-space dot products and
+        // two array reads instead of six dot products plus a dormant far lookup.
+        if (hasFar <= 0 || nearEdge < 1.0 - overlap)
+        {
+            vec2 nearValue = cqlSampleCascadeExplicitDepth(
+                nearCache,
+                nearUnit,
+                nearDepth);
+            resolvedWeights = vec3(1.0, 0.0, 0.0);
+            return vec3(
+                max(nearValue.x, 0.0),
+                clamp(nearValue.y, 0.0, 1.0),
+                1.0);
+        }
+    }
+
     vec3 farUnit = cqlWorldToUnit(
         worldPosition,
         basisRight,
@@ -112,8 +137,6 @@ vec3 cqlResolveLighting(
         farWorldSpan,
         farLightDepthMin,
         farLightDepthSpan);
-
-    bool nearAvailable = hasNear > 0 && cqlUnitInside(nearUnit);
     bool farAvailable = hasFar > 0 && cqlUnitInside(farUnit);
     if (!nearAvailable && !farAvailable)
     {
@@ -137,10 +160,16 @@ vec3 cqlResolveLighting(
     }
 
     vec2 nearValue = weights.x > 0.0
-        ? cqlSampleCascadeExplicitDepth(nearCache, nearUnit, nearDepth)
+        ? cqlSampleCascadeExplicitDepth(
+            nearCache,
+            nearUnit,
+            nearDepth)
         : vec2(0.0, 1.0);
     vec2 farValue = weights.y > 0.0
-        ? cqlSampleCascadeExplicitDepth(farCache, farUnit, farDepth)
+        ? cqlSampleCascadeExplicitDepth(
+            farCache,
+            farUnit,
+            farDepth)
         : vec2(0.0, 1.0);
     vec2 cacheValue = nearValue * weights.x + farValue * weights.y;
     resolvedWeights = weights;

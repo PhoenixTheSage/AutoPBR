@@ -13,6 +13,18 @@ public sealed partial class OpenGlPreviewBackend
     private const int MainPassSpecularArrayUnit = 10;
     private const int MainPassHeightArrayUnit = 11;
     private const int ShadowPassAlbedoArrayUnit = 1;
+    private const int MaterialTextureArrayUploadBudgetBytes = 8 * 1024 * 1024;
+
+    private Task<PreparedMaterialTextureArrays>? _materialTextureArrayPreparationTask;
+    private GenesisMaterialTextureArrayPlan? _materialTextureArrayPreparationPlan;
+    private PreparedMaterialTextureArrays? _preparedMaterialTextureArrays;
+    private GlTexture2DArray? _pendingMaterialAlbedoArray;
+    private GlTexture2DArray? _pendingMaterialNormalArray;
+    private GlTexture2DArray? _pendingMaterialSpecArray;
+    private GlTexture2DArray? _pendingMaterialHeightArray;
+    private int _pendingMaterialArrayMapIndex;
+    private int _pendingMaterialArrayLayer;
+    private string? _materialTextureArrayPreparationFailure;
 
     private bool ShouldUseMaterialTextureArrays() =>
         !_materialTextureArraysCompileDisabled &&
@@ -86,42 +98,221 @@ public sealed partial class OpenGlPreviewBackend
             return true;
         }
 
-        EnsureMaterialTextureArrayObjects(frame.Gl);
-        var layerBytes = resolvedPlan.Width * resolvedPlan.Height * 4;
-        var totalBytes = layerBytes * resolvedPlan.Layers;
-        EnsureMaterialTextureArrayScratch(totalBytes);
-        var scratch = _materialTextureArrayScratch;
-        if (scratch is null)
+        return PumpMaterialTextureArrayPreparation(
+            ref frame,
+            slots,
+            resolvedPlan);
+    }
+
+    private bool PumpMaterialTextureArrayPreparation(
+        ref GlRenderFrame frame,
+        IReadOnlyList<PreviewMaterial> slots,
+        GenesisMaterialTextureArrayPlan plan)
+    {
+        if (_preparedMaterialTextureArrays is not { } prepared ||
+            !prepared.Plan.ContentEquals(plan))
         {
-            return false;
+            var task = _materialTextureArrayPreparationTask;
+            if (task is null ||
+                _materialTextureArrayPreparationPlan is null ||
+                !_materialTextureArrayPreparationPlan.ContentEquals(plan))
+            {
+                AbandonPendingMaterialTextureArrayUpload();
+                StartMaterialTextureArrayPreparation(slots, plan);
+                return false;
+            }
+
+            if (!task.IsCompleted)
+            {
+                return false;
+            }
+
+            _materialTextureArrayPreparationTask = null;
+            _materialTextureArrayPreparationPlan = null;
+            if (task.IsFaulted)
+            {
+                _ = task.Exception;
+                _materialTextureArrayPreparationFailure =
+                    task.Exception?.GetBaseException().GetType().Name ?? "unknown";
+                LogMaterialTextureArrayFallbackOnce(
+                    "background-pack-" + _materialTextureArrayPreparationFailure);
+                return false;
+            }
+
+            if (task.IsCanceled)
+            {
+                return false;
+            }
+
+            prepared = task.Result;
+            _preparedMaterialTextureArrays = prepared;
+            _materialTextureArrayPreparationFailure = null;
         }
 
+        EnsurePendingMaterialTextureArrayObjects(frame.Gl);
+        var layerBytes = checked(prepared.Plan.Width * prepared.Plan.Height * 4);
+        var budget = MaterialTextureArrayUploadBudgetBytes;
         frame.Gl.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
         try
         {
-            FillMaterialArrayScratch(slots, resolvedPlan, MaterialArrayMapKind.Albedo, scratch);
-            _materialAlbedoArray!.UploadRgbaIfChanged(resolvedPlan.Width, resolvedPlan.Height, resolvedPlan.Layers, scratch.AsSpan(0, totalBytes), nearest: true);
-            FillMaterialArrayScratch(slots, resolvedPlan, MaterialArrayMapKind.Normal, scratch);
-            _materialNormalArray!.UploadRgbaIfChanged(resolvedPlan.Width, resolvedPlan.Height, resolvedPlan.Layers, scratch.AsSpan(0, totalBytes), nearest: true);
-            FillMaterialArrayScratch(slots, resolvedPlan, MaterialArrayMapKind.Specular, scratch);
-            _materialSpecArray!.UploadRgbaIfChanged(resolvedPlan.Width, resolvedPlan.Height, resolvedPlan.Layers, scratch.AsSpan(0, totalBytes), nearest: true);
-            FillMaterialArrayScratch(slots, resolvedPlan, MaterialArrayMapKind.Height, scratch);
-            _materialHeightArray!.UploadRgbaIfChanged(resolvedPlan.Width, resolvedPlan.Height, resolvedPlan.Layers, scratch.AsSpan(0, totalBytes), nearest: true);
+            while (_pendingMaterialArrayMapIndex < prepared.Maps.Length &&
+                   budget > 0)
+            {
+                var map = prepared.Maps[_pendingMaterialArrayMapIndex];
+                var texture = GetPendingMaterialTextureArray(
+                    _pendingMaterialArrayMapIndex);
+                if (_pendingMaterialArrayLayer == 0)
+                {
+                    texture.BeginStagedRgbaUpload(
+                        prepared.Plan.Width,
+                        prepared.Plan.Height,
+                        prepared.Plan.Layers,
+                        nearest: true);
+                }
+
+                var remainingLayers =
+                    prepared.Plan.Layers - _pendingMaterialArrayLayer;
+                var budgetLayers = Math.Max(1, budget / layerBytes);
+                var uploadLayers = Math.Min(remainingLayers, budgetLayers);
+                var byteOffset =
+                    _pendingMaterialArrayLayer * layerBytes;
+                var byteCount = uploadLayers * layerBytes;
+                texture.UploadRgbaLayers(
+                    _pendingMaterialArrayLayer,
+                    uploadLayers,
+                    map.Bytes.AsSpan(byteOffset, byteCount));
+                _pendingMaterialArrayLayer += uploadLayers;
+                budget -= byteCount;
+
+                if (_pendingMaterialArrayLayer < prepared.Plan.Layers)
+                {
+                    break;
+                }
+
+                texture.CompleteStagedRgbaUpload(map.Fingerprint);
+                _pendingMaterialArrayMapIndex++;
+                _pendingMaterialArrayLayer = 0;
+            }
         }
         finally
         {
             frame.Gl.PixelStore(PixelStoreParameter.UnpackAlignment, 4);
         }
 
-        _materialTextureArrayPlan = resolvedPlan;
+        if (_pendingMaterialArrayMapIndex < prepared.Maps.Length)
+        {
+            RequestPreviewFrame();
+            return false;
+        }
+
+        CommitPendingMaterialTextureArrays(prepared.Plan);
+        _preparedMaterialTextureArrays = null;
         if (!_loggedMaterialTextureArraysReady)
         {
             _loggedMaterialTextureArraysReady = true;
             EmitDiagnostic(
-                $"[3D preview] Material texture arrays ready: layers={resolvedPlan.Layers}, size={resolvedPlan.Width}x{resolvedPlan.Height}, bindless={(_glCapabilities?.BindlessTextures == true ? "available" : "unavailable")}.");
+                $"[3D preview] Material texture arrays ready: layers={plan.Layers}, size={plan.Width}x{plan.Height}, " +
+                $"uploadBudget={MaterialTextureArrayUploadBudgetBytes / (1024 * 1024)}MiB/frame, " +
+                $"bindless={(_glCapabilities?.BindlessTextures == true ? "available" : "unavailable")}.");
         }
 
         return true;
+    }
+
+    private void StartMaterialTextureArrayPreparation(
+        IReadOnlyList<PreviewMaterial> slots,
+        GenesisMaterialTextureArrayPlan plan)
+    {
+        var snapshot = slots.ToArray();
+        _materialTextureArrayPreparationPlan = plan;
+        var task = Task.Run(
+            () => PrepareMaterialTextureArrays(snapshot, plan));
+        _materialTextureArrayPreparationTask = task;
+        _ = task.ContinueWith(
+            _ => RequestPreviewFrame(),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private static PreparedMaterialTextureArrays PrepareMaterialTextureArrays(
+        IReadOnlyList<PreviewMaterial> slots,
+        GenesisMaterialTextureArrayPlan plan)
+    {
+        var totalBytes = checked(
+            plan.Width * plan.Height * plan.Layers * 4);
+        var maps = new PreparedMaterialTextureMap[4];
+        for (var index = 0; index < maps.Length; index++)
+        {
+            var bytes = new byte[totalBytes];
+            FillMaterialArrayScratch(
+                slots,
+                plan,
+                (MaterialArrayMapKind)index,
+                bytes);
+            maps[index] = new PreparedMaterialTextureMap(
+                bytes,
+                GlRgbaFingerprint.Compute(bytes));
+        }
+
+        return new PreparedMaterialTextureArrays(plan, maps);
+    }
+
+    private void EnsurePendingMaterialTextureArrayObjects(GL gl)
+    {
+        _pendingMaterialAlbedoArray ??= new GlTexture2DArray(gl);
+        _pendingMaterialNormalArray ??= new GlTexture2DArray(gl);
+        _pendingMaterialSpecArray ??= new GlTexture2DArray(gl);
+        _pendingMaterialHeightArray ??= new GlTexture2DArray(gl);
+    }
+
+    private GlTexture2DArray GetPendingMaterialTextureArray(int mapIndex) =>
+        mapIndex switch
+        {
+            0 => _pendingMaterialAlbedoArray!,
+            1 => _pendingMaterialNormalArray!,
+            2 => _pendingMaterialSpecArray!,
+            3 => _pendingMaterialHeightArray!,
+            _ => throw new ArgumentOutOfRangeException(nameof(mapIndex)),
+        };
+
+    private void CommitPendingMaterialTextureArrays(
+        GenesisMaterialTextureArrayPlan plan)
+    {
+        var oldAlbedo = _materialAlbedoArray;
+        var oldNormal = _materialNormalArray;
+        var oldSpec = _materialSpecArray;
+        var oldHeight = _materialHeightArray;
+        _materialAlbedoArray = _pendingMaterialAlbedoArray;
+        _materialNormalArray = _pendingMaterialNormalArray;
+        _materialSpecArray = _pendingMaterialSpecArray;
+        _materialHeightArray = _pendingMaterialHeightArray;
+        _pendingMaterialAlbedoArray = null;
+        _pendingMaterialNormalArray = null;
+        _pendingMaterialSpecArray = null;
+        _pendingMaterialHeightArray = null;
+        _pendingMaterialArrayMapIndex = 0;
+        _pendingMaterialArrayLayer = 0;
+        _materialTextureArrayPlan = plan;
+        oldAlbedo?.Dispose();
+        oldNormal?.Dispose();
+        oldSpec?.Dispose();
+        oldHeight?.Dispose();
+    }
+
+    private void AbandonPendingMaterialTextureArrayUpload()
+    {
+        _preparedMaterialTextureArrays = null;
+        _pendingMaterialAlbedoArray?.Dispose();
+        _pendingMaterialNormalArray?.Dispose();
+        _pendingMaterialSpecArray?.Dispose();
+        _pendingMaterialHeightArray?.Dispose();
+        _pendingMaterialAlbedoArray = null;
+        _pendingMaterialNormalArray = null;
+        _pendingMaterialSpecArray = null;
+        _pendingMaterialHeightArray = null;
+        _pendingMaterialArrayMapIndex = 0;
+        _pendingMaterialArrayLayer = 0;
     }
 
     private void BindMainPassMaterialTextureArrays(MainProgramUniformLocs u)
@@ -213,14 +404,6 @@ public sealed partial class OpenGlPreviewBackend
         _fallbackMaterialHeightArray.UploadRgbaIfChanged(1, 1, 1, height, nearest: true);
     }
 
-    private void EnsureMaterialTextureArrayObjects(GL gl)
-    {
-        _materialAlbedoArray ??= new GlTexture2DArray(gl);
-        _materialNormalArray ??= new GlTexture2DArray(gl);
-        _materialSpecArray ??= new GlTexture2DArray(gl);
-        _materialHeightArray ??= new GlTexture2DArray(gl);
-    }
-
     private void EnsureMaterialTextureArrayScratch(int bytes)
     {
         if (_materialTextureArrayScratch is null || _materialTextureArrayScratch.Length < bytes)
@@ -229,7 +412,7 @@ public sealed partial class OpenGlPreviewBackend
         }
     }
 
-    private void FillMaterialArrayScratch(
+    private static void FillMaterialArrayScratch(
         IReadOnlyList<PreviewMaterial> slots,
         GenesisMaterialTextureArrayPlan plan,
         MaterialArrayMapKind mapKind,
@@ -360,6 +543,10 @@ public sealed partial class OpenGlPreviewBackend
 
     private void DisposeMaterialTextureArrays()
     {
+        AbandonPendingMaterialTextureArrayUpload();
+        _materialTextureArrayPreparationTask = null;
+        _materialTextureArrayPreparationPlan = null;
+        _materialTextureArrayPreparationFailure = null;
         _materialAlbedoArray?.Dispose();
         _materialAlbedoArray = null;
         _materialNormalArray?.Dispose();
@@ -384,6 +571,16 @@ public sealed partial class OpenGlPreviewBackend
 
     private void AbandonMaterialTextureArrays()
     {
+        _materialTextureArrayPreparationTask = null;
+        _materialTextureArrayPreparationPlan = null;
+        _preparedMaterialTextureArrays = null;
+        _pendingMaterialAlbedoArray = null;
+        _pendingMaterialNormalArray = null;
+        _pendingMaterialSpecArray = null;
+        _pendingMaterialHeightArray = null;
+        _pendingMaterialArrayMapIndex = 0;
+        _pendingMaterialArrayLayer = 0;
+        _materialTextureArrayPreparationFailure = null;
         _materialAlbedoArray = null;
         _materialNormalArray = null;
         _materialSpecArray = null;
@@ -397,6 +594,14 @@ public sealed partial class OpenGlPreviewBackend
         _loggedMaterialTextureArraysReady = false;
         _loggedMaterialTextureArrayFallbackReason = null;
     }
+
+    private sealed record PreparedMaterialTextureArrays(
+        GenesisMaterialTextureArrayPlan Plan,
+        PreparedMaterialTextureMap[] Maps);
+
+    private readonly record struct PreparedMaterialTextureMap(
+        byte[] Bytes,
+        ulong Fingerprint);
 
     private enum MaterialArrayMapKind
     {

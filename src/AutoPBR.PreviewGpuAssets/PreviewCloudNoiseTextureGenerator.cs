@@ -12,14 +12,28 @@ public static class PreviewCloudNoiseTextureGenerator
     public const int Size = 128;
     public const int DetailSize = 32;
 
-    public static byte[] GenerateRgba8() => Bake(Size, BakeShapeVoxel);
+    public static byte[] GenerateRgba8() => GenerateRgba8(CancellationToken.None);
 
-    public static byte[] GenerateDetailRgba8() => Bake(DetailSize, BakeDetailVoxel);
+    public static byte[] GenerateRgba8(CancellationToken cancellationToken) =>
+        Bake(Size, BakeShapeVoxel, cancellationToken);
 
-    private static byte[] Bake(int size, Func<Vector3, (byte R, byte G, byte B, byte A)> voxel)
+    public static byte[] GenerateDetailRgba8() =>
+        GenerateDetailRgba8(CancellationToken.None);
+
+    public static byte[] GenerateDetailRgba8(CancellationToken cancellationToken) =>
+        Bake(DetailSize, BakeDetailVoxel, cancellationToken);
+
+    private static byte[] Bake(
+        int size,
+        Func<Vector3, (byte R, byte G, byte B, byte A)> voxel,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var rgba = new byte[size * size * size * 4];
-        Parallel.For(0, size, z =>
+        Parallel.For(0, size, new ParallelOptions
+        {
+            CancellationToken = cancellationToken,
+        }, z =>
         {
             for (var y = 0; y < size; y++)
             {

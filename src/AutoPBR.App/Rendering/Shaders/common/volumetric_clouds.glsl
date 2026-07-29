@@ -10,7 +10,10 @@ float vcHGPhase(float cosTheta, float g)
 {
     float gg = g * g;
     float base = max(1.0 + gg - 2.0 * g * cosTheta, 1e-4);
-    return (1.0 - gg) / (4.0 * 3.14159265 * base * sqrt(base));
+    float inverseRoot = inversesqrt(base);
+    return (1.0 - gg) *
+        inverseRoot * inverseRoot * inverseRoot *
+        (1.0 / (4.0 * 3.14159265));
 }
 
 // Forward lobe plus a soft back lobe so clouds opposite the sun keep silver rims.
@@ -19,13 +22,51 @@ float vcDualLobePhase(float cosTheta, float g)
     return mix(vcHGPhase(cosTheta, -0.35 * g), vcHGPhase(cosTheta, g), 0.7);
 }
 
+// Schlick's rational phase approximation avoids the square roots in HG. Keep the exact
+// dual-lobe evaluation for first-order sunlight and use this only for the deliberately
+// low-eccentricity multiple-scattering octaves, where the approximation error is small.
+float vcSchlickPhase(float cosTheta, float g)
+{
+    float gg = g * g;
+    float k = 1.55 * g - 0.55 * g * gg;
+    float denominator = max(1.0 - k * cosTheta, 1e-3);
+    return (1.0 - k * k) /
+        (4.0 * 3.14159265 * denominator * denominator);
+}
+
+float vcDualLobePhaseMultipleScatter(float cosTheta, float g)
+{
+    return mix(
+        vcSchlickPhase(cosTheta, -0.35 * g),
+        vcSchlickPhase(cosTheta, g),
+        0.7);
+}
+
+vec3 vcSunScatterPhaseTerms(
+    float cosTheta,
+    vec3 octave1,
+    vec3 octave2,
+    bool exactFirstOrder)
+{
+    return vec3(
+        exactFirstOrder
+            ? vcDualLobePhase(cosTheta, 0.72)
+            : vcDualLobePhaseMultipleScatter(cosTheta, 0.72),
+        vcDualLobePhaseMultipleScatter(
+            cosTheta,
+            0.72 * max(octave1.y, 0.0)),
+        vcDualLobePhaseMultipleScatter(
+            cosTheta,
+            0.72 * max(octave2.y, 0.0)));
+}
+
 // CQ3.4 controlled direct term plus exactly two higher-order approximations. Each octave
 // vector stores extinction scale, phase-eccentricity scale, and energy scale. Cached local
 // sky visibility suppresses higher-order energy in enclosed interiors, while the short
 // Cinematic cone optical depth sharpens only the direct boundary response.
 vec3 vcSunScatterCq34(
     vec3 sunColor,
-    float cosTheta,
+    vec3 phaseTerms,
     float lightOd,
     float skyVisibility,
     float localConeOpticalDepth,
@@ -35,24 +76,35 @@ vec3 vcSunScatterCq34(
 {
     float boundedLightOd = max(lightOd, 0.0);
     float boundedSkyVisibility = clamp(skyVisibility, 0.0, 1.0);
-    float directPhase = vcDualLobePhase(cosTheta, 0.72);
-    vec3 sum = sunColor * directPhase *
-        exp(-(boundedLightOd + max(localConeOpticalDepth, 0.0)));
+    float cacheTransmittance = exp(-boundedLightOd);
+    float boundedLocalConeOd = max(localConeOpticalDepth, 0.0);
+    float directTransmittance = cacheTransmittance;
+    if (boundedLocalConeOd > 1e-5)
+    {
+        directTransmittance *= exp(-boundedLocalConeOd);
+    }
+    // CQ3 freezes the two extinction controls at 0.5 and 0.25. Derive their exact
+    // Beer-Lambert values from the first-order result instead of issuing two more
+    // transcendental operations for every occupied view-march sample.
+    float octave1Transmittance = sqrt(cacheTransmittance);
+    float octave2Transmittance = sqrt(octave1Transmittance);
+    vec3 sum = sunColor * phaseTerms.x *
+        directTransmittance;
 
     float octave1Visibility = mix(0.28, 1.0, boundedSkyVisibility);
     float octave2Visibility = mix(0.14, 1.0, boundedSkyVisibility);
     sum += sunColor *
         (max(octave1.z, 0.0) * octave1Visibility) *
-        vcDualLobePhase(cosTheta, 0.72 * max(octave1.y, 0.0)) *
-        exp(-boundedLightOd * max(octave1.x, 0.0));
+        phaseTerms.y *
+        octave1Transmittance;
     sum += sunColor *
         (max(octave2.z, 0.0) * octave2Visibility) *
-        vcDualLobePhase(cosTheta, 0.72 * max(octave2.y, 0.0)) *
-        exp(-boundedLightOd * max(octave2.x, 0.0));
+        phaseTerms.z *
+        octave2Transmittance;
 
     // Restrained powder shaping: retain the bright-edge cue without whitening thick
     // interiors into the flat, cartoon-like appearance of an aggressive powder term.
-    float powder = 1.0 - exp(-boundedLightOd * 2.0);
+    float powder = 1.0 - cacheTransmittance * cacheTransmittance;
     sum *= mix(0.72, 0.90, powder);
 
     // Clamp once after all orders. Per-octave clamps flatten the structure that cached sky
@@ -67,7 +119,11 @@ vec3 vcSunScatter(vec3 sunColor, float cosTheta, float lightOd)
 {
     return vcSunScatterCq34(
         sunColor,
-        cosTheta,
+        vcSunScatterPhaseTerms(
+            cosTheta,
+            vec3(0.50, 0.50, 0.55),
+            vec3(0.25, 0.25, 0.30),
+            true),
         lightOd,
         1.0,
         0.0,

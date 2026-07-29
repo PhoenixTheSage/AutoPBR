@@ -39,6 +39,12 @@ uniform vec2 uCirrusWindDir;
 uniform int uQuality;
 uniform int uMarchSteps;
 uniform int uDebugView;
+
+#ifdef GENESIS_CLOUD_QUALITY
+#define CLOUD_QUALITY GENESIS_CLOUD_QUALITY
+#else
+#define CLOUD_QUALITY uQuality
+#endif
 uniform int uHasSceneDepth;
 uniform int uHasCloudNoise;
 uniform int uHasDetailNoise;
@@ -115,7 +121,7 @@ vec3 cloudNightZenith(vec3 viewDir)
 
 float cloudPrimaryMarchJitter()
 {
-    if (uHasCloudStbn > 0 && uQuality >= 2)
+    if (uHasCloudStbn > 0 && CLOUD_QUALITY >= 2)
     {
         vec2 stbnPixel = mod(
             floor(gl_FragCoord.xy),
@@ -158,7 +164,9 @@ vec3 sampleSkyAmbient(vec3 rd, sampler2D skyLut, int hasSkyLut, float dayAmt)
     return mix(night, lut, dayAmt);
 }
 
-vec3 cloudResolveCachedLighting(vec3 worldPosition, out vec3 weights)
+vec3 cloudResolveCachedLighting(
+    vec3 worldPosition,
+    out vec3 weights)
 {
     return cqlResolveLighting(
         uCloudLightNear,
@@ -505,11 +513,11 @@ void main()
             scalarView = false;
             int steps = uMarchSteps > 0
                 ? clamp(uMarchSteps, 1, CLOUD_MAX_STEPS)
-                : (uQuality <= 0
+                : (CLOUD_QUALITY <= 0
                     ? 16
-                    : (uQuality >= 3
+                    : (CLOUD_QUALITY >= 3
                         ? 48
-                        : (uQuality >= 2 ? 32 : 24)));
+                        : (CLOUD_QUALITY >= 2 ? 32 : 24)));
             float marchStep = max((tExit - tEnter) / float(steps), 0.01);
             float sampleFootprint = max(
                 marchStep,
@@ -547,7 +555,7 @@ void main()
                 float detailDimension = float(max(
                     detailSize.x,
                     max(detailSize.y, detailSize.z)));
-                float detailBias = uQuality >= 3 ? -0.35 : 0.0;
+                float detailBias = CLOUD_QUALITY >= 3 ? -0.35 : 0.0;
                 detailLod = vcCloudRayFootprintLod(
                     sampleFootprint,
                     detailCoordinates.w,
@@ -600,7 +608,7 @@ void main()
                 uWindOffset,
                 0.0,
                 0.0,
-                uQuality,
+                CLOUD_QUALITY,
                 uDensityAssetVersion);
         }
         else if (uDebugView == CLOUD_DEBUG_ASSET_PROFILE)
@@ -630,9 +638,15 @@ void main()
         float cosTheta = dot(rd, sunToward);
         float dayAmt = cloudDayFactor(uSunDir, uSunIntensity);
         vec3 sunColor = vcCloudSunColor(sunToward, uSunIntensity);
+        vec3 cq34PhaseTerms = vcSunScatterPhaseTerms(
+            cosTheta,
+            uCloudScatterOctave1,
+            uCloudScatterOctave2,
+            true);
         vec3 skyAmbient = sampleSkyAmbient(rd, uSkyViewLut, uHasSkyLut, dayAmt);
         vec3 accum = vec3(0.0);
         float transmittance = 1.0;
+        float cacheDepthJitter = cloudPrimaryMarchJitter();
 
         if (slabHit)
         {
@@ -661,12 +675,16 @@ void main()
             {
                 int steps = uMarchSteps > 0
                     ? clamp(uMarchSteps, 1, CLOUD_MAX_STEPS)
-                    : (uQuality <= 0 ? 16 : (uQuality >= 3 ? 48 : (uQuality >= 2 ? 32 : 24)));
+                    : (CLOUD_QUALITY <= 0
+                        ? 16
+                        : (CLOUD_QUALITY >= 3
+                            ? 48
+                            : (CLOUD_QUALITY >= 2 ? 32 : 24)));
                 float fineStep = max((tExit - tEnter) / float(steps), 0.01);
-                float coarseStep = fineStep * (uQuality <= 0 ? 4.0 : 3.0);
-                int lightSteps = uQuality >= 2 ? 4 : (uQuality <= 0 ? 2 : 3);
-                float detailLodBias = uQuality >= 3 ? -0.35 : 0.0;
-                float jitter01 = cloudPrimaryMarchJitter();
+                float coarseStep = fineStep * (CLOUD_QUALITY <= 0 ? 4.0 : 3.0);
+                int lightSteps = CLOUD_QUALITY >= 2 ? 4 : (CLOUD_QUALITY <= 0 ? 2 : 3);
+                float detailLodBias = CLOUD_QUALITY >= 3 ? -0.35 : 0.0;
+                float jitter01 = cacheDepthJitter;
                 float t = tEnter + jitter01 * fineStep;
 
                 for (int i = 0; i < CLOUD_MAX_STEPS; ++i)
@@ -722,13 +740,13 @@ void main()
                     float density = vcCloudDensityFromBase(baseShape, worldPos, planetCenter, planetRadius,
                         layerBaseAltitude, layerTopAltitude, uDensity, uVolumeSize,
                         uDetailNoise, uHasDetailNoise, uWindOffset,
-                        sampleFootprint, detailLodBias, uQuality,
+                        sampleFootprint, detailLodBias, CLOUD_QUALITY,
                         weather.z, weather.w, uDensityAssetVersion);
                     if (density > 1e-5)
                     {
                         float segmentLength = min(fineStep, tExit - t);
                         vec3 cloudLightWeights;
-                        vec3 cachedLighting = uQuality >= 2
+                        vec3 cachedLighting = CLOUD_QUALITY >= 2
                             ? cloudResolveCachedLighting(
                                 worldPos,
                                 cloudLightWeights)
@@ -758,7 +776,7 @@ void main()
                         float boundaryWeight =
                             1.0 - smoothstep(0.18, 0.62, baseShape);
                         if (useCachedLighting &&
-                            uQuality >= 3 &&
+                            CLOUD_QUALITY >= 3 &&
                             boundaryWeight > 1e-3)
                         {
                             localConeOpticalDepth =
@@ -774,14 +792,16 @@ void main()
                                 uCloudLocalConeOpticalDepthScale;
                         }
                         float altitude = vcsAltitude(worldPos, planetCenter, planetRadius);
-                        float hSample = saturate1((altitude - layerBaseAltitude) / max(uVolumeHeight, 0.001));
+                        float hSample = saturate1(
+                            (altitude - layerBaseAltitude) /
+                            max(uVolumeHeight, 0.001));
                         float skyVisibility = useCachedLighting
                             ? cachedLighting.y
                             : exp(-lightOd * 0.32);
                         vec3 radiance = useCachedLighting
                             ? vcSunScatterCq34(
                                 sunColor,
-                                cosTheta,
+                                cq34PhaseTerms,
                                 lightOd,
                                 skyVisibility,
                                 localConeOpticalDepth,
@@ -803,7 +823,11 @@ void main()
                                 skyVisibility);
                         // The shared condensation level stays comparatively shaded while
                         // the cauliflower tops receive progressively more skylight.
-                        radiance += skyAmbient * mix(0.22, 0.82, hSample) * 0.62 * ambientVisibility;
+                        radiance +=
+                            skyAmbient *
+                            mix(0.22, 0.82, hSample) *
+                            0.62 *
+                            ambientVisibility;
                         if (useCachedLighting)
                         {
                             vec3 radialUp = normalize(worldPos - planetCenter);
@@ -852,7 +876,7 @@ void main()
 
         if (uCirrusStrength > 0.0 && cirrusHit)
         {
-            int cirrusSamples = uQuality >= 2 ? 2 : 1;
+            int cirrusSamples = CLOUD_QUALITY >= 2 ? 2 : 1;
             float cirrusDensity = 0.0;
             float tCirrus = (cirrusSeg.x + cirrusSeg.y) * 0.5;
             for (int i = 0; i < 2; ++i)
@@ -878,8 +902,8 @@ void main()
                     uDetailNoise,
                     uHasDetailNoise,
                     cirrusSampleFootprint,
-                    uQuality >= 3 ? -0.35 : 0.0,
-                    uQuality,
+                    CLOUD_QUALITY >= 3 ? -0.35 : 0.0,
+                    CLOUD_QUALITY,
                     uDensityAssetVersion);
                 cirrusDensity += sampleDensity / float(cirrusSamples);
                 if (sampleDensity > 1e-3)
@@ -893,7 +917,7 @@ void main()
                 float cirrusOd = cirrusDensity * uCirrusStrength * 0.27 * slant;
                 float cirrusAlpha = (1.0 - exp(-cirrusOd)) * cirrusHorizonVisibility;
                 vec3 cirrusLightWeights;
-                vec3 cirrusCachedLighting = uQuality >= 2
+                vec3 cirrusCachedLighting = CLOUD_QUALITY >= 2
                     ? cloudResolveCachedLighting(
                         uCameraPos + rd * tCirrus,
                         cirrusLightWeights)
@@ -908,7 +932,7 @@ void main()
                 vec3 cirrusSun = useCirrusCache
                     ? vcSunScatterCq34(
                         sunColor,
-                        cosTheta,
+                        cq34PhaseTerms,
                         cirrusLightOd,
                         cirrusSkyVisibility,
                         0.0,

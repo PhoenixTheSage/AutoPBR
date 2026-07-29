@@ -9,6 +9,7 @@ public sealed partial class OpenGlPreviewBackend
     private GpuBootstrapRunner? _gpuBootstrap;
     private bool _gpuBootstrapAborted;
     private bool _pendingShaderReload;
+    private int _gpuGenesisPrewarmIndex;
     private string _glVersionString = "(unknown)";
 
     public string? ActiveContextSummary { get; private set; }
@@ -71,6 +72,7 @@ public sealed partial class OpenGlPreviewBackend
 
         ReleaseGpuResourceObjectsLocked();
         _gpuBootstrap = new GpuBootstrapRunner();
+        _gpuGenesisPrewarmIndex = 0;
         _gpuBootstrapAborted = false;
         _pendingShaderReload = false;
     }
@@ -98,6 +100,7 @@ public sealed partial class OpenGlPreviewBackend
         _neutralSpec = null;
         _neutralHeight?.Dispose();
         _neutralHeight = null;
+        AbandonPendingMaterialUpload();
         _albedo?.Dispose();
         _albedo = null;
         _normal?.Dispose();
@@ -142,6 +145,7 @@ public sealed partial class OpenGlPreviewBackend
         _shaderCtx = null;
         _shaderToolchainPlan = null;
         _gpuInitTier = PreviewGpuInitTier.None;
+        _gpuGenesisPrewarmIndex = 0;
         _shadowAwareGodRayInitAttempted = false;
         _atmoLutsValid = false;
         // Atlas may survive reload; re-emit the enable diagnostic when DDA comes back.
@@ -530,6 +534,11 @@ public sealed partial class OpenGlPreviewBackend
                 return true;
 
             case 3:
+                if (!PreviewBundledGpuAssetPrewarm.IsGroundReady)
+                {
+                    return false;
+                }
+
                 _albedo = new GlTexture2D(gl);
                 _normal = new GlTexture2D(gl);
                 _spec = new GlTexture2D(gl);
@@ -562,15 +571,19 @@ public sealed partial class OpenGlPreviewBackend
                 return true;
 
             case 5:
-                TryInitMoonBillboard(gl, _useOpenGlEs);
-                return true;
+                return TryInitMoonBillboard(gl, _useOpenGlEs);
 
             case 6:
                 TryInitAtmosphere(gl);
                 return true;
 
             case 7:
-                PrewarmCommonGenesisProgramsOnGpu();
+                if (!PrewarmNextCommonGenesisProgramOnGpu(
+                        ref _gpuGenesisPrewarmIndex))
+                {
+                    return false;
+                }
+
                 _gpuInitTier = PreviewGpuInitTier.Core;
                 EmitDiagnostic(
                     "[3D preview] Core GPU init: " +

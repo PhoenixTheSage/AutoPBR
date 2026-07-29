@@ -41,6 +41,9 @@ public sealed class PreviewTerrainChunkMesh
     public required TerrainChunkLodKind Lod { get; init; }
     public required float[] InterleavedVertices { get; init; }
     public required uint[] Indices { get; init; }
+    public long UploadByteLength =>
+        (long)InterleavedVertices.Length * sizeof(float) +
+        (long)Indices.Length * sizeof(uint);
 
     /// <summary>
     /// Contiguous index ranges by terrain grass material slot. Empty means draw the full index buffer

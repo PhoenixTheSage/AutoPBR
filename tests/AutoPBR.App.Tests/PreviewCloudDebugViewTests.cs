@@ -111,6 +111,7 @@ public sealed class PreviewCloudDebugViewTests
             "Rendering",
             "Shaders",
             "genesis_clouds.frag"));
+        backend = backend.ReplaceLineEndings("\n");
 
         Assert.Contains("? 1\n                        : (allowV2 ? 3 : 2)", backend, StringComparison.Ordinal);
         Assert.Contains("profileCode: 3", backend, StringComparison.Ordinal);

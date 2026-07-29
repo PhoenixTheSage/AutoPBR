@@ -1,3 +1,4 @@
+using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.OpenGL;
 
 using Silk.NET.OpenGL;
@@ -155,7 +156,7 @@ public sealed class PreviewVolumeInjectShaderEsTests
         Assert.Contains("vcsIntersectShell", adapted, StringComparison.Ordinal);
         Assert.Contains("vcCloudConservativeDensity", adapted, StringComparison.Ordinal);
         Assert.Contains("const int CLOUD_MAX_STEPS = 64", adapted, StringComparison.Ordinal);
-        Assert.Contains("uQuality >= 3 ? 48", adapted, StringComparison.Ordinal);
+        Assert.Contains("CLOUD_QUALITY >= 3", adapted, StringComparison.Ordinal);
         Assert.Contains("tExit = min(slabSeg.y, sceneT)", adapted, StringComparison.Ordinal);
         Assert.Contains("vcsPlanetOcclusionDistance", adapted, StringComparison.Ordinal);
         Assert.Contains("vcsPlanetHorizonVisibility", adapted, StringComparison.Ordinal);
@@ -182,7 +183,7 @@ public sealed class PreviewVolumeInjectShaderEsTests
         Assert.Contains("float horizontalScale", adapted, StringComparison.Ordinal);
         Assert.Contains("vec2 upperDrift", adapted, StringComparison.Ordinal);
         Assert.Contains("float edgeWeight", adapted, StringComparison.Ordinal);
-        Assert.Contains("int cirrusSamples = uQuality >= 2 ? 2 : 1", adapted, StringComparison.Ordinal);
+        Assert.Contains("int cirrusSamples = CLOUD_QUALITY >= 2 ? 2 : 1", adapted, StringComparison.Ordinal);
         Assert.Contains("float cirrusOd", adapted, StringComparison.Ordinal);
     }
 
@@ -453,12 +454,44 @@ public sealed class PreviewVolumeInjectShaderEsTests
 
         Assert.Contains("uniform sampler3D uCloudStbn", trace, StringComparison.Ordinal);
         Assert.Contains("uniform int uCloudFrameIndex", trace, StringComparison.Ordinal);
-        Assert.Contains("uHasCloudStbn > 0 && uQuality >= 2", trace, StringComparison.Ordinal);
+        Assert.Contains("uHasCloudStbn > 0 && CLOUD_QUALITY >= 2", trace, StringComparison.Ordinal);
         Assert.Contains("floor(gl_FragCoord.xy)", trace, StringComparison.Ordinal);
         Assert.Contains("mod(float(uCloudFrameIndex), CLOUD_STBN_FRAMES)", trace, StringComparison.Ordinal);
-        Assert.Contains("float jitter01 = cloudPrimaryMarchJitter()", trace, StringComparison.Ordinal);
+        Assert.Contains("float cacheDepthJitter = cloudPrimaryMarchJitter()", trace,
+            StringComparison.Ordinal);
+        Assert.Contains("float jitter01 = cacheDepthJitter", trace, StringComparison.Ordinal);
         Assert.Contains("gl_FragCoord.xy + uFramePhase", trace, StringComparison.Ordinal);
         Assert.DoesNotContain("uCloudMoments", trace, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Cq37HighTraceSpecialization_FreezesQualityAndKeepsExactFirstOrderPhase()
+    {
+        var specialized = GlslPreparedSourceCache.GetOrPrepare(
+            "genesis_clouds.frag",
+            ShaderType.FragmentShader,
+            useOpenGlEs: false,
+            new Dictionary<string, int>
+            {
+                ["GENESIS_CLOUD_QUALITY"] = PreviewVolumetricQuality.High,
+            });
+
+        Assert.Contains(
+            "#define GENESIS_CLOUD_QUALITY 2",
+            specialized,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "#define CLOUD_QUALITY GENESIS_CLOUD_QUALITY",
+            specialized,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "uCloudScatterOctave2,\n            true);",
+            specialized,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "cloudResolveCachedLighting(",
+            specialized,
+            StringComparison.Ordinal);
     }
 
     [Fact]

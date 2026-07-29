@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 
+using AutoPBR.App.Rendering.Abstractions;
+
 using Avalonia.Platform;
 
 using Silk.NET.OpenGL;
@@ -50,6 +52,8 @@ internal static class GlslPreparedSourceCache
         ("genesis_godrays.frag", ShaderType.FragmentShader, new Dictionary<string, int> { ["GENESIS_GODRAY_SPARSE_MARCH"] = 1 }),
         ("genesis_godrays_shadow.frag", ShaderType.FragmentShader, new Dictionary<string, int> { ["GENESIS_GODRAY_SPARSE_MARCH"] = 1 }),
         ("genesis_volume_integrate.frag", ShaderType.FragmentShader, new Dictionary<string, int> { ["GENESIS_VOLUME_TEMPORAL"] = 1 }),
+        ("genesis_clouds.frag", ShaderType.FragmentShader,
+            new Dictionary<string, int> { ["GENESIS_CLOUD_QUALITY"] = PreviewVolumetricQuality.High }),
     ];
 
     public static string GetOrPrepare(string entryFile, ShaderType shaderType, bool useOpenGlEs) =>

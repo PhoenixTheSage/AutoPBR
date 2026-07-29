@@ -206,6 +206,16 @@ public sealed class PreviewCloudNoiseTextureGeneratorTests
     }
 
     [Fact]
+    public void GenerateRgba8_HonorsCancellationBeforeAllocatingVolume()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.Throws<OperationCanceledException>(
+            () => PreviewCloudNoiseTextureGenerator.GenerateRgba8(cancellation.Token));
+    }
+
+    [Fact]
     public void CoverageMapGenerator_ProducesWeatherChannels()
     {
         var map = PreviewCloudCoverageMapGenerator.GenerateRgba8();

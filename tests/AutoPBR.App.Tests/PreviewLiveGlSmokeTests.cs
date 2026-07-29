@@ -236,8 +236,8 @@ public sealed class PreviewLiveGlSmokeTests
         while (gl.GetError() != GLEnum.NoError)
         {
         }
-        var pixels = Enumerable.Repeat((byte)255, 4 * 4 * 4).ToArray();
-        overlay.Draw(64, 64, 2, new PreviewNativeWglOverlayBitmap(4, 4, pixels), null, null);
+        var atlas = GlOverlayFontAtlas.CreateProcedural();
+        overlay.DrawTexts(64, 64, 2, atlas, "dbg", "60 FPS", "CPU 1.0 ms");
         gl.Finish();
         Assert.Equal(GLEnum.NoError, gl.GetError());
         diagnostics.Add("[3D preview] Persistent mapped overlay VBO ring rendered without GL errors.");

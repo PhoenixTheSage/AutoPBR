@@ -115,6 +115,13 @@ public sealed partial class OpenGlPreviewBackend
     private GlIndirectDrawCommandBuffer? _terrainShadowSourceCommands;
     private bool _terrainShadowGpuIndirectReady;
     private const int TerrainShadowParallelCullMinCandidates = 64;
+    private static readonly ParallelOptions TerrainShadowParallelOptions = new()
+    {
+        MaxDegreeOfParallelism = Math.Clamp(
+            Environment.ProcessorCount / 2,
+            1,
+            3),
+    };
 
     private void EnsureTerrainStreamer()
     {
@@ -240,8 +247,11 @@ public sealed partial class OpenGlPreviewBackend
         var uploadCap = _terrainStreamingNeedsFrames
             ? PreviewStageConstants.TerrainMaxChunkUploadsPerFrameCatchUp
             : PreviewStageConstants.TerrainMaxChunkUploadsPerFrame;
+        var uploadByteCap = _terrainStreamingNeedsFrames
+            ? PreviewStageConstants.TerrainMaxUploadBytesPerFrameCatchUp
+            : PreviewStageConstants.TerrainMaxUploadBytesPerFrame;
         var uploads = new List<PreviewTerrainChunkMesh>(uploadCap);
-        _terrainStreamer.DrainReady(uploads, uploadCap);
+        _terrainStreamer.DrainReady(uploads, uploadCap, uploadByteCap);
 
         var disposed = 0;
         List<TerrainChunkKey>? toRemove = null;
@@ -700,6 +710,7 @@ public sealed partial class OpenGlPreviewBackend
         if (_terrainDrawCandidates.Count >= TerrainShadowParallelCullMinCandidates)
         {
             Parallel.Invoke(
+                TerrainShadowParallelOptions,
                 () => TerrainChunkDrawCull.Select(
                     _terrainDrawCandidates,
                     nearVp,
@@ -707,7 +718,8 @@ public sealed partial class OpenGlPreviewBackend
                     fallback,
                     fullOnly: true,
                     _terrainShadowSelectedNear,
-                    maxCasterDistanceXz: nearCasterDistanceXz),
+                    maxCasterDistanceXz: nearCasterDistanceXz,
+                    allowParallel: false),
                 () => TerrainChunkDrawCull.Select(
                     _terrainDrawCandidates,
                     midVp,
@@ -715,7 +727,8 @@ public sealed partial class OpenGlPreviewBackend
                     fallback,
                     fullOnly: false,
                     _terrainShadowSelectedMid,
-                    maxCasterDistanceXz: midCasterDistanceXz),
+                    maxCasterDistanceXz: midCasterDistanceXz,
+                    allowParallel: false),
                 () => TerrainChunkDrawCull.Select(
                     _terrainDrawCandidates,
                     farVp,
@@ -723,7 +736,8 @@ public sealed partial class OpenGlPreviewBackend
                     fallback,
                     fullOnly: false,
                     _terrainShadowSelectedFar,
-                    maxCasterDistanceXz: farCasterDistanceXz));
+                    maxCasterDistanceXz: farCasterDistanceXz,
+                    allowParallel: false));
             return;
         }
 

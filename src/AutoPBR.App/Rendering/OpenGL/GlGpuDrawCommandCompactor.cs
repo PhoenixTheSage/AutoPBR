@@ -20,6 +20,13 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
     private const int LocalSizeX = 64;
     private const int CullRecordFloats = 8;
     private const int ParallelCullRecordMinCommands = 64;
+    private static readonly ParallelOptions CullRecordParallelOptions = new()
+    {
+        MaxDegreeOfParallelism = Math.Clamp(
+            Environment.ProcessorCount / 2,
+            1,
+            4),
+    };
 
     private readonly GL _gl;
     private readonly GlIndirectDrawCommandBuffer _outputCommands;
@@ -333,7 +340,7 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         Array.Clear(records, 0, floatCount);
         if (commandCount >= ParallelCullRecordMinCommands)
         {
-            Parallel.For(0, commandCount, i =>
+            Parallel.For(0, commandCount, CullRecordParallelOptions, i =>
             {
                 WriteCullRecord(
                     records.AsSpan(i * CullRecordFloats, CullRecordFloats),

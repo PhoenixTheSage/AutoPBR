@@ -269,12 +269,33 @@ public sealed class TerrainChunkStreamer : IDisposable
     }
 
     public int DrainReady(List<PreviewTerrainChunkMesh> destination, int maxCount)
+        => DrainReady(destination, maxCount, long.MaxValue);
+
+    public int DrainReady(
+        List<PreviewTerrainChunkMesh> destination,
+        int maxCount,
+        long maxBytes)
     {
         var n = 0;
-        while (n < maxCount && _ready.TryDequeue(out var mesh))
+        long bytes = 0;
+        maxBytes = Math.Max(1, maxBytes);
+        while (n < maxCount && _ready.TryPeek(out var next))
         {
+            // Always allow one mesh so an individual chunk larger than the budget
+            // cannot permanently block the FIFO.
+            if (n > 0 && bytes + next.UploadByteLength > maxBytes)
+            {
+                break;
+            }
+
+            if (!_ready.TryDequeue(out var mesh))
+            {
+                continue;
+            }
+
             _inflight.TryRemove(mesh.Key, out _);
             destination.Add(mesh);
+            bytes += mesh.UploadByteLength;
             n++;
         }
 

@@ -18,8 +18,14 @@ public sealed partial class OpenGlPreviewBackend
         float Radius,
         float CosDiscEdge);
 
-    private void TryInitMoonBillboard(GL gl, bool useOpenGlEs)
+    private bool TryInitMoonBillboard(GL gl, bool useOpenGlEs)
     {
+        if (!PreviewBundledGpuAssetPrewarm.TryGetMoon(
+                out var moonRgba))
+        {
+            return false;
+        }
+
         DestroyMoonBillboard();
         _moonProgram = new GlMoonBillboardProgram(gl, useOpenGlEs, out var moonErr);
         if (_moonProgram is not { IsValid: true })
@@ -31,14 +37,14 @@ public sealed partial class OpenGlPreviewBackend
                 EmitDiagnostic("[3D preview] Moon billboard shader: " + moonErr);
             }
 
-            return;
+            return true;
         }
 
         _moonAlbedo = new GlTexture2D(gl, nearestFilter: false);
         _moonAlbedo.UploadRgba(
             PreviewMoonDiscTextureGenerator.Size,
             PreviewMoonDiscTextureGenerator.Size,
-            PreviewMoonDiscTextureGenerator.GenerateRgba8(),
+            moonRgba,
             nearestFilter: false);
 
         Span<float> quad =
@@ -59,6 +65,7 @@ public sealed partial class OpenGlPreviewBackend
 
         gl.BindVertexArray(0);
         _moonUniformLocs = ResolveMoonProgramUniformLocs(_moonProgram);
+        return true;
     }
 
     private void DestroyMoonBillboard()

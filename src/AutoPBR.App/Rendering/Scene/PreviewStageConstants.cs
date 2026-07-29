@@ -153,6 +153,12 @@ public static class PreviewStageConstants
     /// <summary>Upload cap while streaming is still catching up to the desired ring.</summary>
     public const int TerrainMaxChunkUploadsPerFrameCatchUp = 12;
 
+    /// <summary>Steady-state terrain vertex/index bytes submitted to GL per frame.</summary>
+    public const long TerrainMaxUploadBytesPerFrame = 8L * 1024L * 1024L;
+
+    /// <summary>Catch-up terrain vertex/index bytes submitted to GL per frame.</summary>
+    public const long TerrainMaxUploadBytesPerFrameCatchUp = 24L * 1024L * 1024L;
+
     /// <summary>Max LongRunning bake workers (pool size is also capped by ProcessorCount-1).</summary>
     public const int TerrainMaxBakeWorkers = 8;
 

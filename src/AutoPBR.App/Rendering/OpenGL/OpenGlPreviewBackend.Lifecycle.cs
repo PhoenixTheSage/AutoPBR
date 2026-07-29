@@ -14,6 +14,14 @@ namespace AutoPBR.App.Rendering.OpenGL;
 /// <summary>OpenGL implementation of <see cref="IRenderPreviewBackend"/>; GPU entry points must run on the OpenGL thread (Avalonia <see cref="AutoPBR.App.Controls.GlPbrPreviewControl"/> callbacks).</summary>
 public sealed partial class OpenGlPreviewBackend
 {
+    private const int Material2DUploadBudgetBytes = 8 * 1024 * 1024;
+    private Task<PreparedMaterialUpload>? _materialPreparationTask;
+    private PreviewMaterial? _materialPreparationSource;
+    private bool _materialPreparationNearest;
+    private PreparedMaterialUpload? _preparedMaterialUpload;
+    private GlTexture2D?[]? _pendingMaterialTextures;
+    private int _pendingMaterialTextureIndex;
+
     private bool TryUploadBundledGroundFallback(GL gl)
     {
         // Prefer the cached kit/biome palette across GPU reload (shader cache invalidate).
@@ -39,7 +47,7 @@ public sealed partial class OpenGlPreviewBackend
             return _grassGroundReady;
         }
 
-        if (!PreviewBundledGroundMapsLoader.TryLoad(out var material))
+        if (!PreviewBundledGpuAssetPrewarm.TryGetGround(out var material))
         {
             EmitDiagnostic("[3D preview] Bundled grass ground fallback missing or invalid.");
             return false;
@@ -156,6 +164,191 @@ public sealed partial class OpenGlPreviewBackend
         slot.Normal?.Bind(u + 1);
         slot.Spec?.Bind(u + 2);
         slot.Height?.Bind(u + 3);
+    }
+
+    private bool TryUploadMaterialAsync(
+        GL gl,
+        PreviewMaterial? material,
+        bool nearest)
+    {
+        if (_preparedMaterialUpload is not { } prepared ||
+            !ReferenceEquals(_materialPreparationSource, material) ||
+            _materialPreparationNearest != nearest)
+        {
+            var task = _materialPreparationTask;
+            if (task is null ||
+                !ReferenceEquals(_materialPreparationSource, material) ||
+                _materialPreparationNearest != nearest)
+            {
+                AbandonPendingMaterialUpload();
+                _materialPreparationSource = material;
+                _materialPreparationNearest = nearest;
+                task = Task.Run(() => PrepareMaterialUpload(material));
+                _materialPreparationTask = task;
+                _ = task.ContinueWith(
+                    _ => RequestPreviewFrame(),
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+                return false;
+            }
+
+            if (!task.IsCompleted)
+            {
+                return false;
+            }
+
+            _materialPreparationTask = null;
+            if (task.IsFaulted || task.IsCanceled)
+            {
+                _ = task.Exception;
+                UploadMaterial(gl, material, nearest);
+                _materialPreparationSource = null;
+                return true;
+            }
+
+            prepared = task.Result;
+            _preparedMaterialUpload = prepared;
+        }
+
+        _pendingMaterialTextures ??= new GlTexture2D?[4];
+        var budget = Material2DUploadBudgetBytes;
+        gl.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+        try
+        {
+            while (_pendingMaterialTextureIndex < prepared.Maps.Length &&
+                   budget > 0)
+            {
+                var index = _pendingMaterialTextureIndex;
+                var map = prepared.Maps[index];
+                var texture = new GlTexture2D(gl);
+                texture.UploadRgba(
+                    map.Width,
+                    map.Height,
+                    map.Bytes,
+                    nearest);
+                _pendingMaterialTextures[index] = texture;
+                _pendingMaterialTextureIndex++;
+                budget -= map.Bytes.Length;
+            }
+        }
+        finally
+        {
+            gl.PixelStore(PixelStoreParameter.UnpackAlignment, 4);
+        }
+
+        if (_pendingMaterialTextureIndex < prepared.Maps.Length)
+        {
+            RequestPreviewFrame();
+            return false;
+        }
+
+        var oldAlbedo = _albedo;
+        var oldNormal = _normal;
+        var oldSpec = _spec;
+        var oldHeight = _height;
+        _albedo = _pendingMaterialTextures[0]!;
+        _normal = _pendingMaterialTextures[1]!;
+        _spec = _pendingMaterialTextures[2]!;
+        _height = _pendingMaterialTextures[3]!;
+        _pendingMaterialTextures = null;
+        _pendingMaterialTextureIndex = 0;
+        _preparedMaterialUpload = null;
+        _materialPreparationSource = null;
+        oldAlbedo?.Dispose();
+        oldNormal?.Dispose();
+        oldSpec?.Dispose();
+        oldHeight?.Dispose();
+        return true;
+    }
+
+    private static PreparedMaterialUpload PrepareMaterialUpload(
+        PreviewMaterial? material)
+    {
+        if (material is null || material.AlbedoRgba.Length < 4)
+        {
+            return new PreparedMaterialUpload(
+            [
+                new PreparedMaterialMap(1, 1, [180, 180, 190, 255]),
+                new PreparedMaterialMap(1, 1, [128, 128, 255, 255]),
+                new PreparedMaterialMap(1, 1, [120, 60, 40, 255]),
+                new PreparedMaterialMap(1, 1, [128, 128, 128, 255]),
+            ]);
+        }
+
+        return new PreparedMaterialUpload(
+        [
+            PrepareMaterialMap(
+                material.AlbedoRgba,
+                material,
+                [180, 180, 190, 255]),
+            PrepareMaterialMap(
+                material.NormalRgba,
+                material,
+                [128, 128, 255, 255]),
+            PrepareMaterialMap(
+                material.SpecularRgba,
+                material,
+                [120, 60, 40, 255]),
+            PrepareMaterialMap(
+                material.HeightRgba,
+                material,
+                [128, 128, 128, 255]),
+        ]);
+    }
+
+    private static PreparedMaterialMap PrepareMaterialMap(
+        ReadOnlyMemory<byte>? source,
+        PreviewMaterial material,
+        byte[] neutral)
+    {
+        if (source is not { Length: >= 4 } rgba)
+        {
+            return new PreparedMaterialMap(1, 1, neutral);
+        }
+
+        var (width, height) = ResolveRgbaDimensions(
+            material.Width,
+            material.Height,
+            rgba.Length);
+        var byteCount = checked(width * height * 4);
+        if (rgba.Length < byteCount)
+        {
+            return new PreparedMaterialMap(1, 1, neutral);
+        }
+
+        var bytes = new byte[byteCount];
+        if (material.GlUploadFlipRows)
+        {
+            OpenGlRgbaUpload.CopyBottomRowFirst(
+                rgba.Span[..byteCount],
+                width,
+                height,
+                bytes);
+        }
+        else
+        {
+            rgba.Span[..byteCount].CopyTo(bytes);
+        }
+
+        return new PreparedMaterialMap(width, height, bytes);
+    }
+
+    private void AbandonPendingMaterialUpload()
+    {
+        if (_pendingMaterialTextures is not null)
+        {
+            foreach (var texture in _pendingMaterialTextures)
+            {
+                texture?.Dispose();
+            }
+        }
+
+        _pendingMaterialTextures = null;
+        _pendingMaterialTextureIndex = 0;
+        _preparedMaterialUpload = null;
+        _materialPreparationTask = null;
+        _materialPreparationSource = null;
     }
 
     private void UploadMaterial(GL gl, PreviewMaterial? material, bool nearest)
@@ -344,6 +537,14 @@ public sealed partial class OpenGlPreviewBackend
 
         return (s, Math.Max(1, texels / s));
     }
+
+    private sealed record PreparedMaterialUpload(
+        PreparedMaterialMap[] Maps);
+
+    private readonly record struct PreparedMaterialMap(
+        int Width,
+        int Height,
+        byte[] Bytes);
 
     private void InitEntitySkinningBoneUbo(GL gl)
     {
@@ -1018,6 +1219,7 @@ public sealed partial class OpenGlPreviewBackend
         _neutralHeight?.Dispose();
         _neutralHeight = null;
         _grassGroundReady = false;
+        AbandonPendingMaterialUpload();
         _albedo?.Dispose();
         _albedo = null;
         _normal?.Dispose();
@@ -1081,6 +1283,11 @@ public sealed partial class OpenGlPreviewBackend
         _neutralSpec = null;
         _neutralHeight = null;
         _grassGroundReady = false;
+        _materialPreparationTask = null;
+        _materialPreparationSource = null;
+        _preparedMaterialUpload = null;
+        _pendingMaterialTextures = null;
+        _pendingMaterialTextureIndex = 0;
         _albedo = null;
         _normal = null;
         _spec = null;

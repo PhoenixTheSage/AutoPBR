@@ -2,8 +2,6 @@ using System.Diagnostics;
 using System.Numerics;
 using System.Reflection;
 
-using System.Runtime.InteropServices;
-
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.OpenGL;
 using AutoPBR.App.Rendering.Scene;
@@ -12,8 +10,6 @@ using Avalonia;
 using JetBrains.Annotations;
 using Avalonia.Controls;
 using Avalonia.Input;
-using Avalonia.Media;
-using Avalonia.Media.Imaging;
 using Avalonia.OpenGL;
 using Avalonia.OpenGL.Controls;
 using Avalonia.Rendering;
@@ -101,6 +97,8 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
     private Point _lastLeftClickPos;
     private const int DoubleClickMs = 400;
     private const double DoubleClickMaxDist = 8;
+    private GlOverlayFontAtlas? _nativeOverlayFontAtlas;
+    private double _nativeOverlayFontAtlasScale;
 
     internal bool PresentationVsyncEnabled => _presentationVsyncEnabled;
 
@@ -586,7 +584,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
     {
         _nativeWglPresenter?.Dispose();
         _nativeWglPresenter = null;
-        _backend.SetNativeWglOverlay(null, null, null, 0);
+        _backend.SetNativeWglOverlayTexts(null, null, null, null, 0);
         _nativeHost.IsVisible = false;
         _angleSurface.IsVisible = true;
         if (_angleGlInterface is { } gl)
@@ -743,7 +741,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
             change.Property == OverlayCpuTextProperty ||
             change.Property == OverlayFpsVisibleProperty)
         {
-            UpdateNativeWglOverlayBitmaps();
+            UpdateNativeWglOverlayTexts();
             return;
         }
 
@@ -764,7 +762,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         Volatile.Write(ref _cachedPreviewPixelWidth, w);
         Volatile.Write(ref _cachedPreviewPixelHeight, h);
         _backend.Resize(w, h);
-        UpdateNativeWglOverlayBitmaps();
+        UpdateNativeWglOverlayTexts();
         RecoverPreviewFrame();
     }
 
@@ -1277,7 +1275,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
     {
         _glInterface = _nativeWglPresenter?.GlInterface;
         ApplyPresentationVsync();
-        UpdateNativeWglOverlayBitmaps();
+        UpdateNativeWglOverlayTexts();
         if (_nativeHwnd != IntPtr.Zero)
         {
             InvalidateHdrDisplayProbeCache();
@@ -1287,7 +1285,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         RecoverPreviewFrame();
     }
 
-    private void UpdateNativeWglOverlayBitmaps()
+    private void UpdateNativeWglOverlayTexts()
     {
         if (_nativeWglPresenter is null || _disposed)
         {
@@ -1296,7 +1294,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
 
         if (!Dispatcher.UIThread.CheckAccess())
         {
-            Dispatcher.UIThread.Post(UpdateNativeWglOverlayBitmaps, DispatcherPriority.Background);
+            Dispatcher.UIThread.Post(UpdateNativeWglOverlayTexts, DispatcherPriority.Background);
             return;
         }
 
@@ -1306,10 +1304,16 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
             scale = 1.0;
         }
 
-        var debug = RenderDebugOverlayBitmap(OverlayDebugText, scale);
-        var fps = OverlayFpsVisible ? RenderFpsOverlayBitmap(OverlayFpsText, scale) : null;
-        var cpu = OverlayFpsVisible ? RenderFpsOverlayBitmap(OverlayCpuText, scale) : null;
-        _backend.SetNativeWglOverlay(debug, fps, cpu, Math.Max(1, (int)Math.Round(8.0 * scale)));
+        EnsureNativeOverlayFontAtlas(scale);
+        var debug = OverlayDebugText;
+        var fps = OverlayFpsVisible ? OverlayFpsText : null;
+        var cpu = OverlayFpsVisible ? OverlayCpuText : null;
+        _backend.SetNativeWglOverlayTexts(
+            debug,
+            fps,
+            cpu,
+            _nativeOverlayFontAtlas,
+            Math.Max(1, (int)Math.Round(8.0 * scale)));
         // Continuous native frames already pick up the new overlay; avoid a UI→frame storm.
         if (!_backend.NeedsContinuousRendering)
         {
@@ -1317,76 +1321,19 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         }
     }
 
-    private static PreviewNativeWglOverlayBitmap? RenderDebugOverlayBitmap(string? text, double renderScale)
+    private void EnsureNativeOverlayFontAtlas(double renderScale)
     {
-        if (string.IsNullOrWhiteSpace(text))
+        if (_nativeOverlayFontAtlas is not null &&
+            Math.Abs(_nativeOverlayFontAtlasScale - renderScale) < 0.001 &&
+            Math.Abs(_nativeOverlayFontAtlas.RenderScale - renderScale) < 0.001)
         {
-            return null;
+            return;
         }
 
-        var block = new TextBlock
-        {
-            Text = text,
-            FontFamily = new FontFamily("Consolas"),
-            FontSize = 11,
-            Foreground = new SolidColorBrush(Color.FromArgb(0xE8, 0xFF, 0xFF, 0xFF)),
-            TextWrapping = TextWrapping.Wrap,
-            MaxWidth = 520
-        };
-        return RenderOverlayVisualToBitmap(block, renderScale);
-    }
-
-    private static PreviewNativeWglOverlayBitmap? RenderFpsOverlayBitmap(string? text, double renderScale)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return null;
-        }
-
-        var border = new Border
-        {
-            Background = new SolidColorBrush(Color.FromArgb(0x66, 0x00, 0x00, 0x00)),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(6, 3),
-            Child = new TextBlock
-            {
-                Text = text,
-                FontFamily = new FontFamily("Consolas"),
-                FontSize = 12,
-                Foreground = new SolidColorBrush(Color.FromArgb(0xF0, 0xFF, 0xFF, 0xFF))
-            }
-        };
-        return RenderOverlayVisualToBitmap(border, renderScale);
-    }
-
-    private static PreviewNativeWglOverlayBitmap? RenderOverlayVisualToBitmap(Control visual, double renderScale)
-    {
-        visual.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        var desired = visual.DesiredSize;
-        if (desired.Width <= 0.0 || desired.Height <= 0.0)
-        {
-            return null;
-        }
-
-        visual.Arrange(new Rect(desired));
-        var width = Math.Max(1, (int)Math.Ceiling(desired.Width * renderScale));
-        var height = Math.Max(1, (int)Math.Ceiling(desired.Height * renderScale));
-        using var bitmap = new RenderTargetBitmap(
-            new PixelSize(width, height),
-            new Avalonia.Vector(96.0 * renderScale, 96.0 * renderScale));
-        bitmap.Render(visual);
-        var pixels = new byte[width * height * 4];
-        var handle = GCHandle.Alloc(pixels, GCHandleType.Pinned);
-        try
-        {
-            bitmap.CopyPixels(new PixelRect(0, 0, width, height), handle.AddrOfPinnedObject(), pixels.Length, width * 4);
-        }
-        finally
-        {
-            handle.Free();
-        }
-
-        return new PreviewNativeWglOverlayBitmap(width, height, pixels);
+        _nativeOverlayFontAtlas = GlOverlayFontAtlas.BakeConsolas(
+            GlOverlayFontAtlas.DefaultFontSizeLogical,
+            renderScale);
+        _nativeOverlayFontAtlasScale = renderScale;
     }
 
     internal void RenderNativeWglFrame(PreviewDesktopWglBootstrap.ISwapBuffersContext context)

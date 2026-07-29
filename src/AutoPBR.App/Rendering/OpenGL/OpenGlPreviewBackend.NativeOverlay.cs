@@ -4,26 +4,33 @@ namespace AutoPBR.App.Rendering.OpenGL;
 
 public sealed partial class OpenGlPreviewBackend
 {
-    internal void SetNativeWglOverlay(
-        PreviewNativeWglOverlayBitmap? debug,
-        PreviewNativeWglOverlayBitmap? fps,
-        PreviewNativeWglOverlayBitmap? cpu,
+    /// <summary>
+    /// Publishes HUD strings + font atlas for ImGui-style overlay draw on the GL thread.
+    /// Atlas should be rebaked when render scale changes; strings may update at ~5 Hz.
+    /// </summary>
+    internal void SetNativeWglOverlayTexts(
+        string? debugText,
+        string? fpsText,
+        string? cpuText,
+        GlOverlayFontAtlas? fontAtlas,
         int marginPixels)
     {
         lock (_sync)
         {
-            _nativeOverlayDebug = debug;
-            _nativeOverlayFps = fps;
-            _nativeOverlayCpu = cpu;
+            _nativeOverlayDebugText = debugText;
+            _nativeOverlayFpsText = fpsText;
+            _nativeOverlayCpuText = cpuText;
+            _nativeOverlayFontAtlas = fontAtlas;
             _nativeOverlayMarginPixels = Math.Max(0, marginPixels);
         }
     }
 
     private void DrawNativeWglOverlayIfNeeded(GL gl, int presentFbo, int viewportWidth, int viewportHeight)
     {
-        PreviewNativeWglOverlayBitmap? debug;
-        PreviewNativeWglOverlayBitmap? fps;
-        PreviewNativeWglOverlayBitmap? cpu;
+        string? debugText;
+        string? fpsText;
+        string? cpuText;
+        GlOverlayFontAtlas? atlas;
         int marginPixels;
         lock (_sync)
         {
@@ -32,13 +39,17 @@ public sealed partial class OpenGlPreviewBackend
                 return;
             }
 
-            debug = _nativeOverlayDebug;
-            fps = _nativeOverlayFps;
-            cpu = _nativeOverlayCpu;
+            debugText = _nativeOverlayDebugText;
+            fpsText = _nativeOverlayFpsText;
+            cpuText = _nativeOverlayCpuText;
+            atlas = _nativeOverlayFontAtlas;
             marginPixels = _nativeOverlayMarginPixels;
         }
 
-        if (debug is null && fps is null && cpu is null)
+        if (atlas is null ||
+            (string.IsNullOrWhiteSpace(debugText) &&
+             string.IsNullOrWhiteSpace(fpsText) &&
+             string.IsNullOrWhiteSpace(cpuText)))
         {
             return;
         }
@@ -71,7 +82,7 @@ public sealed partial class OpenGlPreviewBackend
             _nativeOverlayShaderRevLoaded = NativeOverlayShaderRev;
         }
 
-        // HDR scRGB: 1.0 = 80 nits. Scale SDR UI bitmaps to paper white so alpha edges are not
+        // HDR scRGB: 1.0 = 80 nits. Scale SDR UI to paper white so alpha edges are not
         // dissolved by scene values much greater than 1 (bright sky / sunlit blocks).
         var hdrScale = 0f;
         if (HdrPresentActive)
@@ -96,7 +107,15 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         gl.Viewport(0, 0, (uint)Math.Max(1, viewportWidth), (uint)Math.Max(1, viewportHeight));
-        _nativeOverlayRenderer.Draw(viewportWidth, viewportHeight, marginPixels, debug, fps, cpu, hdrScale);
+        _nativeOverlayRenderer.DrawTexts(
+            viewportWidth,
+            viewportHeight,
+            marginPixels,
+            atlas,
+            debugText,
+            fpsText,
+            cpuText,
+            hdrScale);
     }
 
     private void DestroyNativeWglOverlay()

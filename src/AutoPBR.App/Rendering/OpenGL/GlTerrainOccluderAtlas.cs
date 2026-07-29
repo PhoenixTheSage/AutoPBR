@@ -21,7 +21,9 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
     private int _settingsVersion = -1;
     private int _filledVersion = -1;
     private bool _hasResidentData;
-    private float[] _cpuScratch = [];
+    private uint _pendingTexture;
+    private BakePayload? _uploadPayload;
+    private int _uploadNextRow;
     private bool _disposed;
 
     private int _bakeInFlight;
@@ -50,6 +52,9 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
     /// startup CPU pressure prevents any generation from reaching upload.
     /// </summary>
     public const int BakeSlowDiagnosticMs = 3000;
+
+    /// <summary>Maximum RG32F atlas bytes uploaded by one render frame.</summary>
+    public const int UploadBudgetBytesPerFrame = 4 * 1024 * 1024;
 
     /// <summary>True while a CPU bake worker holds the single-flight latch.</summary>
     public bool IsBakeInFlight => Volatile.Read(ref _bakeInFlight) != 0;
@@ -141,50 +146,58 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
             return;
         }
 
-        BakePayload? payload;
-        lock (_payloadGate)
-        {
-            payload = _readyPayload;
-            _readyPayload = null;
-        }
-
+        var payload = _uploadPayload;
         if (payload is null)
         {
-            return;
+            lock (_payloadGate)
+            {
+                payload = _readyPayload;
+                _readyPayload = null;
+            }
+
+            if (payload is null)
+            {
+                return;
+            }
+
+            _pendingTexture = CreateTexture(
+                payload.SizeColumns,
+                payload.SizeColumns);
+            if (_pendingTexture == 0)
+            {
+                RecordFailure("atlas texture allocation failed");
+                Interlocked.Exchange(ref _bakeInFlight, 0);
+                return;
+            }
+
+            _uploadPayload = payload;
+            _uploadNextRow = 0;
         }
 
         while (gl.GetError() != GLEnum.NoError)
         {
         }
 
-        if (!EnsureTexture(payload.SizeColumns, payload.SizeColumns))
-        {
-            RecordFailure("atlas texture allocation failed");
-            Interlocked.Exchange(ref _bakeInFlight, 0);
-            return;
-        }
-
-        if (_cpuScratch.Length < payload.Data.Length)
-        {
-            _cpuScratch = new float[payload.Data.Length];
-        }
-
-        Array.Copy(payload.Data, _cpuScratch, payload.Data.Length);
-        gl.BindTexture(TextureTarget.Texture2D, _texture);
+        var rowBytes = checked(payload.SizeColumns * 2 * sizeof(float));
+        var remainingRows = payload.SizeColumns - _uploadNextRow;
+        var rowsThisFrame = Math.Min(
+            remainingRows,
+            Math.Max(1, UploadBudgetBytesPerFrame / rowBytes));
+        gl.BindTexture(TextureTarget.Texture2D, _pendingTexture);
         unsafe
         {
-            fixed (float* ptr = _cpuScratch)
+            fixed (float* ptr = payload.Data)
             {
                 gl.TexSubImage2D(
                     TextureTarget.Texture2D,
                     0,
                     0,
-                    0,
+                    _uploadNextRow,
                     (uint)payload.SizeColumns,
-                    (uint)payload.SizeColumns,
+                    (uint)rowsThisFrame,
                     PixelFormat.RG,
                     PixelType.Float,
-                    ptr);
+                    ptr + _uploadNextRow * payload.SizeColumns * 2);
             }
         }
 
@@ -193,12 +206,31 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
         if (uploadError != GLEnum.NoError)
         {
             RecordFailure($"atlas RG32F upload produced {uploadError}");
-            _hasResidentData = false;
-            _filledVersion = -1;
+            gl.DeleteTexture(_pendingTexture);
+            _pendingTexture = 0;
+            _uploadPayload = null;
+            _uploadNextRow = 0;
             Interlocked.Exchange(ref _bakeInFlight, 0);
             return;
         }
 
+        _uploadNextRow += rowsThisFrame;
+        if (_uploadNextRow < payload.SizeColumns)
+        {
+            return;
+        }
+
+        if (_texture != 0)
+        {
+            gl.DeleteTexture(_texture);
+        }
+
+        _texture = _pendingTexture;
+        _pendingTexture = 0;
+        _uploadPayload = null;
+        _uploadNextRow = 0;
+        _width = payload.SizeColumns;
+        _height = payload.SizeColumns;
         _originX = payload.OriginX;
         _originZ = payload.OriginZ;
         _settingsVersion = payload.SettingsVersion;
@@ -232,6 +264,8 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
             _readyPayload = null;
         }
 
+        _uploadPayload = null;
+        _uploadNextRow = 0;
         DestroyTexture();
         Interlocked.Exchange(ref _bakeInFlight, 0);
     }
@@ -358,18 +392,12 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
         Volatile.Write(ref _lastFailureDiagnostic, diagnostic);
     }
 
-    private bool EnsureTexture(int width, int height)
+    private uint CreateTexture(int width, int height)
     {
         width = Math.Max(1, width);
         height = Math.Max(1, height);
-        if (_texture != 0 && _width == width && _height == height)
-        {
-            return true;
-        }
-
-        DestroyTexture();
-        _texture = gl.GenTexture();
-        gl.BindTexture(TextureTarget.Texture2D, _texture);
+        var texture = gl.GenTexture();
+        gl.BindTexture(TextureTarget.Texture2D, texture);
         unsafe
         {
             gl.TexImage2D(
@@ -389,12 +417,7 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
         gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
         gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
         gl.BindTexture(TextureTarget.Texture2D, 0);
-        _width = width;
-        _height = height;
-        _filledVersion = -1;
-        _settingsVersion = -1;
-        _hasResidentData = false;
-        return _texture != 0;
+        return texture;
     }
 
     private void DestroyTexture()
@@ -403,6 +426,12 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
         {
             gl.DeleteTexture(_texture);
             _texture = 0;
+        }
+
+        if (_pendingTexture != 0)
+        {
+            gl.DeleteTexture(_pendingTexture);
+            _pendingTexture = 0;
         }
 
         _width = 0;

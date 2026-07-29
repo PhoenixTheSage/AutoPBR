@@ -10,7 +10,7 @@ public sealed partial class OpenGlPreviewBackend
 
     private void EnsureEntityRebakeWorker()
     {
-        _entityRebakeWorker ??= new EntityRebakeWorker();
+        _entityRebakeWorker ??= new EntityRebakeWorker(RequestPreviewFrame);
     }
 
     private void DisposeEntityRebakeWorker()
@@ -20,7 +20,12 @@ public sealed partial class OpenGlPreviewBackend
         _entityRebakeLastConsumedSequence = 0;
     }
 
-    private void EnqueueEntityRebakeRequest(ref GlRenderFrame frame, bool setupAnimMotion)
+    private void EnqueueEntityRebakeRequest(
+        ref GlRenderFrame frame,
+        bool setupAnimMotion,
+        string requestKey,
+        EntityRebakeWorkKind workKind = EntityRebakeWorkKind.CpuRebake,
+        float? animationTimeSeconds = null)
     {
         if (frame.BlockModel is null || frame.EntityRebakeCtx is null)
         {
@@ -32,9 +37,12 @@ public sealed partial class OpenGlPreviewBackend
         _entityRebakeWorker!.Enqueue(new EntityRebakeRequest
         {
             Sequence = sequence,
+            WorkKind = workKind,
+            RequestKey = requestKey,
             RebakeContext = frame.EntityRebakeCtx,
             Materials = frame.BlockModel.Materials,
-            AnimationTimeSeconds = frame.EntityEmulatedAnimClock,
+            AnimationTimeSeconds =
+                animationTimeSeconds ?? frame.EntityEmulatedAnimClock,
             ApplyGeometryIrSetupAnimMotion = setupAnimMotion
         });
     }
@@ -43,11 +51,15 @@ public sealed partial class OpenGlPreviewBackend
 
     private bool TryConsumeEntityRebakeResult(
         ref GlRenderFrame frame,
-        bool setupAnimMotion,
         string rebakeKey)
     {
         if (_entityRebakeWorker is null ||
-            !_entityRebakeWorker.TryTakeCompleted(_entityRebakeLastConsumedSequence, out var result) ||
+            !_entityRebakeWorker.TryTakeCompleted(
+                _entityRebakeLastConsumedSequence,
+                EntityRebakeWorkKind.CpuRebake,
+                rebakeKey,
+                out var result) ||
+            !result.Success ||
             result.InterleavedVertices is null ||
             result.Indices is null ||
             result.DrawBatches is null)
@@ -56,6 +68,9 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         _entityRebakeLastConsumedSequence = result.Sequence;
+        ApplyEntityRebakeContextResult(
+            frame.EntityRebakeCtx!,
+            result);
         var rebaked = new PreviewModelSubject
         {
             InterleavedVertices = result.InterleavedVertices,
@@ -88,5 +103,51 @@ public sealed partial class OpenGlPreviewBackend
 
         _emulatedRebakeSubjectKey = rebakeKey;
         return true;
+    }
+
+    private bool TryTakeEntityPreparationResult(
+        EntityRebakeWorkKind workKind,
+        string requestKey,
+        out EntityRebakeResult result)
+    {
+        if (_entityRebakeWorker is null ||
+            !_entityRebakeWorker.TryTakeCompleted(
+                _entityRebakeLastConsumedSequence,
+                workKind,
+                requestKey,
+                out result))
+        {
+            result = default!;
+            return false;
+        }
+
+        _entityRebakeLastConsumedSequence = result.Sequence;
+        return true;
+    }
+
+    private static void ApplyEntityRebakeContextResult(
+        EntityEmulatedPreviewRebakeContext context,
+        EntityRebakeResult result)
+    {
+        context.GpuBoneDispatchRoute = result.GpuBoneDispatchRoute;
+        context.MeshProvenance = result.MeshProvenance;
+        context.ElementPartIds = result.ElementPartIds;
+        context.LastGroundContactY = result.LastGroundContactY;
+        context.LastGroundLiftY = result.LastGroundLiftY;
+        context.LastBodyCentroidY = result.LastBodyCentroidY;
+        context.LastHeadCentroidY = result.LastHeadCentroidY;
+        context.LastLegCentroidY = result.LastLegCentroidY;
+
+        if (result.WorkKind != EntityRebakeWorkKind.GpuSkinPrepare)
+        {
+            return;
+        }
+
+        context.GpuBindPoseInverseLocalToParent =
+            result.GpuBindPoseInverseLocalToParent;
+        context.GpuBindPoseBonePalette =
+            result.GpuBindPoseBonePalette;
+        context.GpuBindPoseInterleavedVertices =
+            result.GpuBindPoseInterleavedVertices;
     }
 }

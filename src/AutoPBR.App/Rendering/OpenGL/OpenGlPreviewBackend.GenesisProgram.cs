@@ -223,11 +223,12 @@ public sealed partial class OpenGlPreviewBackend
         ResetDrawRecordBaseInstanceCompileState();
     }
 
-    private void PrewarmCommonGenesisProgramsOnGpu()
+    private bool PrewarmNextCommonGenesisProgramOnGpu(
+        ref int prewarmIndex)
     {
         if (_shaderCtx is null || _useOpenGlEs)
         {
-            return;
+            return true;
         }
 
         var masks = new[]
@@ -237,8 +238,9 @@ public sealed partial class OpenGlPreviewBackend
             GenesisShaderFeatureMask.All,
         };
 
-        foreach (var mask in masks)
+        while (prewarmIndex < masks.Length)
         {
+            var mask = masks[prewarmIndex++];
             var cacheKey = new GenesisProgramCacheKey(
                 mask,
                 Tessellation: false,
@@ -252,7 +254,12 @@ public sealed partial class OpenGlPreviewBackend
             }
 
             _ = TryGetOrCreateGenesisProgram(cacheKey, out _, out _);
+            // One cache miss / ProgramBinary load / compile-link per bootstrap
+            // advance keeps the owner-thread hitch bounded to one program.
+            return false;
         }
+
+        return true;
     }
 
     private bool ShouldUseEntitySkinningSsbo() =>

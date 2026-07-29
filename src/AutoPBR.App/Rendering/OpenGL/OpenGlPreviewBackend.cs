@@ -91,13 +91,14 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private uint _axesVao;
     private uint _axesVbo;
     private GlNativeOverlayRenderer? _nativeOverlayRenderer;
-    private PreviewNativeWglOverlayBitmap? _nativeOverlayDebug;
-    private PreviewNativeWglOverlayBitmap? _nativeOverlayFps;
-    private PreviewNativeWglOverlayBitmap? _nativeOverlayCpu;
+    private string? _nativeOverlayDebugText;
+    private string? _nativeOverlayFpsText;
+    private string? _nativeOverlayCpuText;
+    private GlOverlayFontAtlas? _nativeOverlayFontAtlas;
     private int _nativeOverlayMarginPixels = 8;
     private bool _nativeOverlayShaderErrorLogged;
     /// <summary>Bump when overlay shader source changes so hot sessions rebuild the program.</summary>
-    private const int NativeOverlayShaderRev = 2;
+    private const int NativeOverlayShaderRev = 3;
     private int _nativeOverlayShaderRevLoaded;
     private GlMoonBillboardProgram? _moonProgram;
     private GlTexture2D? _moonAlbedo;
@@ -376,6 +377,7 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
         }
 
         PreviewShaderPrewarm.EnsureStarted();
+        PreviewBundledGpuAssetPrewarm.EnsureStarted();
     }
 
     private void OnShaderPrewarmProgress()

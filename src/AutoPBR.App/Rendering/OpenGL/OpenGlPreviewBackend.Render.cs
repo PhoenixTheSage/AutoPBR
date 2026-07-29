@@ -86,29 +86,6 @@ public sealed partial class OpenGlPreviewBackend
                 return;
             }
 
-            try
-            {
-                activeSidecar.Invoke(() =>
-                {
-                    using (activeSidecar.BindOnOwnerThread())
-                    {
-                        activeSidecar.EnsureRenderTargetCore(pixelWidth, pixelHeight);
-                        GlRenderCore(activeSidecar.RenderFbo, pixelWidth, pixelHeight);
-                    }
-                }, TimeSpan.FromSeconds(2));
-            }
-            catch (TimeoutException)
-            {
-                EmitDiagnostic("[3D preview] Sidecar WGL render timed out (owner thread likely wedged); skipping frame.");
-                ClearPresentationFramebuffer(glInterface, framebuffer, pixelWidth, pixelHeight);
-                return;
-            }
-            catch (Exception ex)
-            {
-                EmitDiagnostic($"[3D preview] Sidecar WGL render failed: {ex.GetType().Name}: {ex.Message}");
-                return;
-            }
-
             lock (_sync)
             {
                 if (_forceSyncSidecarPresent)
@@ -120,11 +97,30 @@ public sealed partial class OpenGlPreviewBackend
 
             try
             {
-                activeSidecar.CopyColorToEsFbo(glInterface, framebuffer, pixelWidth, pixelHeight, forceSyncPresent);
+                activeSidecar.ScheduleAsyncPboFrame(
+                    pixelWidth,
+                    pixelHeight,
+                    fbo => GlRenderCore(fbo, pixelWidth, pixelHeight),
+                    forceSyncPresent,
+                    RequestPreviewFrame);
+                if (!activeSidecar.TryCopyLatestColorToEsFbo(
+                        glInterface,
+                        framebuffer,
+                        pixelWidth,
+                        pixelHeight))
+                {
+                    ClearPresentationFramebuffer(
+                        glInterface,
+                        framebuffer,
+                        pixelWidth,
+                        pixelHeight);
+                }
             }
             catch (Exception ex)
             {
-                EmitDiagnostic($"[3D preview] Sidecar CPU presentation failed: {ex.GetType().Name}: {ex.Message}");
+                EmitDiagnostic(
+                    $"[3D preview] Async sidecar PBO presentation failed: " +
+                    $"{ex.GetType().Name}: {ex.Message}");
                 return;
             }
             if (activeSidecar.UsesAsyncPboReadback)

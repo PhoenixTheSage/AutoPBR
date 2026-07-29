@@ -17,6 +17,8 @@ public sealed partial class OpenGlPreviewBackend
     private const bool Cq2V2ShaderProfileReady = true;
 
     private GlShaderProgram? _cloudProgram;
+    private GlShaderProgram? _cloudHighProgram;
+    private CloudUniformLocs _cloudHighUniformLocs;
     private GlShaderProgram? _cloudTemporalProgram;
     private GlShaderProgram? _cloudUpsampleProgram;
     private GlShaderProgram? _cloudRepairProgram;
@@ -62,6 +64,10 @@ public sealed partial class OpenGlPreviewBackend
     private string _cloudDensityAssetDiagnostic = "not-initialized";
     private int _cloudDensityAssetVersion;
     private int _cloudDensityAssetProfileCode;
+    private Task<PreviewCloudDensityAssetSet>? _cloudDensityGenerationTask;
+    private CancellationTokenSource? _cloudDensityGenerationCancellation;
+    private string _cloudDensityGenerationLoadReason = "not-started";
+    private bool _cloudDensityGenerationFailureLogged;
     private int _lastCloudDebugViewDiagnostic = -1;
     private PreviewCloudLightingCachePlan _cloudLightingCachePlan;
     private GlShaderProgram? _cloudLightSliceProgram;
@@ -82,6 +88,7 @@ public sealed partial class OpenGlPreviewBackend
     private string _cloudLightingCacheResourceDiagnostic = "resources=not-initialized";
     private string _cloudGroundTransmittanceDiagnostic = "not-initialized";
     private int _cloudLightFrameSerial;
+    private int _cloudGroundTransmittanceLastPublishFrame = -1;
     private int _cloudLightMaterialSettingsHash;
     private bool _cloudLightLifecycleInitialized;
     private Vector3 _cloudLightLifecycleCameraGround;
@@ -105,6 +112,32 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         _cloudUniformLocs = ResolveCloudUniformLocs(_cloudProgram);
+        if (!useOpenGlEs)
+        {
+            _cloudHighProgram = CreatePreviewProgram(
+                "genesis_godrays.vert",
+                "genesis_clouds.frag",
+                out var highErr,
+                "clouds-high-cq3.7",
+                new Dictionary<string, int>
+                {
+                    ["GENESIS_CLOUD_QUALITY"] = PreviewVolumetricQuality.High,
+                });
+            if (_cloudHighProgram is not { IsValid: true })
+            {
+                EmitDiagnostic(
+                    "[3D preview] CQ3.7 High cloud specialization unavailable; " +
+                    "using the generic cloud shader (" +
+                    TrimShaderDiagnostic(highErr) + ").");
+                _cloudHighProgram?.Dispose();
+                _cloudHighProgram = null;
+            }
+            else
+            {
+                _cloudHighUniformLocs =
+                    ResolveCloudUniformLocs(_cloudHighProgram);
+            }
+        }
 
         _cloudTemporalProgram = CreatePreviewProgram("genesis_godrays.vert", "genesis_clouds_temporal.frag",
             out var temporalErr, "clouds-temporal");
@@ -430,6 +463,7 @@ public sealed partial class OpenGlPreviewBackend
     private void ResetCloudLightingCacheLifecycleCq36()
     {
         _cloudLightFrameSerial = 0;
+        _cloudGroundTransmittanceLastPublishFrame = -1;
         _cloudLightMaterialSettingsHash = 0;
         _cloudLightLifecycleInitialized = false;
         _cloudLightLifecycleCameraGround = Vector3.Zero;
@@ -616,15 +650,27 @@ public sealed partial class OpenGlPreviewBackend
 
             if (decision.UpdatesNear)
             {
-                var nearGenerated = TryGenerateCloudLightCascadeCq36(
-                    ref frame,
-                    cache,
-                    inputs,
-                    PreviewCloudLightCascadeSelection.Near,
+                var nearGenerated = TryReuseUnchangedCloudLightCascadeCq37(
+                    cache.Near,
+                    nearTransform,
+                    windOffset,
                     lifecycleFrame,
-                    GlGpuTimerScope.CloudLightNear,
-                    out var nearPath,
                     out var nearDiagnostic);
+                var nearPath =
+                    PreviewCloudLightingCacheGenerationPath.CacheSampling;
+                if (!nearGenerated)
+                {
+                    nearGenerated = TryGenerateCloudLightCascadeCq36(
+                        ref frame,
+                        cache,
+                        inputs,
+                        PreviewCloudLightCascadeSelection.Near,
+                        lifecycleFrame,
+                        GlGpuTimerScope.CloudLightNear,
+                        out nearPath,
+                        out nearDiagnostic);
+                }
+
                 generatedAny |= nearGenerated;
                 allRequestedGenerated &= nearGenerated;
                 lastGeneratorPath = nearPath;
@@ -634,15 +680,27 @@ public sealed partial class OpenGlPreviewBackend
 
             if (decision.UpdatesFar)
             {
-                var farGenerated = TryGenerateCloudLightCascadeCq36(
-                    ref frame,
-                    cache,
-                    inputs,
-                    PreviewCloudLightCascadeSelection.Far,
+                var farGenerated = TryReuseUnchangedCloudLightCascadeCq37(
+                    cache.Far,
+                    farTransform,
+                    windOffset,
                     lifecycleFrame,
-                    GlGpuTimerScope.CloudLightFar,
-                    out var farPath,
                     out var farDiagnostic);
+                var farPath =
+                    PreviewCloudLightingCacheGenerationPath.CacheSampling;
+                if (!farGenerated)
+                {
+                    farGenerated = TryGenerateCloudLightCascadeCq36(
+                        ref frame,
+                        cache,
+                        inputs,
+                        PreviewCloudLightCascadeSelection.Far,
+                        lifecycleFrame,
+                        GlGpuTimerScope.CloudLightFar,
+                        out farPath,
+                        out farDiagnostic);
+                }
+
                 generatedAny |= farGenerated;
                 allRequestedGenerated &= farGenerated;
                 lastGeneratorPath = farPath;
@@ -676,11 +734,14 @@ public sealed partial class OpenGlPreviewBackend
                 }
             }
 
-            if (generatedAny && cache.Far.IsGenerated)
+            if (generatedAny &&
+                decision.UpdatesFar &&
+                cache.Far.IsGenerated)
             {
                 TryPublishCloudGroundTransmittanceCq35(
                     ref frame,
-                    cache);
+                    cache,
+                    lifecycleFrame);
             }
 
             if (decision.UpdatesNear && cache.Near.IsGenerated)
@@ -762,6 +823,50 @@ public sealed partial class OpenGlPreviewBackend
                     ex.GetType().Name + ": " + ex.Message + ").");
             }
         }
+    }
+
+    private static bool TryReuseUnchangedCloudLightCascadeCq37(
+        GlCloudLightCascadeTarget target,
+        in PreviewCloudLightCascadeTransform desiredTransform,
+        Vector3 currentWindOffset,
+        int generationFrame,
+        out string diagnostic)
+    {
+        if (!target.IsGenerated)
+        {
+            diagnostic = "not-generated";
+            return false;
+        }
+
+        var previous = target.Transform;
+        var windDelta = currentWindOffset - target.GenerationWindOffset;
+        var basisStable =
+            Vector3.Dot(previous.Basis.Right, desiredTransform.Basis.Right) > 0.999999f &&
+            Vector3.Dot(previous.Basis.Up, desiredTransform.Basis.Up) > 0.999999f &&
+            Vector3.Dot(previous.Basis.Forward, desiredTransform.Basis.Forward) > 0.999999f;
+        var transformStable =
+            previous.Profile.Equals(desiredTransform.Profile) &&
+            MathF.Abs(previous.PlaneCenterX - desiredTransform.PlaneCenterX) <= 1e-4f &&
+            MathF.Abs(previous.PlaneCenterY - desiredTransform.PlaneCenterY) <= 1e-4f &&
+            MathF.Abs(previous.LightDepthMin - desiredTransform.LightDepthMin) <= 1e-4f &&
+            MathF.Abs(previous.LightDepthSpan - desiredTransform.LightDepthSpan) <= 1e-4f;
+        if (!basisStable ||
+            !transformStable ||
+            windDelta.LengthSquared() > 1e-8f)
+        {
+            diagnostic = "state-changed";
+            return false;
+        }
+
+        // This is a logical scheduled refresh, not an unbounded stale reuse: the cascade's
+        // age and generation ID advance transactionally, while identical density/light-space
+        // input avoids rewriting an unchanged texture. Ground publication observes the new ID.
+        target.CommitGeneration(
+            desiredTransform,
+            generationFrame,
+            currentWindOffset);
+        diagnostic = "exact-static-reuse-cq3.7";
+        return true;
     }
 
     private bool TryGenerateCloudLightCascadeCq36(
@@ -869,7 +974,8 @@ public sealed partial class OpenGlPreviewBackend
 
     private void TryPublishCloudGroundTransmittanceCq35(
         ref GlRenderFrame frame,
-        GlCloudLightFroxelCache cache)
+        GlCloudLightFroxelCache cache,
+        int lifecycleFrame)
     {
         if (_cloudGroundTransmittancePublisher is not { } publisher ||
             _cloudGroundTransmittanceTarget is not { IsAllocated: true } target)
@@ -901,9 +1007,11 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         _cloudGroundTransmittanceFailureLogged = false;
+        _cloudGroundTransmittanceLastPublishFrame = lifecycleFrame;
         _cloudGroundTransmittanceDiagnostic =
             target.FormatDiagnostic() +
-            ";" + diagnostic;
+            ";" + diagnostic +
+            $";publishFrame={_cloudGroundTransmittanceLastPublishFrame};cadence=far-refresh";
         if (_cloudGroundTransmittanceReadyLogged)
         {
             return;
@@ -975,7 +1083,77 @@ public sealed partial class OpenGlPreviewBackend
             }
         }
 
-        var generatedV1 = CreateGeneratedV1DensityAssetSet();
+        StartCloudDensityGeneration(preferredLoadReason);
+        _cloudDensityAssetDiagnostic =
+            $"generated-v1-pending ({preferredLoadReason})";
+        _cloudDensityAssetVersion = 0;
+        _cloudDensityAssetProfileCode = 5;
+        InvalidateCloudTemporalHistory();
+        EmitDiagnostic(
+            "[3D preview] CQ2 bundled density assets unavailable; " +
+            "runtime v1 density generation is running on a CPU worker. " +
+            "Detailed cloud shaders retain their procedural hash-density fallback until commit.");
+        return false;
+    }
+
+    private void StartCloudDensityGeneration(string loadReason)
+    {
+        CancelCloudDensityGeneration();
+
+        var cancellation = new CancellationTokenSource();
+        var task = Task.Run(
+            () => CreateGeneratedV1DensityAssetSet(cancellation.Token),
+            cancellation.Token);
+        _cloudDensityGenerationCancellation = cancellation;
+        _cloudDensityGenerationTask = task;
+        _cloudDensityGenerationLoadReason = loadReason;
+        _cloudDensityGenerationFailureLogged = false;
+
+        _ = task.ContinueWith(
+            _ => RequestPreviewFrame(),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private void PumpCloudDensityGeneration(GL gl)
+    {
+        var task = _cloudDensityGenerationTask;
+        if (task is null || !task.IsCompleted)
+        {
+            return;
+        }
+
+        var cancellation = _cloudDensityGenerationCancellation;
+        var loadReason = _cloudDensityGenerationLoadReason;
+        _cloudDensityGenerationTask = null;
+        _cloudDensityGenerationCancellation = null;
+        cancellation?.Dispose();
+
+        if (task.IsCanceled)
+        {
+            return;
+        }
+
+        if (task.IsFaulted)
+        {
+            _ = task.Exception;
+            _cloudDensityAssetDiagnostic =
+                $"procedural-shader-fallback ({loadReason};generated-v1-faulted)";
+            _cloudDensityAssetVersion = 0;
+            _cloudDensityAssetProfileCode = 5;
+            if (!_cloudDensityGenerationFailureLogged)
+            {
+                _cloudDensityGenerationFailureLogged = true;
+                EmitDiagnostic(
+                    "[3D preview] CQ2 runtime density generation failed; " +
+                    $"{_cloudDensityAssetDiagnostic}.");
+            }
+
+            return;
+        }
+
+        var generatedV1 = task.Result;
         if (TryCommitCloudDensityTextures(
                 gl,
                 generatedV1,
@@ -983,21 +1161,49 @@ public sealed partial class OpenGlPreviewBackend
         {
             UpdateCloudDensityAssetDiagnostic(
                 generatedV1,
-                $"{preferredLoadReason} -> generated-v1;{generatedUploadReason}",
+                $"{loadReason} -> generated-v1;{generatedUploadReason}",
                 profileCode: 4);
-            return true;
+            _cloudDensityGenerationFailureLogged = false;
+            return;
         }
 
         _cloudDensityAssetDiagnostic =
-            $"procedural-shader-fallback ({preferredLoadReason};{generatedUploadReason})";
+            $"procedural-shader-fallback ({loadReason};{generatedUploadReason})";
         _cloudDensityAssetVersion = 0;
         _cloudDensityAssetProfileCode = 5;
-        InvalidateCloudTemporalHistory();
-        EmitDiagnostic(
-            "[3D preview] CQ2 density texture initialization failed; " +
-            $"{_cloudDensityAssetDiagnostic}. Detailed cloud shaders retain their " +
-            "procedural hash-density fallback.");
-        return false;
+        if (!_cloudDensityGenerationFailureLogged)
+        {
+            _cloudDensityGenerationFailureLogged = true;
+            EmitDiagnostic(
+                "[3D preview] CQ2 generated density texture upload failed; " +
+                $"{_cloudDensityAssetDiagnostic}.");
+        }
+    }
+
+    private void CancelCloudDensityGeneration()
+    {
+        var task = _cloudDensityGenerationTask;
+        var cancellation = _cloudDensityGenerationCancellation;
+        _cloudDensityGenerationTask = null;
+        _cloudDensityGenerationCancellation = null;
+        if (cancellation is null)
+        {
+            return;
+        }
+
+        cancellation.Cancel();
+        if (task is { IsCompleted: false })
+        {
+            _ = task.ContinueWith(
+                _ => cancellation.Dispose(),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+        else
+        {
+            cancellation.Dispose();
+        }
     }
 
     private bool TryCommitCloudDensityTextures(
@@ -1079,14 +1285,15 @@ public sealed partial class OpenGlPreviewBackend
             $"baseBytes={assets.BaseLevelByteLength:N0}.");
     }
 
-    private static PreviewCloudDensityAssetSet CreateGeneratedV1DensityAssetSet() =>
+    private static PreviewCloudDensityAssetSet CreateGeneratedV1DensityAssetSet(
+        CancellationToken cancellationToken) =>
         new(
             AssetVersion: 1,
             ProfileName: "legacy-v1-runtime",
             ShapeSize: PreviewCloudNoiseTextureGenerator.Size,
-            ShapeRgba: PreviewCloudNoiseTextureGenerator.GenerateRgba8(),
+            ShapeRgba: PreviewCloudNoiseTextureGenerator.GenerateRgba8(cancellationToken),
             DetailSize: PreviewCloudNoiseTextureGenerator.DetailSize,
-            DetailRgba: PreviewCloudNoiseTextureGenerator.GenerateDetailRgba8(),
+            DetailRgba: PreviewCloudNoiseTextureGenerator.GenerateDetailRgba8(cancellationToken),
             WeatherWidth: PreviewCloudCoverageMapGenerator.Size,
             WeatherHeight: PreviewCloudCoverageMapGenerator.Size,
             WeatherRgba: PreviewCloudCoverageMapGenerator.GenerateRgba8());
@@ -1307,8 +1514,11 @@ public sealed partial class OpenGlPreviewBackend
     private void DestroyVolumetricCloudResources()
     {
         var gl = _gl;
+        CancelCloudDensityGeneration();
         _cloudProgram?.Dispose();
         _cloudProgram = null;
+        _cloudHighProgram?.Dispose();
+        _cloudHighProgram = null;
         _cloudTemporalProgram?.Dispose();
         _cloudTemporalProgram = null;
         _cloudUpsampleProgram?.Dispose();
@@ -1370,6 +1580,8 @@ public sealed partial class OpenGlPreviewBackend
         _cloudDensityAssetDiagnostic = "not-initialized";
         _cloudDensityAssetVersion = 0;
         _cloudDensityAssetProfileCode = 0;
+        _cloudDensityGenerationLoadReason = "not-started";
+        _cloudDensityGenerationFailureLogged = false;
         _lastCloudDebugViewDiagnostic = -1;
         _cloudLightingCachePlan = default;
         _cloudLightBasis = null;
@@ -1735,6 +1947,7 @@ public sealed partial class OpenGlPreviewBackend
         bool? forceTemporal = null,
         bool updateHistory = true)
     {
+        PumpCloudDensityGeneration(frame.Gl);
         if (!CanDrawVolumetricClouds(frame.Settings))
         {
             return false;
@@ -2014,6 +2227,7 @@ public sealed partial class OpenGlPreviewBackend
                 $"temporalResolve={useTemporalReproject}, cloudDepthHistory={useTemporalReproject}, godRays={godRays}, " +
                 $"volumetricPreset={PreviewVolumetricQuality.GetName(frame.Settings.VolumetricQuality)}, " +
                 $"cloudQuality={PreviewVolumetricQuality.Resolve(frame.Settings.VolumetricQuality).CloudQuality}, " +
+                $"traceProgram={(profile.CloudQuality == PreviewVolumetricQuality.High && _cloudHighProgram is { IsValid: true } ? "high-specialized-cq3.7" : "generic")}, " +
                 $"cloudFormat={_cloudRenderFormatProfile.Name}, " +
                 $"trace={traceSize.Width}x{traceSize.Height}@{traceSize.Scale:0.###}, " +
                 $"pixelAngle={pixelAngularSize:0.000000}, " +
@@ -2047,14 +2261,22 @@ public sealed partial class OpenGlPreviewBackend
         float jitterPhase,
         float pixelAngularSize)
     {
-        if (_cloudProgram is not { } program)
+        var useHighSpecialization =
+            profile.CloudQuality == PreviewVolumetricQuality.High &&
+            _cloudHighProgram is { IsValid: true };
+        var program = useHighSpecialization
+            ? _cloudHighProgram
+            : _cloudProgram;
+        if (program is null)
         {
             return;
         }
 
         var gl = frame.Gl;
         var settings = frame.Settings;
-        var cu = _cloudUniformLocs;
+        var cu = useHighSpecialization
+            ? _cloudHighUniformLocs
+            : _cloudUniformLocs;
 
         // GLES/ANGLE: sampler uniforms default to texture unit 0, and draw validation
         // rejects a program whose samplers of different types (sampler3D uCloudNoise vs

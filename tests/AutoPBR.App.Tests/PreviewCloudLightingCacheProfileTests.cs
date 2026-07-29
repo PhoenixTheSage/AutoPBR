@@ -267,7 +267,7 @@ public sealed class PreviewCloudLightingCacheProfileTests
 
         Assert.Equal(PreviewCloudLightCascadeSelection.None, frame1.Cascades);
         Assert.Equal(PreviewCloudLightCascadeSelection.Near, frame2.Cascades);
-        Assert.Equal(PreviewCloudLightCascadeSelection.Both, frame4.Cascades);
+        Assert.Equal(PreviewCloudLightCascadeSelection.Far, frame4.Cascades);
         Assert.False(frame2.InvalidateBeforeGeneration);
     }
 
@@ -286,7 +286,7 @@ public sealed class PreviewCloudLightingCacheProfileTests
 
         Assert.Equal(PreviewCloudLightCascadeSelection.Near, frame1.Cascades);
         Assert.Equal(PreviewCloudLightCascadeSelection.Near, frame3.Cascades);
-        Assert.Equal(PreviewCloudLightCascadeSelection.Both, frame4.Cascades);
+        Assert.Equal(PreviewCloudLightCascadeSelection.Far, frame4.Cascades);
         Assert.Equal(PreviewCloudLightUpdateScheduler.MaximumReuseFrames, frame4.FarAge);
     }
 

@@ -82,6 +82,82 @@ public sealed partial class OpenGlPreviewBackend
             frame.MeshDirty,
             bindPoseCommitted,
             frame.BlockModel);
+        EntityRebakeResult? bindGpuPreparation = null;
+        EntityRebakeResult? bindCpuPreparation = null;
+        if (frame.EntityEmulatedMaterialsOk &&
+            frame.BlockModel is not null &&
+            frame.EntityRebakeCtx is not null &&
+            !frame.Settings.EnableEntityAnimation &&
+            needsBindPoseMesh &&
+            !PreviewRenderPassSetup.IsParityCatalogEmulatedAsset(
+                frame.EntityRebakeCtx.AssetArchivePath))
+        {
+            var asyncBindKey = bindPoseRebakeKey ??
+                PreviewRenderPassSetup.BuildEntityGpuBindRebakeKey(
+                    frame.EntityRebakeCtx);
+            if (string.Equals(
+                    asyncBindKey,
+                    _emulatedGpuSkinPrepFailedKey,
+                    StringComparison.Ordinal))
+            {
+                if (TryTakeEntityPreparationResult(
+                        EntityRebakeWorkKind.CpuRebake,
+                        asyncBindKey,
+                        out var cpuResult))
+                {
+                    if (cpuResult.Success)
+                    {
+                        ApplyEntityRebakeContextResult(
+                            frame.EntityRebakeCtx,
+                            cpuResult);
+                    }
+
+                    bindCpuPreparation = cpuResult;
+                }
+                else
+                {
+                    EnqueueEntityRebakeRequest(
+                        ref frame,
+                        setupAnimMotion: false,
+                        requestKey: asyncBindKey,
+                        workKind: EntityRebakeWorkKind.CpuRebake,
+                        animationTimeSeconds: 0f);
+                }
+            }
+            else if (TryTakeEntityPreparationResult(
+                         EntityRebakeWorkKind.GpuSkinPrepare,
+                         asyncBindKey,
+                         out var gpuResult))
+            {
+                if (gpuResult.Success)
+                {
+                    ApplyEntityRebakeContextResult(
+                        frame.EntityRebakeCtx,
+                        gpuResult);
+                    bindGpuPreparation = gpuResult;
+                }
+                else
+                {
+                    _emulatedGpuSkinPrepFailedKey = asyncBindKey;
+                    EnqueueEntityRebakeRequest(
+                        ref frame,
+                        setupAnimMotion: false,
+                        requestKey: asyncBindKey,
+                        workKind: EntityRebakeWorkKind.CpuRebake,
+                        animationTimeSeconds: 0f);
+                }
+            }
+            else
+            {
+                EnqueueEntityRebakeRequest(
+                    ref frame,
+                    setupAnimMotion: false,
+                    requestKey: asyncBindKey,
+                    workKind: EntityRebakeWorkKind.GpuSkinPrepare,
+                    animationTimeSeconds: 0f);
+            }
+        }
+
         if (frame.EntityEmulatedMaterialsOk &&
             frame.BlockModel is not null &&
             frame.EntityRebakeCtx is not null &&
@@ -100,21 +176,19 @@ public sealed partial class OpenGlPreviewBackend
             !frame.Settings.EnableEntityAnimation &&
             needsBindPoseMesh &&
             !PreviewRenderPassSetup.IsParityCatalogEmulatedAsset(frame.EntityRebakeCtx.AssetArchivePath) &&
-            EntityEmulatedPreviewRebaker.TryPrepareGpuSkinnedEmulatedMesh(
-                frame.EntityRebakeCtx,
-                frame.BlockModel.Materials,
-                PreviewStageConstants.GridWorldY,
-                EntityPreviewGrounding.DefaultClearance,
-                out var bindGpuVerts,
-                out var bindGpuIdx,
-                out var bindGpuBatches,
-                out var bindGpuBoneCount,
-                out var bindGpuLift,
-                applyGeometryIrSetupAnimMotion: false) &&
-            bindGpuVerts is not null &&
-            bindGpuIdx is not null &&
-            bindGpuBatches is not null)
+            bindGpuPreparation is
+            {
+                Success: true,
+                InterleavedVertices: not null,
+                Indices: not null,
+                DrawBatches: not null,
+            })
         {
+            var bindGpuVerts = bindGpuPreparation.InterleavedVertices;
+            var bindGpuIdx = bindGpuPreparation.Indices;
+            var bindGpuBatches = bindGpuPreparation.DrawBatches;
+            var bindGpuBoneCount = bindGpuPreparation.GpuBoneCount;
+            var bindGpuLift = bindGpuPreparation.GpuMeshSpaceLiftY;
             _emulatedGpuSkinPrepFailedKey = null;
             frame.EntityRebakeCtx.GpuPreparedBoneCount = bindGpuBoneCount;
             frame.EntityRebakeCtx.GpuBoundCpuMeshFingerprint =
@@ -184,18 +258,17 @@ public sealed partial class OpenGlPreviewBackend
             !frame.Settings.EnableEntityAnimation &&
             needsBindPoseMesh &&
             !PreviewRenderPassSetup.IsParityCatalogEmulatedAsset(frame.EntityRebakeCtx.AssetArchivePath) &&
-            EntityEmulatedPreviewRebaker.TryRebakeMesh(
-                frame.EntityRebakeCtx,
-                frame.BlockModel.Materials,
-                animationTimeSeconds: 0f,
-                out var bindCpuVerts,
-                out var bindCpuIdx,
-                out var bindCpuBatches,
-                applyGeometryIrSetupAnimMotion: false) &&
-            bindCpuVerts is not null &&
-            bindCpuIdx is not null &&
-            bindCpuBatches is not null)
+            bindCpuPreparation is
+            {
+                Success: true,
+                InterleavedVertices: not null,
+                Indices: not null,
+                DrawBatches: not null,
+            })
         {
+            var bindCpuVerts = bindCpuPreparation.InterleavedVertices;
+            var bindCpuIdx = bindCpuPreparation.Indices;
+            var bindCpuBatches = bindCpuPreparation.DrawBatches;
             _emulatedGpuSkinPrepFailedKey = null;
             frame.EntityRebakeCtx.GpuPreparedBoneCount = null;
             frame.EntityRebakeCtx.GpuBindPoseInverseLocalToParent = null;
@@ -264,26 +337,60 @@ public sealed partial class OpenGlPreviewBackend
 
             var gpuBindCacheMissing = frame.EntityRebakeCtx.GpuPreparedBoneCount is null or 0 ||
                                       frame.EntityRebakeCtx.GpuBindPoseInterleavedVertices is null;
-            var shouldTryGpuLayout = frame.MeshDirty ||
-                gpuBindCacheMissing ||
-                (!frame.BlockModel.GpuEntityBoneSkinning &&
-                 !string.Equals(rebakeKey, _emulatedGpuSkinPrepFailedKey, StringComparison.Ordinal));
-
-            if (shouldTryGpuLayout &&
-                EntityEmulatedPreviewRebaker.TryPrepareGpuSkinnedEmulatedMesh(
-                    frame.EntityRebakeCtx,
-                    frame.BlockModel.Materials,
-                    PreviewStageConstants.GridWorldY,
-                    EntityPreviewGrounding.DefaultClearance,
-                    out var gpuVerts,
-                    out var gpuIdx,
-                    out var gpuBatches,
-                    out var gpuBoneCount,
-                    out var gpuLift,
-                    setupAnimMotion))
+            var gpuPreparationPreviouslyFailed = string.Equals(
+                rebakeKey,
+                _emulatedGpuSkinPrepFailedKey,
+                StringComparison.Ordinal);
+            var shouldTryGpuLayout = !gpuPreparationPreviouslyFailed &&
+                (frame.MeshDirty ||
+                 gpuBindCacheMissing ||
+                 !frame.BlockModel.GpuEntityBoneSkinning);
+            EntityRebakeResult? gpuPreparation = null;
+            var gpuPreparationCompletedFailure = false;
+            if (shouldTryGpuLayout)
             {
+                if (TryTakeEntityPreparationResult(
+                        EntityRebakeWorkKind.GpuSkinPrepare,
+                        rebakeKey,
+                        out var result))
+                {
+                    if (result.Success)
+                    {
+                        ApplyEntityRebakeContextResult(
+                            frame.EntityRebakeCtx,
+                            result);
+                        gpuPreparation = result;
+                    }
+                    else
+                    {
+                        gpuPreparationCompletedFailure = true;
+                    }
+                }
+                else
+                {
+                    EnqueueEntityRebakeRequest(
+                        ref frame,
+                        setupAnimMotion,
+                        requestKey: rebakeKey,
+                        workKind: EntityRebakeWorkKind.GpuSkinPrepare);
+                }
+            }
+
+            if (gpuPreparation is
+                {
+                    Success: true,
+                    InterleavedVertices: not null,
+                    Indices: not null,
+                    DrawBatches: not null,
+                })
+            {
+                var gpuVerts = gpuPreparation.InterleavedVertices;
+                var gpuIdx = gpuPreparation.Indices;
+                var gpuBatches = gpuPreparation.DrawBatches;
+                var gpuBoneCount = gpuPreparation.GpuBoneCount;
+                var gpuLift = gpuPreparation.GpuMeshSpaceLiftY;
                 _emulatedGpuSkinPrepFailedKey = null;
-                frame.EntityRebakeCtx.GpuPreparedBoneCount = gpuBoneCount;
+                frame.EntityRebakeCtx!.GpuPreparedBoneCount = gpuBoneCount;
                 frame.EntityRebakeCtx.GpuBoundCpuMeshFingerprint =
                     frame.EntityRebakeCtx.PackConverterCpuMeshFingerprint;
                 var gpuSkinnedBounds = PreviewGpuSkinnedBounds.TryBuild(
@@ -296,7 +403,7 @@ public sealed partial class OpenGlPreviewBackend
                     InterleavedVertices = gpuVerts!,
                     Indices = gpuIdx!,
                     DrawBatches = gpuBatches!,
-                    Materials = frame.BlockModel.Materials,
+                    Materials = frame.BlockModel!.Materials,
                     PrimaryMaterialIndex = frame.BlockModel.PrimaryMaterialIndex,
                     Sprite2DFoliageTarget = frame.BlockModel.Sprite2DFoliageTarget,
                     EnableRenderTimeAnimation = frame.BlockModel.EnableRenderTimeAnimation,
@@ -334,10 +441,10 @@ public sealed partial class OpenGlPreviewBackend
             }
             else
             {
-                if (shouldTryGpuLayout)
+                if (gpuPreparationCompletedFailure)
                 {
                     _emulatedGpuSkinPrepFailedKey = rebakeKey;
-                    frame.EntityRebakeCtx.GpuPreparedBoneCount = null;
+                    frame.EntityRebakeCtx!.GpuPreparedBoneCount = null;
                     frame.EntityRebakeCtx.GpuBindPoseInverseLocalToParent = null;
                     frame.EntityRebakeCtx.GpuBindPoseBonePalette = null;
                     frame.EntityRebakeCtx.GpuBindPoseInterleavedVertices = null;
@@ -346,10 +453,11 @@ public sealed partial class OpenGlPreviewBackend
                 var shouldEnqueueCpuRebake = (frame.MeshDirty ||
                     frame.EntityEmulatedPauseEdge ||
                     frame.RenderTime - _lastEmulatedEntityRebakeRenderTime >= MinEmulatedEntityRebakeIntervalSeconds) &&
-                    !frame.BlockModel.GpuEntityBoneSkinning;
+                    !frame.BlockModel!.GpuEntityBoneSkinning &&
+                    (!shouldTryGpuLayout || gpuPreparationCompletedFailure);
                 if (shouldEnqueueCpuRebake)
                 {
-                    if (TryConsumeEntityRebakeResult(ref frame, setupAnimMotion, rebakeKey))
+                    if (TryConsumeEntityRebakeResult(ref frame, rebakeKey))
                     {
                         var rebaked = frame.BlockModel!;
                         var rebakeDiagKey =
@@ -370,7 +478,10 @@ public sealed partial class OpenGlPreviewBackend
                     }
                     else
                     {
-                        EnqueueEntityRebakeRequest(ref frame, setupAnimMotion);
+                        EnqueueEntityRebakeRequest(
+                            ref frame,
+                            setupAnimMotion,
+                            requestKey: rebakeKey);
                     }
                 }
             }
@@ -485,14 +596,21 @@ public sealed partial class OpenGlPreviewBackend
 
         if (frame.MaterialDirty)
         {
+            var materialUploadComplete = true;
             if (frame.BlockModel is null || frame.BlockSlots is null)
             {
-                UploadMaterial(frame.Gl, frame.Material, frame.Settings.NearestTextureFilter);
+                materialUploadComplete = TryUploadMaterialAsync(
+                    frame.Gl,
+                    frame.Material,
+                    frame.Settings.NearestTextureFilter);
             }
 
-            lock (_sync)
+            if (materialUploadComplete)
             {
-                _materialDirty = false;
+                lock (_sync)
+                {
+                    _materialDirty = false;
+                }
             }
         }
 
@@ -792,17 +910,27 @@ public sealed partial class OpenGlPreviewBackend
             return false;
         }
 
-        if (!EntityEmulatedPreviewRebaker.TryRebakeMesh(
-                frame.EntityRebakeCtx,
-                frame.BlockModel.Materials,
-                animationTimeSeconds: 0f,
-                out var cpuVerts,
-                out var cpuIdx,
-                out var cpuBatches,
-                applyGeometryIrSetupAnimMotion: false) ||
-            cpuVerts is null ||
-            cpuIdx is null ||
-            cpuBatches is null)
+        var requestKey = bindPoseRebakeKey ??
+            PreviewRenderPassSetup.BuildParityCatalogCpuBindCommitKey(
+                frame.EntityRebakeCtx);
+        if (!TryTakeEntityPreparationResult(
+                EntityRebakeWorkKind.CpuRebake,
+                requestKey,
+                out var result))
+        {
+            EnqueueEntityRebakeRequest(
+                ref frame,
+                setupAnimMotion: false,
+                requestKey: requestKey,
+                workKind: EntityRebakeWorkKind.CpuRebake,
+                animationTimeSeconds: 0f);
+            return false;
+        }
+
+        if (!result.Success ||
+            result.InterleavedVertices is not { } cpuVerts ||
+            result.Indices is not { } cpuIdx ||
+            result.DrawBatches is not { } cpuBatches)
         {
             var failKey = frame.EntityRebakeCtx.AssetArchivePath;
             if (!string.Equals(failKey, _parityCatalogCpuBindFailDiagKey, StringComparison.Ordinal))
@@ -814,6 +942,10 @@ public sealed partial class OpenGlPreviewBackend
 
             return false;
         }
+
+        ApplyEntityRebakeContextResult(
+            frame.EntityRebakeCtx,
+            result);
 
         _entityMeshUploadDeferredDiagKey = null;
 
@@ -887,22 +1019,35 @@ public sealed partial class OpenGlPreviewBackend
             return;
         }
 
-        if (!EntityEmulatedPreviewRebaker.TryRebakeMesh(
-                rebake,
-                frame.BlockModel.Materials,
-                setupAnimMotion ? frame.EntityEmulatedAnimClock : 0f,
-                out var baked,
-                out var indices,
-                out var batches,
-                applyGeometryIrSetupAnimMotion: setupAnimMotion) ||
-            baked is null ||
-            indices is null ||
-            batches is null ||
+        var requestKey =
+            "force-cpu|" +
+            PreviewRenderPassSetup.BuildEntityGpuBindRebakeKey(rebake) +
+            $"|setup={setupAnimMotion}";
+        if (!TryTakeEntityPreparationResult(
+                EntityRebakeWorkKind.CpuRebake,
+                requestKey,
+                out var result))
+        {
+            EnqueueEntityRebakeRequest(
+                ref frame,
+                setupAnimMotion,
+                requestKey: requestKey,
+                animationTimeSeconds:
+                    setupAnimMotion ? frame.EntityEmulatedAnimClock : 0f);
+            return;
+        }
+
+        if (!result.Success ||
+            result.InterleavedVertices is not { } baked ||
+            result.Indices is not { } indices ||
+            result.DrawBatches is not { } batches ||
             baked.Length == 0 ||
             indices.Length == 0)
         {
             return;
         }
+
+        ApplyEntityRebakeContextResult(rebake, result);
 
         UploadPreviewMesh(baked, indices);
         var cpuSubject = new PreviewModelSubject
@@ -928,6 +1073,15 @@ public sealed partial class OpenGlPreviewBackend
         lock (_sync)
         {
             _blockModelSubject = cpuSubject;
+        }
+
+        if (setupAnimMotion)
+        {
+            EnqueueEntityRebakeRequest(
+                ref frame,
+                setupAnimMotion,
+                requestKey: requestKey,
+                animationTimeSeconds: frame.EntityEmulatedAnimClock);
         }
 
         var norm = rebake.AssetArchivePath.Replace('\\', '/').TrimStart('/');

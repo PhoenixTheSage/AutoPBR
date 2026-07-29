@@ -44,6 +44,19 @@ public sealed class PreviewCloudLiveGlSmokeTests
                     out var cloudError,
                     "cloud-shell-live-smoke");
                 Assert.True(clouds.IsValid, "Curved cloud shader failed to compile: " + cloudError);
+                using var highClouds = compile.CreateProgram(
+                    "genesis_godrays.vert",
+                    "genesis_clouds.frag",
+                    out var highCloudError,
+                    "cloud-shell-high-cq3.7-live-smoke",
+                    new Dictionary<string, int>
+                    {
+                        ["GENESIS_CLOUD_QUALITY"] = PreviewVolumetricQuality.High,
+                    });
+                Assert.True(
+                    highClouds.IsValid,
+                    "CQ3.7 High cloud specialization failed to compile: " +
+                    highCloudError);
 
                 using var temporal = compile.CreateProgram(
                     "genesis_godrays.vert",

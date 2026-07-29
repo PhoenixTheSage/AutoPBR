@@ -20,6 +20,10 @@ internal sealed partial class PreviewDesktopWglContext : IDisposable
     private uint _depthRenderbuffer;
     private PixelSize _renderTargetSize;
     private PreviewDesktopWglAsyncPboReadback? _asyncPboReadback;
+    private readonly object _asyncPresentGate = new();
+    private byte[]? _asyncPresentPixels;
+    private PixelSize _asyncPresentSize;
+    private int _asyncFallbackFrameQueued;
 
     private PreviewDesktopWglContext(IGlContext context, GL gl, string versionString)
     {
@@ -208,15 +212,119 @@ internal sealed partial class PreviewDesktopWglContext : IDisposable
         }
     }
 
+    public void ScheduleAsyncPboFrame(
+        int width,
+        int height,
+        Action<int> renderCore,
+        bool forceSyncPresent,
+        Action requestPresentFrame)
+    {
+        if (Interlocked.CompareExchange(
+                ref _asyncFallbackFrameQueued,
+                1,
+                0) != 0)
+        {
+            return;
+        }
+
+        PreviewDesktopWglOwnerThread.PostDeferred(() =>
+        {
+            try
+            {
+                using (BindOnOwnerThread())
+                {
+                    EnsureRenderTargetCore(width, height);
+                    renderCore(RenderFbo);
+                    var pixels = CollectColorPixelsCore(
+                        width,
+                        height,
+                        forceSyncPresent);
+                    if (pixels is not null)
+                    {
+                        lock (_asyncPresentGate)
+                        {
+                            _asyncPresentPixels = pixels;
+                            _asyncPresentSize = new PixelSize(width, height);
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _asyncFallbackFrameQueued, 0);
+                requestPresentFrame();
+            }
+        }, phase: "async-pbo-render");
+    }
+
+    public unsafe bool TryCopyLatestColorToEsFbo(
+        GlInterface esGlInterface,
+        int destFbo,
+        int width,
+        int height)
+    {
+        byte[]? pixels;
+        lock (_asyncPresentGate)
+        {
+            if (_asyncPresentPixels is null ||
+                _asyncPresentSize != new PixelSize(width, height))
+            {
+                return false;
+            }
+
+            pixels = _asyncPresentPixels;
+        }
+
+        var esGl = GL.GetApi(esGlInterface.GetProcAddress);
+        esGl.BindFramebuffer(FramebufferTarget.Framebuffer, (uint)destFbo);
+        esGl.GetFramebufferAttachmentParameter(
+            FramebufferTarget.Framebuffer,
+            FramebufferAttachment.ColorAttachment0,
+            FramebufferAttachmentParameterName.ObjectName,
+            out int texObj);
+        esGl.BindTexture(TextureTarget.Texture2D, (uint)texObj);
+        fixed (byte* p = pixels)
+        {
+            esGl.TexSubImage2D(
+                TextureTarget.Texture2D,
+                0,
+                0,
+                0,
+                (uint)width,
+                (uint)height,
+                PixelFormat.Rgba,
+                PixelType.UnsignedByte,
+                p);
+        }
+
+        return true;
+    }
+
     private byte[]? CollectColorPixels(int width, int height, bool forceSyncPresent)
     {
-        _asyncPboReadback ??= new PreviewDesktopWglAsyncPboReadback(_gl);
         using (BindOnOwnerThread())
         {
-            return _asyncPboReadback.TryCollect(_renderFbo, width, height, out var pixels, forceSyncPresent)
-                ? pixels.ToArray()
-                : null;
+            return CollectColorPixelsCore(
+                width,
+                height,
+                forceSyncPresent);
         }
+    }
+
+    private byte[]? CollectColorPixelsCore(
+        int width,
+        int height,
+        bool forceSyncPresent)
+    {
+        _asyncPboReadback ??= new PreviewDesktopWglAsyncPboReadback(_gl);
+        return _asyncPboReadback.TryCollect(
+                _renderFbo,
+                width,
+                height,
+                out var pixels,
+                forceSyncPresent)
+            ? pixels.ToArray()
+            : null;
     }
 
     internal bool UsesAsyncPboReadback => _asyncPboReadback?.UsesAsyncPath == true;
@@ -241,6 +349,12 @@ internal sealed partial class PreviewDesktopWglContext : IDisposable
 
     private void DisposeCore()
     {
+        lock (_asyncPresentGate)
+        {
+            _asyncPresentPixels = null;
+            _asyncPresentSize = default;
+        }
+
         DestroySidecarGpuResources();
         _asyncPboReadback?.Dispose();
         _asyncPboReadback = null;

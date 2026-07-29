@@ -6,8 +6,8 @@ using Silk.NET.OpenGL;
 namespace AutoPBR.App.Rendering.OpenGL;
 
 /// <summary>
-/// Draws UI-rendered premultiplied BGRA overlay bitmaps into the native WGL backbuffer.
-/// Texture uploads are dirty-flagged by bitmap instance identity (no per-frame content hash).
+/// ImGui-style native WGL HUD: samples a font atlas and draws panel/glyph quads.
+/// Atlas upload and vertex rebuild are dirty-flagged; steady-state Overlay CPU stays near zero.
 /// </summary>
 internal sealed class GlNativeOverlayRenderer : IDisposable
 {
@@ -15,10 +15,13 @@ internal sealed class GlNativeOverlayRenderer : IDisposable
 #version 330 core
 layout(location = 0) in vec2 aPos;
 layout(location = 1) in vec2 aUv;
+layout(location = 2) in vec4 aColor;
 out vec2 vUv;
+out vec4 vColor;
 void main()
 {
     vUv = aUv;
+    vColor = aColor;
     gl_Position = vec4(aPos, 0.0, 1.0);
 }
 """;
@@ -29,26 +32,40 @@ uniform sampler2D uTex;
 // 0 = SDR backbuffer. >0 = scRGB scale (paperWhiteNits / 80) so UI matches scene present encode.
 uniform float uHdrScRgbScale;
 in vec2 vUv;
+in vec4 vColor;
 out vec4 FragColor;
 void main()
 {
-    vec4 s = texture(uTex, vUv);
-    // Keep premultiplied alpha as uploaded. Only boost into paper-white scRGB for HDR;
-    // unpremultiply/sRGB conversion made glyphs disappear on some Avalonia pixel layouts.
-    FragColor = uHdrScRgbScale > 0.0 ? vec4(s.rgb * uHdrScRgbScale, s.a) : s;
+    vec4 t = texture(uTex, vUv);
+    float coverage = t.a;
+    vec4 premul = vec4(vColor.rgb * vColor.a * coverage, vColor.a * coverage);
+    FragColor = uHdrScRgbScale > 0.0 ? vec4(premul.rgb * uHdrScRgbScale, premul.a) : premul;
 }
 """;
+
+    /// <summary>
+    /// Max verts for one Overlay draw (~2k quads). Expanded HUD fits well under this.
+    /// </summary>
+    private const int MaxVertexFloats = 4096 * GlOverlayTextLayout.VerticesPerQuad * GlOverlayTextLayout.FloatsPerVertex;
 
     private readonly GL _gl;
     private readonly uint _vao;
     private readonly GlPersistentMappedUploadBuffer? _vertexUpload;
     private readonly int _texLoc;
     private readonly int _hdrScaleLoc;
-    private readonly OverlayTexture _debugTexture;
-    private readonly OverlayTexture _fpsTexture;
-    private readonly OverlayTexture _cpuTexture;
+    private readonly AtlasTexture _atlasTexture;
     private uint _program;
     private bool _disposed;
+
+    private GlOverlayFontAtlas? _layoutAtlas;
+    private string? _layoutDebug;
+    private string? _layoutFps;
+    private string? _layoutCpu;
+    private int _layoutViewportW;
+    private int _layoutViewportH;
+    private int _layoutMargin;
+    private float[]? _cachedVerts;
+    private int _cachedVertexCount;
 
     public GlNativeOverlayRenderer(GL gl, bool useOpenGlEs, bool preferPersistentUpload, out string? error)
     {
@@ -63,9 +80,7 @@ void main()
             _hdrScaleLoc = -1;
             _vao = 0;
             _vertexUpload = null;
-            _debugTexture = new OverlayTexture();
-            _fpsTexture = new OverlayTexture();
-            _cpuTexture = new OverlayTexture();
+            _atlasTexture = new AtlasTexture();
             return;
         }
 
@@ -77,9 +92,7 @@ void main()
             _hdrScaleLoc = -1;
             _vao = 0;
             _vertexUpload = null;
-            _debugTexture = new OverlayTexture();
-            _fpsTexture = new OverlayTexture();
-            _cpuTexture = new OverlayTexture();
+            _atlasTexture = new AtlasTexture();
             return;
         }
 
@@ -100,9 +113,7 @@ void main()
             _hdrScaleLoc = -1;
             _vao = 0;
             _vertexUpload = null;
-            _debugTexture = new OverlayTexture();
-            _fpsTexture = new OverlayTexture();
-            _cpuTexture = new OverlayTexture();
+            _atlasTexture = new AtlasTexture();
             return;
         }
 
@@ -112,49 +123,71 @@ void main()
         _vertexUpload = new GlPersistentMappedUploadBuffer(
             _gl,
             BufferTargetARB.ArrayBuffer,
-            24 * sizeof(float),
+            MaxVertexFloats * sizeof(float),
             16,
             preferPersistentUpload);
         _gl.BindVertexArray(_vao);
         _vertexUpload.BindBuffer();
         unsafe
         {
-            const int stride = 4 * sizeof(float);
+            const int stride = GlOverlayTextLayout.FloatsPerVertex * sizeof(float);
             _gl.EnableVertexAttribArray(0);
             _gl.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, stride, (void*)0);
             _gl.EnableVertexAttribArray(1);
             _gl.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, stride, (void*)(2 * sizeof(float)));
+            _gl.EnableVertexAttribArray(2);
+            _gl.VertexAttribPointer(2, 4, VertexAttribPointerType.Float, false, stride, (void*)(4 * sizeof(float)));
         }
 
         _gl.BindVertexArray(0);
-        _debugTexture = new OverlayTexture(gl);
-        _fpsTexture = new OverlayTexture(gl);
-        _cpuTexture = new OverlayTexture(gl);
+        _atlasTexture = new AtlasTexture(gl);
     }
 
     public bool IsValid => _program != 0 && _vao != 0 && _vertexUpload?.Handle != 0;
 
     internal bool UsesPersistentVertexUpload => _vertexUpload?.UsesPersistentMapping == true;
 
-    /// <param name="viewportWidth">Viewport width in pixels.</param>
-    /// <param name="viewportHeight">Viewport height in pixels.</param>
-    /// <param name="marginPixels">Screen margin in pixels for overlay placement.</param>
-    /// <param name="debug">Optional debug overlay bitmap.</param>
-    /// <param name="fps">Optional FPS overlay bitmap.</param>
-    /// <param name="cpu">Optional CPU timing overlay bitmap.</param>
     /// <param name="hdrScRgbScale">
     /// Paper-white scRGB scale (<c>nits/80</c>) when compositing into an HDR linear target; 0 for SDR.
     /// </param>
-    public void Draw(
+    public void DrawTexts(
         int viewportWidth,
         int viewportHeight,
         int marginPixels,
-        PreviewNativeWglOverlayBitmap? debug,
-        PreviewNativeWglOverlayBitmap? fps,
-        PreviewNativeWglOverlayBitmap? cpu,
+        GlOverlayFontAtlas? atlas,
+        string? debugText,
+        string? fpsText,
+        string? cpuText,
         float hdrScRgbScale = 0f)
     {
-        if (!IsValid || viewportWidth <= 0 || viewportHeight <= 0)
+        if (!IsValid || viewportWidth <= 0 || viewportHeight <= 0 || atlas is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(debugText) &&
+            string.IsNullOrWhiteSpace(fpsText) &&
+            string.IsNullOrWhiteSpace(cpuText))
+        {
+            return;
+        }
+
+        EnsureLayout(
+            atlas,
+            debugText,
+            fpsText,
+            cpuText,
+            viewportWidth,
+            viewportHeight,
+            marginPixels);
+
+        if (_cachedVerts is null || _cachedVertexCount <= 0)
+        {
+            return;
+        }
+
+        var byteCount = _cachedVertexCount * GlOverlayTextLayout.FloatsPerVertex * sizeof(float);
+        if (byteCount > MaxVertexFloats * sizeof(float))
         {
             return;
         }
@@ -174,28 +207,15 @@ void main()
             _gl.Uniform1(_hdrScaleLoc, Math.Max(0f, hdrScRgbScale));
         }
 
+        _atlasTexture.Upload(atlas);
         _gl.BindVertexArray(_vao);
-
-        if (debug is not null)
-        {
-            DrawBitmap(_debugTexture, debug, marginPixels, marginPixels, viewportWidth, viewportHeight);
-        }
-
-        var rightStackY = marginPixels;
-        if (fps is not null)
-        {
-            var x = Math.Max(marginPixels, viewportWidth - fps.Width - marginPixels);
-            DrawBitmap(_fpsTexture, fps, x, rightStackY, viewportWidth, viewportHeight);
-            rightStackY += fps.Height + Math.Max(4, marginPixels / 2);
-        }
-
-        if (cpu is not null)
-        {
-            var x = Math.Max(marginPixels, viewportWidth - cpu.Width - marginPixels);
-            DrawBitmap(_cpuTexture, cpu, x, rightStackY, viewportWidth, viewportHeight);
-        }
-
+        _vertexUpload!.Upload(MemoryMarshal.AsBytes(_cachedVerts.AsSpan(0, _cachedVertexCount * GlOverlayTextLayout.FloatsPerVertex)));
+        _vertexUpload.BindBuffer();
+        ConfigureVertexPointers(_vertexUpload.ActiveOffset);
+        _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)_cachedVertexCount);
+        _vertexUpload.MarkSubmitted();
         _gl.BindVertexArray(0);
+
         if (depthWasEnabled)
         {
             _gl.Enable(EnableCap.DepthTest);
@@ -224,51 +244,52 @@ void main()
         }
     }
 
-    private void DrawBitmap(
-        OverlayTexture texture,
-        PreviewNativeWglOverlayBitmap bitmap,
-        int x,
-        int y,
+    private void EnsureLayout(
+        GlOverlayFontAtlas atlas,
+        string? debugText,
+        string? fpsText,
+        string? cpuText,
         int viewportWidth,
-        int viewportHeight)
+        int viewportHeight,
+        int marginPixels)
     {
-        if (bitmap.Width <= 0 || bitmap.Height <= 0 || bitmap.BgraPremultiplied.Length == 0)
+        if (ReferenceEquals(_layoutAtlas, atlas) &&
+            _layoutViewportW == viewportWidth &&
+            _layoutViewportH == viewportHeight &&
+            _layoutMargin == marginPixels &&
+            string.Equals(_layoutDebug, debugText, StringComparison.Ordinal) &&
+            string.Equals(_layoutFps, fpsText, StringComparison.Ordinal) &&
+            string.Equals(_layoutCpu, cpuText, StringComparison.Ordinal) &&
+            _cachedVerts is not null)
         {
             return;
         }
 
-        texture.Upload(bitmap);
-        var x0 = PixelToNdcX(x, viewportWidth);
-        var x1 = PixelToNdcX(x + bitmap.Width, viewportWidth);
-        var y0 = PixelToNdcY(y, viewportHeight);
-        var y1 = PixelToNdcY(y + bitmap.Height, viewportHeight);
-        // Avalonia CopyPixels returns top-row-first data; OpenGL samples uploaded row 0 at v=0.
-        Span<float> vertices =
-        [
-            x0, y0, 0f, 0f,
-            x1, y0, 1f, 0f,
-            x1, y1, 1f, 1f,
-            x0, y0, 0f, 0f,
-            x1, y1, 1f, 1f,
-            x0, y1, 0f, 1f
-        ];
-        _vertexUpload!.Upload(MemoryMarshal.AsBytes(vertices));
-        _vertexUpload.BindBuffer();
-        ConfigureVertexPointers(_vertexUpload.ActiveOffset);
-        _gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
-        _vertexUpload.MarkSubmitted();
+        _cachedVerts = GlOverlayTextLayout.Build(
+            atlas,
+            debugText,
+            fpsText,
+            cpuText,
+            viewportWidth,
+            viewportHeight,
+            marginPixels,
+            out _cachedVertexCount);
+        _layoutAtlas = atlas;
+        _layoutDebug = debugText;
+        _layoutFps = fpsText;
+        _layoutCpu = cpuText;
+        _layoutViewportW = viewportWidth;
+        _layoutViewportH = viewportHeight;
+        _layoutMargin = marginPixels;
     }
 
     private unsafe void ConfigureVertexPointers(nint byteOffset)
     {
-        const int stride = 4 * sizeof(float);
+        const int stride = GlOverlayTextLayout.FloatsPerVertex * sizeof(float);
         _gl.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, stride, (void*)byteOffset);
         _gl.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, stride, (void*)(byteOffset + 2 * sizeof(float)));
+        _gl.VertexAttribPointer(2, 4, VertexAttribPointerType.Float, false, stride, (void*)(byteOffset + 4 * sizeof(float)));
     }
-
-    private static float PixelToNdcX(int x, int width) => (x / (float)Math.Max(1, width)) * 2f - 1f;
-
-    private static float PixelToNdcY(int y, int height) => 1f - (y / (float)Math.Max(1, height)) * 2f;
 
     private uint Compile(ShaderType type, string source, ref string? error)
     {
@@ -297,10 +318,10 @@ void main()
         }
 
         _disposed = true;
-        _debugTexture.Dispose();
-        _fpsTexture.Dispose();
-        _cpuTexture.Dispose();
+        _atlasTexture.Dispose();
         _vertexUpload?.Dispose();
+        _cachedVerts = null;
+        _layoutAtlas = null;
 
         if (_vao != 0)
         {
@@ -314,20 +335,18 @@ void main()
         }
     }
 
-    private sealed class OverlayTexture : IDisposable
+    private sealed class AtlasTexture : IDisposable
     {
         private readonly GL? _gl;
         private readonly uint _id;
-        private int _width;
-        private int _height;
-        private PreviewNativeWglOverlayBitmap? _uploadedBitmap;
+        private GlOverlayFontAtlas? _uploaded;
         private bool _hasUpload;
 
-        public OverlayTexture()
+        public AtlasTexture()
         {
         }
 
-        public OverlayTexture(GL gl)
+        public AtlasTexture(GL gl)
         {
             _gl = gl;
             _id = gl.GenTexture();
@@ -339,7 +358,7 @@ void main()
             gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
         }
 
-        public void Upload(PreviewNativeWglOverlayBitmap bitmap)
+        public void Upload(GlOverlayFontAtlas atlas)
         {
             if (_gl is null || _id == 0)
             {
@@ -348,52 +367,49 @@ void main()
 
             _gl.ActiveTexture(TextureUnit.Texture0);
             _gl.BindTexture(TextureTarget.Texture2D, _id);
-
-            // UI publishes a new bitmap instance only when overlay pixels change. Same
-            // instance ⇒ skip hash / TexSubImage so Overlay CPU stays near zero.
-            if (_hasUpload && ReferenceEquals(_uploadedBitmap, bitmap))
+            if (_hasUpload && ReferenceEquals(_uploaded, atlas))
             {
                 return;
             }
 
-            if (_hasUpload && _width == bitmap.Width && _height == bitmap.Height)
+            ReadOnlySpan<byte> pixels = atlas.BgraPremultiplied;
+            if (_hasUpload &&
+                _uploaded is not null &&
+                _uploaded.Width == atlas.Width &&
+                _uploaded.Height == atlas.Height)
             {
-                ReadOnlySpan<byte> pixels = bitmap.BgraPremultiplied;
                 _gl.TexSubImage2D(
                     TextureTarget.Texture2D,
                     0,
                     0,
                     0,
-                    (uint)bitmap.Width,
-                    (uint)bitmap.Height,
+                    (uint)atlas.Width,
+                    (uint)atlas.Height,
                     PixelFormat.Bgra,
                     PixelType.UnsignedByte,
                     pixels);
             }
             else
             {
-                ReadOnlySpan<byte> pixels = bitmap.BgraPremultiplied;
                 _gl.TexImage2D(
                     TextureTarget.Texture2D,
                     0,
                     InternalFormat.Rgba8,
-                    (uint)bitmap.Width,
-                    (uint)bitmap.Height,
+                    (uint)atlas.Width,
+                    (uint)atlas.Height,
                     0,
                     PixelFormat.Bgra,
                     PixelType.UnsignedByte,
                     pixels);
             }
 
-            _width = bitmap.Width;
-            _height = bitmap.Height;
-            _uploadedBitmap = bitmap;
+            _uploaded = atlas;
             _hasUpload = true;
         }
 
         public void Dispose()
         {
-            _uploadedBitmap = null;
+            _uploaded = null;
             if (_gl is not null && _id != 0)
             {
                 _gl.DeleteTexture(_id);

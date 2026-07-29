@@ -93,6 +93,16 @@ public static class PreviewCloudLightUpdateScheduler
             cascades |= PreviewCloudLightCascadeSelection.Far;
         }
 
+        // A cadence collision must not submit both 3D cache generations in one frame.
+        // Refresh far first because it has the longer interval; near becomes due again
+        // sooner and is refreshed on a following frame.
+        if (cascades == PreviewCloudLightCascadeSelection.Both)
+        {
+            cascades = !request.NearGenerated
+                ? PreviewCloudLightCascadeSelection.Near
+                : PreviewCloudLightCascadeSelection.Far;
+        }
+
         return new PreviewCloudLightUpdateDecision(
             cascades,
             InvalidateBeforeGeneration: false,

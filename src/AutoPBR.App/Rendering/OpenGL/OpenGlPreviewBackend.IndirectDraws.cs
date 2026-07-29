@@ -6,6 +6,14 @@ public sealed partial class OpenGlPreviewBackend
 {
     private const int MinGpuCullingGroupSize = 4;
     private const int CpuFrustumCullParallelMinCommands = 64;
+    private static readonly ParallelOptions CpuFrustumCullParallelOptions =
+        new()
+        {
+            MaxDegreeOfParallelism = Math.Clamp(
+                Environment.ProcessorCount / 2,
+                1,
+                4),
+        };
 
     private byte[] _cpuCullVisibilityScratch = [];
     private readonly Vector4[] _cpuCullFrustumPlaneScratch = new Vector4[PreviewFrustumPlanes.PlaneCount];
@@ -240,7 +248,11 @@ public sealed partial class OpenGlPreviewBackend
         var planes = _cpuCullFrustumPlaneScratch;
         var visibility = _cpuCullVisibilityScratch;
         var batches = model.DrawBatches;
-        Parallel.For(0, commandCount, i =>
+        Parallel.For(
+            0,
+            commandCount,
+            CpuFrustumCullParallelOptions,
+            i =>
         {
             var batch = batches[firstCommand + i];
             visibility[i] = PreviewDrawBatchFrustumCull.IsBatchVisible(

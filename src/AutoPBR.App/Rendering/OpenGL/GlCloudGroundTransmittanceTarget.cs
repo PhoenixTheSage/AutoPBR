@@ -137,10 +137,11 @@ internal sealed class GlCloudGroundTransmittanceTarget : IDisposable
             return false;
         }
 
-        return !Profile.CombineNearAndFar ||
-            SourceNearGenerationId == 0 ||
-            (cache.Near.IsGenerated &&
-             SourceNearGenerationId == cache.Near.GenerationId);
+        // Publication is intentionally tied to the lower-rate far refresh.
+        // Cinematic may update the near cache between publications; retain the
+        // last complete field until the far source changes instead of dropping
+        // terrain/fog cloud shadowing for those intervening frames.
+        return true;
     }
 
     public bool TryRead(Span<float> values, out string diagnostic)

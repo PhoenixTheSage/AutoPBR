@@ -4,13 +4,13 @@
 **Last updated:** 2026-07-29
 **Branch/base:** `main` at checkpoint `1377876c` before the working-tree changes
 **Roadmap:** [Volumetric cloud quality roadmap](volumetric-cloud-quality-roadmap.md)  
-**Active specification:** [CQ3 cloud-light froxel cache](volumetric-cloud-cq3-lighting-cache.md)
+**Active specification:** [CQ4 sparse voxel/SDF backend](volumetric-cloud-cq4-sparse-voxel-sdf.md)
 
 ## Current checkpoint
 
-CQ1 and CQ2 are complete and accepted as of 2026-07-28. CQ2.0 froze the v2 density-asset ABI, CQ2.1 implemented deterministic generators, detailed CQ2.2 bundled the pinned payloads, CQ2.3 added strict transactional profile selection, CQ2.4 added explicit ray-footprint LOD, CQ2.5 implemented versioned weather/material shaping, CQ2.6 added expanded weather addressing plus edge-only rotated detail, CQ2.7 completed debug inspection and automated asset/shader coverage, and CQ2.8 completed fixed-scene visual and GPU performance acceptance. Validated desktop contexts select v2; GLES/ANGLE and any v2 load/upload failure retain one coherent v1 profile. CQ3.0 through CQ3.6 are complete as of 2026-07-29: the cache ABI/generation/consumption path now includes controlled multiple scattering, local hemispherical sky visibility, restrained terrain-material ground bounce, cached cirrus/cumulus lighting, Cinematic two-tap boundary refinement, a transactional ground-transmittance field, and the accepted independent cascade schedule with immediate invalidation, wind reprojection, generation ages, and pass-scoped timings. Low/Medium/GLES and invalid or out-of-range cloud-body cache samples retain the accepted short march; ground-transmittance consumers use full sunlight when their publication is unavailable or invalid.
+CQ1 and CQ2 are complete and accepted as of 2026-07-28. CQ2.0 froze the v2 density-asset ABI, CQ2.1 implemented deterministic generators, detailed CQ2.2 bundled the pinned payloads, CQ2.3 added strict transactional profile selection, CQ2.4 added explicit ray-footprint LOD, CQ2.5 implemented versioned weather/material shaping, CQ2.6 added expanded weather addressing plus edge-only rotated detail, CQ2.7 completed debug inspection and automated asset/shader coverage, and CQ2.8 completed fixed-scene visual and GPU performance acceptance. Validated desktop contexts select v2; GLES/ANGLE and any v2 load/upload failure retain one coherent v1 profile. CQ3.0 through CQ3.7 are complete and accepted as of 2026-07-29: the light-cache ABI/generation/consumption path now includes controlled multiple scattering, local hemispherical sky visibility, restrained terrain-material ground bounce, cached cirrus/cumulus lighting, Cinematic two-tap boundary refinement, transactional terrain/fog transmittance, bounded scheduling and exact-static reuse. The final 13-case matrix passes the High `1.25×` gate at `1.215×`; live GL 3.3, compute/fragment/short-march failure paths, and long-lived DDA/resident-terrain pixels are green. Low/Medium/GLES and invalid or out-of-range cloud-body cache samples retain the accepted short march; ground-transmittance consumers use full sunlight when their publication is unavailable or invalid.
 
-Checkpoint `1377876c` contains CQ1.1–CQ1.8 plus the intentional 16-chunk distant-terrain LOD work. The current uncommitted working tree contains the subsequent CQ1.8/CQ1.9 acceptance corrections, complete CQ2.0–CQ2.8 implementation, CQ3.0–CQ3.6, tests, assets, evidence harness, tracking updates, and the DDA initialization correction described below.
+Checkpoint `1377876c` contains CQ1.1–CQ1.8 plus the intentional 16-chunk distant-terrain LOD work. The current uncommitted working tree contains the subsequent CQ1.8/CQ1.9 acceptance corrections, complete CQ2.0–CQ2.8 and CQ3.0–CQ3.7 implementation, tests, assets, evidence harnesses, tracking updates, and the DDA initialization correction described below.
 
 ## Completed
 
@@ -88,9 +88,18 @@ Checkpoint `1377876c` contains CQ1.1–CQ1.8 plus the intentional 16-chunk dista
 - Near/far generation now runs as separate transactions. A failed compute update demotes the session to fragment slices; a failed cascade is invalidated without discarding a valid peer, and the existing short march covers missing or out-of-range samples.
 - Each cascade commits its own last-generation frame, wind offset, snapped transform, and generation ID. Cloud lookup, ground publication, terrain, and camera-froxel consumers all sample through the same wrapped wind-reprojected transform.
 - The two samplers continue to share one light basis. Single-cascade refreshes retain the committed paired basis; a new basis becomes visible only during a paired refresh.
-- Snapped scroll plans report whole-texel XY movement, slice movement, overlap fraction, and reuse eligibility. Between refreshes the prior cache is reused and reprojected. Due cascades use full regeneration, which the specification permits as the first implementation; physical overlap copies remain a CQ3.7 performance decision before final acceptance.
+- Snapped scroll plans report whole-texel XY movement, slice movement, overlap fraction, and reuse eligibility. Between refreshes the prior cache is reused and reprojected. Due cascades use full regeneration, which the specification permits as the first implementation. CQ3.7 measurement accepted this path without physical overlap copies because exact-static reuse and bounded moving refreshes pass the High performance gate.
 - Diagnostics report requested cascades, invalidation reason, cadence, age, selected generator, compute demotion/fallback, generation IDs, scroll delta/reusable fraction, and ground publication state. Separate `Cloud Light Near` and `Cloud Light Far` GPU timing scopes feed the existing 240-frame cloud timing window.
 - Scheduler/reprojection/scroll/timing tests and all `596/596` app tests pass. The explicitly enabled hidden-WGL shader smoke and production `862×683` DDA/terrain lifecycle both remain green.
+
+### CQ3.7 — final lighting/cache acceptance
+
+- Added a 13-case `1920×1080` acceptance harness with 32 warm-ups and 240 retained samples per fixture. It writes PNG captures plus JSON/CSV metadata and timings for dense, deep, broken, sun-transition, height-transition, overlap, cirrus, and moving-shadow scenarios.
+- Added exact-static transactional cascade reuse. Frozen fixtures advance generation state without rewriting unchanged textures, while changing transforms/materials retain bounded scheduled regeneration and all existing invalidation rules.
+- Added a desktop High trace specialization (`GENESIS_CLOUD_QUALITY=2`). Compile-time folding removes inactive Cinematic/compatibility branches that reduced High shader occupancy. Exact first-order HG, CQ2 density, 32 steps, half-resolution tracing, exact cache depth interpolation, and reconstruction remain unchanged; generic compilation is the safe fallback.
+- The final High dense-overcast result is `0.671/0.705 ms` trace p50/p95, `0.889/2.001 ms` cloud-total p50/p95, and `1.215×` the accepted CQ2 baseline against the `1.25×` gate. Three independent confirmation runs remain between `0.671` and `0.674 ms`.
+- The moving Cinematic fixture records 180 near and 60 far refresh samples, proving the required `1/4` cadence. Since frozen High has zero generation cost and passes, physical overlap copies are deferred; due moving cascades keep permitted full regeneration.
+- Live tests cover compute→fragment→short-march demotion, stale ground-publication rejection, real GL 3.3 fragment generation, generic and specialized shader compilation, acceleration-lane pixel parity, and the long-lived resident-terrain/DDA lifecycle.
 
 ### CQ2.0 — density asset ABI
 
@@ -392,15 +401,17 @@ The live run initially exposed an STBN asset-loader dependency on Avalonia appli
 |-------|--------|
 | App solution build | Pass |
 | CQ1.8 terrain/rendering/repair focused tests | Pass |
-| Complete app test assembly | 596/596 pass after CQ3.6 |
+| Complete app test assembly | 604/604 pass after CQ3.7 |
 | Hidden-WGL full-backend terrain capture, bundled palette | Pass at `862x683` |
 | Hidden-WGL full-backend terrain capture, Minecraft 26.1.2 terrain/vegetation palette | Pass at `862x683`; DDA active; `2,401/2,401` chunks before recenter; 685 MiB pool; no rejection; visible-terrain capture after a 100-frame recenter tail |
-| Hidden-WGL 862×683 production-profile DDA/CQ3.6 transition | 1/1 pass; backend reports P5.4 enabled, scheduled compute/image-store cache generation, CQ3.4 cloud shading, CQ3.5 terrain/camera-froxel consumers, and visible terrain after full residency/recenter |
+| Hidden-WGL production-profile DDA/CQ3.7 transition | 2/2 pixel harnesses pass; P5.4 and acceleration lanes remain active, and resident terrain stays visible after late cache/DDA initialization |
 | Hidden-WGL cloud shader/target/depth test, including CQ3.2 parity, CQ3.3–CQ3.4 selection/visibility, and CQ3.5 publication | 1/1 pass; cumulative R remains monotonic, layer-local G remains bounded and matches across generators, barriers complete, center/overlap/far/outside/partial selection matches, and fixed-density ground transmittance matches Beer-Lambert |
 | Hidden-WGL CQ1.9 1080p preset/camera/timing matrix | 1/1 pass; 12 captures; 2,880 retained GPU samples; deterministic STBN active |
 | Hidden-WGL CQ2.8 1080p density visual/performance matrix | 1/1 pass; 13 debug-off captures; 3,120 retained GPU samples; asynchronous High trace gate passes at `0.729×` CQ1 |
 | Hidden-WGL P2.3 acceleration smoke after signed-version DDA correction | 1/1 pass; atlas initializes and DDA compaction assertion succeeds |
-| CQ3.0–CQ3.6 profile/coordinate/bounds/blend/capability/fallback/consumer/lifecycle focused tests | Pass |
+| Hidden-WGL CQ3.7 1080p lighting/cache matrix | 1/1 pass; 13 captures; 3,120 retained GPU samples; High `0.671 ms` / `1.215×` CQ2 gate result |
+| Hidden-WGL CQ3.7 failure and GL 3.3 paths | 2/2 pass; compute→fragment→short-march demotion, stale-publication rejection, and real fragment generation verified |
+| CQ3.0–CQ3.7 profile/coordinate/bounds/blend/capability/fallback/consumer/lifecycle focused tests | Pass |
 | `git diff --check` | Pass |
 | Initial fixed-camera cloud capture | Accepted user capture |
 | Initial displayed GPU timing | `1.1 ms` total; `0.3 ms` cloud trace |
@@ -409,7 +420,9 @@ The broader solution run completed the app and preview suites but is not green: 
 
 ## Next implementation task
 
-1. Start CQ3.7 with the fixed visual/stability matrix: deep tower self-shadowing, broken-cumulus gaps, noon through night transitions, below/inside/above-layer cameras, near/far overlap, moving/frozen wind, terrain shadows, and forced compute/fragment/short-march fallback.
-2. Capture at least 240 post-warm-up samples for the new `Cloud Light Near` and `Cloud Light Far` scopes at 1080p High and Cinematic. Verify High's amortized cache generation plus simplified view-lighting cost against the accepted CQ2 gate.
-3. If the scheduled generation timing misses the gate, implement physical snapped-overlap copies plus dirty-column generation using `PreviewCloudLightScrollPlan`; otherwise retain full due-frame regeneration and record the measured justification.
-4. Close CQ3 only after the visual artifacts, GL 3.3 fragment path, GLES source adaptation, failure injection, no-swimming checks, and DDA/terrain/subject-depth regressions are accepted.
+Start CQ4.0 capability and backend selection without changing accepted shell output:
+
+1. Add `CanUseSparseCloudVolumes` for desktop compute, image load/store, and SSBO support.
+2. Add an internal shell-versus-sparse backend profile and diagnostics; keep the CQ3 shell selected initially.
+3. Prove unsupported, allocation-failure, shader-failure, and GPU-fault cases remain on the accepted CQ3 shell rather than disabling clouds.
+4. Keep CQ1 reconstruction, CQ2 density semantics, CQ3 lighting, GLES/ANGLE behavior, and the final CQ3.7 DDA/performance gates unchanged.
