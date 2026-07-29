@@ -10,6 +10,7 @@ layout(r8, binding = 1) writeonly uniform image2DArray uFroxelOccupancyOut;
 uniform sampler2DShadow uShadowMap;
 uniform sampler2DShadow uShadowMapNear;
 uniform sampler2DShadow uShadowMapMid;
+uniform sampler2D uCloudGroundTransmittance;
 
 uniform mat4 uLightViewProj;
 uniform mat4 uLightViewProjNear;
@@ -46,12 +47,19 @@ uniform float uCascadeMidSplitDistance;
 uniform float uCascadeBlendWidth;
 uniform float uShadowDistance;
 uniform float uShadowFadeStart;
+uniform int uHasCloudGroundTransmittance;
+uniform vec3 uCloudGroundBasisRight;
+uniform vec3 uCloudGroundBasisUp;
+uniform vec2 uCloudGroundPlaneCenter;
+uniform float uCloudGroundWorldSpan;
+uniform vec2 uCloudGroundTexelSize;
 
 //!include "common/common.glsl"
 //!include "common/shadow_gates.glsl"
 //!include "common/volumetric_inject_density.glsl"
 //!include "common/volume_froxel_math.glsl"
 //!include "common/volume_inject_pack.glsl"
+//!include "common/cloud_ground_transmittance.glsl"
 
 void main()
 {
@@ -82,6 +90,21 @@ void main()
             uShadowTexelSizeNear, uShadowTexelSizeMid, uShadowTexelSize, uShadowMinBias,
             uEnableShadowMap, uEnableShadowCascades, uCascadeSplitDistance, uCascadeMidSplitDistance,
             uCascadeBlendWidth, uShadowDistance, uShadowFadeStart);
+        // Only direct in-scatter is attenuated. Density and occupancy remain identical.
+        float cloudGroundTransmittance = cgtSampleGroundTransmittance(
+            uCloudGroundTransmittance,
+            worldPos,
+            uCloudGroundBasisRight,
+            uCloudGroundBasisUp,
+            uCloudGroundPlaneCenter,
+            uCloudGroundWorldSpan,
+            uCloudGroundTexelSize,
+            uHasCloudGroundTransmittance);
+        shadowGate *= cloudGroundTransmittance;
+        shadowGate =
+            isnan(shadowGate) || isinf(shadowGate)
+                ? 1.0
+                : clamp(shadowGate, 0.0, 1.0);
     }
 
     vec4 froxel = viPackFroxelInject(mediumRho, uLightColor, shadowGate);

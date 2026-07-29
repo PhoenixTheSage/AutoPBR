@@ -15,6 +15,9 @@ public sealed partial class OpenGlPreviewBackend
     private const int MainPassShadowNearUnit = 5;
     private const int MainPassSkyLutUnit = 6;
     private const int MainPassShadowMidUnit = 7;
+    // Material sampler2DArray units occupy 8-11. Samplers of different types may
+    // not alias one image unit, even though OpenGL tracks target bindings separately.
+    private const int MainPassCloudGroundTransmittanceUnit = 12;
 
     private void GlRenderPassScene(ref GlRenderFrame frame)
     {
@@ -670,6 +673,22 @@ public sealed partial class OpenGlPreviewBackend
         if (u.AtmoSkyViewLut >= 0 && _atmoSkyViewTex != 0)
         {
             SetIntLoc(u.AtmoSkyViewLut, MainPassSkyLutUnit);
+        }
+
+        if (_program is { IsValid: true } program)
+        {
+            BindCloudGroundTransmittanceUniforms(
+                frame.Gl,
+                program,
+                frame.Settings,
+                MainPassCloudGroundTransmittanceUnit,
+                u.CloudGroundTransmittance,
+                u.HasCloudGroundTransmittance,
+                u.CloudGroundBasisRight,
+                u.CloudGroundBasisUp,
+                u.CloudGroundPlaneCenter,
+                u.CloudGroundWorldSpan,
+                u.CloudGroundTexelSize);
         }
     }
 

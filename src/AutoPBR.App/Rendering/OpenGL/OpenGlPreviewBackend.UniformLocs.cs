@@ -96,7 +96,14 @@ public sealed partial class OpenGlPreviewBackend
         int AtmoSkyViewLut,
         int GenesisUseMaterialDrawRecord,
         int GenesisUseMaterialTextureArray,
-        int GenesisDrawRecordIndex);
+        int GenesisDrawRecordIndex,
+        int CloudGroundTransmittance,
+        int HasCloudGroundTransmittance,
+        int CloudGroundBasisRight,
+        int CloudGroundBasisUp,
+        int CloudGroundPlaneCenter,
+        int CloudGroundWorldSpan,
+        int CloudGroundTexelSize);
 
     private readonly record struct ShadowProgramUniformLocs(
         int LightViewProj,
@@ -226,7 +233,14 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uAtmoSkyViewLut"),
             program.GetUniformLocation("uGenesisUseMaterialDrawRecord"),
             program.GetUniformLocation("uGenesisUseMaterialTextureArray"),
-            program.GetUniformLocation("uGenesisDrawRecordIndex"));
+            program.GetUniformLocation("uGenesisDrawRecordIndex"),
+            program.GetUniformLocation("uCloudGroundTransmittance"),
+            program.GetUniformLocation("uHasCloudGroundTransmittance"),
+            program.GetUniformLocation("uCloudGroundBasisRight"),
+            program.GetUniformLocation("uCloudGroundBasisUp"),
+            program.GetUniformLocation("uCloudGroundPlaneCenter"),
+            program.GetUniformLocation("uCloudGroundWorldSpan"),
+            program.GetUniformLocation("uCloudGroundTexelSize"));
 
     private static ShadowProgramUniformLocs ResolveShadowProgramUniformLocs(GlShaderProgram program) =>
         new(

@@ -19,6 +19,7 @@
 //!include "common/ibl.glsl"
 //!include "common/tonemap.glsl"
 //!include "common/shadow.glsl"
+//!include "common/cloud_ground_transmittance.glsl"
 
 in vec3 vWorldPos;
 in vec3 vWorldNormal;
@@ -41,6 +42,7 @@ uniform sampler2D uAtmoSkyViewLut;
 uniform sampler2DShadow uShadowMap;
 uniform sampler2DShadow uShadowMapNear;
 uniform sampler2DShadow uShadowMapMid;
+uniform sampler2D uCloudGroundTransmittance;
 
 uniform vec3  uCameraPos;
 uniform vec3  uLightDir;
@@ -108,6 +110,12 @@ uniform vec2  uShadowTexelSize;
 uniform vec2  uShadowTexelSizeNear;
 uniform vec2  uShadowTexelSizeMid;
 uniform float uShadowSoftnessTexels;
+uniform int   uHasCloudGroundTransmittance;
+uniform vec3  uCloudGroundBasisRight;
+uniform vec3  uCloudGroundBasisUp;
+uniform vec2  uCloudGroundPlaneCenter;
+uniform float uCloudGroundWorldSpan;
+uniform vec2  uCloudGroundTexelSize;
 
 layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 TaaSignal;
@@ -386,8 +394,22 @@ void main()
         uShadowDistance, uShadowFadeStart);
 #endif
 
-    // Combined lighting visibility: parallax-local AND directional shadow gate.
-    float lightVis = pomShadow * shadowVis;
+    // CQ3.5 attenuates terrain/simple-ground direct sun only. Subjects remain out of
+    // scope for the first consumer milestone, and indirect/IBL below is unaffected.
+    float cloudGroundTransmittance = uIsGroundPass > 0
+        ? cgtSampleGroundTransmittance(
+            uCloudGroundTransmittance,
+            vWorldPos,
+            uCloudGroundBasisRight,
+            uCloudGroundBasisUp,
+            uCloudGroundPlaneCenter,
+            uCloudGroundWorldSpan,
+            uCloudGroundTexelSize,
+            uHasCloudGroundTransmittance)
+        : 1.0;
+
+    // Combined lighting visibility: parallax-local, scene shadow, and cloud shadow.
+    float lightVis = pomShadow * shadowVis * cloudGroundTransmittance;
 
     // Direct lighting: Cook-Torrance. Specular lobe is gated on the LabPBR _s map toggle so
     // "specular off" is diffuse-only and avoids view-dependent RGBA8 banding on flat faces.

@@ -6,6 +6,7 @@ internal sealed class GlGpuTimingWindow(int capacity = 240)
 {
     private readonly Queue<double> _cloudTrace = new(Math.Max(capacity, 1));
     private readonly Queue<double> _cloudComposite = new(Math.Max(capacity, 1));
+    private readonly Queue<double> _cloudLightGeneration = new(Math.Max(capacity, 1));
     private readonly int _capacity = Math.Max(capacity, 1);
 
     public int Count => _cloudTrace.Count;
@@ -14,34 +15,44 @@ internal sealed class GlGpuTimingWindow(int capacity = 240)
     {
         _cloudTrace.Clear();
         _cloudComposite.Clear();
+        _cloudLightGeneration.Clear();
     }
 
     public void Add(in GlGpuTimingSnapshot snapshot)
     {
         if (snapshot is not { CloudTraceMs: > 0.0 } and
             not { CloudRepairMs: > 0.0 } and
-            not { CloudUpsampleMs: > 0.0 })
+            not { CloudUpsampleMs: > 0.0 } and
+            not { CloudLightNearMs: > 0.0 } and
+            not { CloudLightFarMs: > 0.0 })
         {
             return;
         }
 
         AddBounded(_cloudTrace, snapshot.CloudTraceMs);
         AddBounded(_cloudComposite, snapshot.CloudRepairMs + snapshot.CloudUpsampleMs);
+        AddBounded(
+            _cloudLightGeneration,
+            snapshot.CloudLightNearMs + snapshot.CloudLightFarMs);
     }
 
     public string FormatCloudDiagnostic()
     {
         var trace = Summarize(_cloudTrace);
         var composite = Summarize(_cloudComposite);
+        var light = Summarize(_cloudLightGeneration);
         return string.Format(
             CultureInfo.InvariantCulture,
             "cloudWindow={0} frames, trace p50={1:0.###}ms p95={2:0.###}ms, " +
-            "composite p50={3:0.###}ms p95={4:0.###}ms",
+            "composite p50={3:0.###}ms p95={4:0.###}ms, " +
+            "light-cache p50={5:0.###}ms p95={6:0.###}ms",
             Count,
             trace.P50,
             trace.P95,
             composite.P50,
-            composite.P95);
+            composite.P95,
+            light.P50,
+            light.P95);
     }
 
     private void AddBounded(Queue<double> samples, double value)

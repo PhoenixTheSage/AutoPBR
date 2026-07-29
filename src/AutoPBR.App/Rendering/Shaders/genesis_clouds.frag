@@ -5,6 +5,7 @@
 //!include "common/atmosphere.glsl"
 //!include "common/cloud_shell.glsl"
 //!include "common/volumetric_clouds.glsl"
+//!include "common/cloud_light_cache.glsl"
 //!include "common/volumetric_segment.glsl"
 //!include "common/cloud_temporal.glsl"
 //!include "common/ray_reconstruct.glsl"
@@ -21,6 +22,8 @@ uniform sampler3D uDetailNoise;
 uniform sampler3D uCloudStbn;
 uniform sampler2D uCoverageMap;
 uniform sampler2D uSceneDepth;
+uniform sampler2DArray uCloudLightNear;
+uniform sampler2DArray uCloudLightFar;
 uniform float uGroundWorldY;
 uniform float uPlanetRadius;
 uniform float uLayerHeight;
@@ -45,6 +48,31 @@ uniform int uHasSkyLut;
 uniform int uCloudDataDirect;
 uniform int uDensityAssetVersion;
 uniform int uDensityAssetProfileCode;
+uniform vec3 uCloudLightBasisRight;
+uniform vec3 uCloudLightBasisUp;
+uniform vec3 uCloudLightBasisForward;
+uniform vec2 uCloudLightNearPlaneCenter;
+uniform vec2 uCloudLightFarPlaneCenter;
+uniform float uCloudLightNearWorldSpan;
+uniform float uCloudLightFarWorldSpan;
+uniform float uCloudLightNearDepthMin;
+uniform float uCloudLightFarDepthMin;
+uniform float uCloudLightNearDepthSpan;
+uniform float uCloudLightFarDepthSpan;
+uniform int uCloudLightNearDepth;
+uniform int uCloudLightFarDepth;
+uniform float uCloudLightNearOverlap;
+uniform int uHasCloudLightNear;
+uniform int uHasCloudLightFar;
+uniform vec3 uCloudScatterOctave1;
+uniform vec3 uCloudScatterOctave2;
+uniform float uCloudScatterEnergyClamp;
+uniform float uCloudCachedSkyVisibilityFloor;
+uniform vec3 uCloudGroundBounceColor;
+uniform float uCloudGroundBounceStrength;
+uniform int uCloudLocalConeTapCount;
+uniform float uCloudLocalConeRange;
+uniform float uCloudLocalConeOpticalDepthScale;
 uniform float uFramePhase;
 uniform int uCloudFrameIndex;
 
@@ -128,6 +156,111 @@ vec3 sampleSkyAmbient(vec3 rd, sampler2D skyLut, int hasSkyLut, float dayAmt)
     vec3 ambientDir = normalize(vec3(rd.x * 0.35, max(rd.y, 0.45), rd.z * 0.35));
     vec3 lut = srgbToLinear(cloudSampleSkyViewLutSrgb(skyLut, ambientDir));
     return mix(night, lut, dayAmt);
+}
+
+vec3 cloudResolveCachedLighting(vec3 worldPosition, out vec3 weights)
+{
+    return cqlResolveLighting(
+        uCloudLightNear,
+        uCloudLightFar,
+        worldPosition,
+        uCloudLightBasisRight,
+        uCloudLightBasisUp,
+        uCloudLightBasisForward,
+        uCloudLightNearPlaneCenter,
+        uCloudLightFarPlaneCenter,
+        uCloudLightNearWorldSpan,
+        uCloudLightFarWorldSpan,
+        uCloudLightNearDepthMin,
+        uCloudLightFarDepthMin,
+        uCloudLightNearDepthSpan,
+        uCloudLightFarDepthSpan,
+        uCloudLightNearDepth,
+        uCloudLightFarDepth,
+        uCloudLightNearOverlap,
+        uHasCloudLightNear,
+        uHasCloudLightFar,
+        weights);
+}
+
+float cloudLocalConeDensity(
+    vec3 worldPosition,
+    vec3 planetCenter,
+    float planetRadius,
+    float layerBaseAltitude,
+    float layerTopAltitude,
+    float sampleFootprint)
+{
+    return vcCloudDensityEx(
+        worldPosition,
+        planetCenter,
+        planetRadius,
+        layerBaseAltitude,
+        layerTopAltitude,
+        uDensity,
+        uCoverageScale,
+        uVolumeSize,
+        uCloudNoise,
+        uHasCloudNoise,
+        uDetailNoise,
+        uHasDetailNoise,
+        uCoverageMap,
+        uHasCoverageMap,
+        uWindOffset,
+        sampleFootprint,
+        -0.35,
+        3,
+        uDensityAssetVersion);
+}
+
+float cloudCinematicLocalConeOpticalDepth(
+    vec3 worldPosition,
+    vec3 sunToward,
+    vec3 planetCenter,
+    float planetRadius,
+    float layerBaseAltitude,
+    float layerTopAltitude,
+    float sampleFootprint)
+{
+    if (uCloudLocalConeTapCount < 2 ||
+        uCloudLocalConeRange <= 1e-4)
+    {
+        return 0.0;
+    }
+
+    float rangeWorld = uCloudLocalConeRange;
+    float distance0 = rangeWorld * 0.42;
+    float distance1 = rangeWorld * 0.88;
+    float coneFootprint = max(sampleFootprint, rangeWorld * 0.5);
+    vec3 direction0 = normalize(
+        sunToward +
+        uCloudLightBasisRight * 0.075 +
+        uCloudLightBasisUp * 0.035);
+    vec3 direction1 = normalize(
+        sunToward -
+        uCloudLightBasisRight * 0.065 -
+        uCloudLightBasisUp * 0.045);
+
+    // Exactly two CQ2 explicit-LOD density samples. The farthest is below one near-cache
+    // XY texel, so these refine local boundaries without recreating a long secondary march.
+    float density0 = cloudLocalConeDensity(
+        worldPosition + direction0 * distance0,
+        planetCenter,
+        planetRadius,
+        layerBaseAltitude,
+        layerTopAltitude,
+        coneFootprint);
+    float density1 = cloudLocalConeDensity(
+        worldPosition + direction1 * distance1,
+        planetCenter,
+        planetRadius,
+        layerBaseAltitude,
+        layerTopAltitude,
+        coneFootprint);
+    return max(
+        density0 * distance0 +
+        density1 * (distance1 - distance0),
+        0.0) * 0.18;
 }
 
 float cloudSceneDistance(vec3 rd)
@@ -594,18 +727,99 @@ void main()
                     if (density > 1e-5)
                     {
                         float segmentLength = min(fineStep, tExit - t);
-                        float lightOd = vcLightOpticalDepthFromBase(baseShape, worldPos, sunToward,
-                            planetCenter, planetRadius, layerBaseAltitude, layerTopAltitude,
-                            uDensity, uCoverageScale, uVolumeSize, lightSteps,
-                            uCloudNoise, uHasCloudNoise, uCoverageMap, uHasCoverageMap,
-                            uWindOffset, sampleFootprint, uDensityAssetVersion);
+                        vec3 cloudLightWeights;
+                        vec3 cachedLighting = uQuality >= 2
+                            ? cloudResolveCachedLighting(
+                                worldPos,
+                                cloudLightWeights)
+                            : vec3(0.0, 1.0, 0.0);
+                        bool useCachedLighting = cachedLighting.z > 0.5;
+                        float lightOd = useCachedLighting
+                            ? cachedLighting.x
+                            : vcLightOpticalDepthFromBase(baseShape,
+                                worldPos,
+                                sunToward,
+                                planetCenter,
+                                planetRadius,
+                                layerBaseAltitude,
+                                layerTopAltitude,
+                                uDensity,
+                                uCoverageScale,
+                                uVolumeSize,
+                                lightSteps,
+                                uCloudNoise,
+                                uHasCloudNoise,
+                                uCoverageMap,
+                                uHasCoverageMap,
+                                uWindOffset,
+                                sampleFootprint,
+                                uDensityAssetVersion);
+                        float localConeOpticalDepth = 0.0;
+                        float boundaryWeight =
+                            1.0 - smoothstep(0.18, 0.62, baseShape);
+                        if (useCachedLighting &&
+                            uQuality >= 3 &&
+                            boundaryWeight > 1e-3)
+                        {
+                            localConeOpticalDepth =
+                                cloudCinematicLocalConeOpticalDepth(
+                                    worldPos,
+                                    sunToward,
+                                    planetCenter,
+                                    planetRadius,
+                                    layerBaseAltitude,
+                                    layerTopAltitude,
+                                    sampleFootprint) *
+                                boundaryWeight *
+                                uCloudLocalConeOpticalDepthScale;
+                        }
                         float altitude = vcsAltitude(worldPos, planetCenter, planetRadius);
                         float hSample = saturate1((altitude - layerBaseAltitude) / max(uVolumeHeight, 0.001));
-                        vec3 radiance = vcSunScatter(sunColor, cosTheta, lightOd);
-                        float ambientVisibility = mix(0.38, 1.0, exp(-lightOd * 0.32));
+                        float skyVisibility = useCachedLighting
+                            ? cachedLighting.y
+                            : exp(-lightOd * 0.32);
+                        vec3 radiance = useCachedLighting
+                            ? vcSunScatterCq34(
+                                sunColor,
+                                cosTheta,
+                                lightOd,
+                                skyVisibility,
+                                localConeOpticalDepth,
+                                uCloudScatterOctave1,
+                                uCloudScatterOctave2,
+                                uCloudScatterEnergyClamp)
+                            : vcSunScatter(
+                                sunColor,
+                                cosTheta,
+                                lightOd);
+                        float ambientVisibility = useCachedLighting
+                            ? mix(
+                                uCloudCachedSkyVisibilityFloor,
+                                1.0,
+                                skyVisibility)
+                            : mix(
+                                0.38,
+                                1.0,
+                                skyVisibility);
                         // The shared condensation level stays comparatively shaded while
                         // the cauliflower tops receive progressively more skylight.
                         radiance += skyAmbient * mix(0.22, 0.82, hSample) * 0.62 * ambientVisibility;
+                        if (useCachedLighting)
+                        {
+                            vec3 radialUp = normalize(worldPos - planetCenter);
+                            float upwardHemisphereWeight = smoothstep(
+                                -0.15,
+                                0.65,
+                                dot(rd, radialUp));
+                            float lowerAltitudeProfile =
+                                1.0 - smoothstep(0.28, 0.67, hSample);
+                            radiance +=
+                                uCloudGroundBounceColor *
+                                uCloudGroundBounceStrength *
+                                upwardHemisphereWeight *
+                                lowerAltitudeProfile *
+                                skyVisibility;
+                        }
                         float inscatterW = vmSegmentInscatterWeight(density, segmentLength, 1.1);
                         accum += transmittance * radiance * inscatterW;
                         transmittance *= vmSegmentTransmittance(density, segmentLength, 1.1);
@@ -678,8 +892,41 @@ void main()
                 float slant = clamp((cirrusSeg.y - cirrusSeg.x) / cirrusThickness, 1.0, 3.0);
                 float cirrusOd = cirrusDensity * uCirrusStrength * 0.27 * slant;
                 float cirrusAlpha = (1.0 - exp(-cirrusOd)) * cirrusHorizonVisibility;
-                vec3 cirrusRad = vcSunScatter(sunColor, cosTheta, cirrusDensity * 0.62) * 0.42 +
-                    skyAmbient * 0.54;
+                vec3 cirrusLightWeights;
+                vec3 cirrusCachedLighting = uQuality >= 2
+                    ? cloudResolveCachedLighting(
+                        uCameraPos + rd * tCirrus,
+                        cirrusLightWeights)
+                    : vec3(0.0, 1.0, 0.0);
+                bool useCirrusCache = cirrusCachedLighting.z > 0.5;
+                float cirrusLightOd = useCirrusCache
+                    ? cirrusCachedLighting.x
+                    : cirrusDensity * 0.62;
+                float cirrusSkyVisibility = useCirrusCache
+                    ? cirrusCachedLighting.y
+                    : 1.0;
+                vec3 cirrusSun = useCirrusCache
+                    ? vcSunScatterCq34(
+                        sunColor,
+                        cosTheta,
+                        cirrusLightOd,
+                        cirrusSkyVisibility,
+                        0.0,
+                        uCloudScatterOctave1,
+                        uCloudScatterOctave2,
+                        uCloudScatterEnergyClamp)
+                    : vcSunScatter(
+                        sunColor,
+                        cosTheta,
+                        cirrusLightOd);
+                float cirrusAmbientVisibility = useCirrusCache
+                    ? mix(
+                        uCloudCachedSkyVisibilityFloor,
+                        1.0,
+                        cirrusSkyVisibility)
+                    : 1.0;
+                vec3 cirrusRad = cirrusSun * 0.42 +
+                    skyAmbient * 0.54 * cirrusAmbientVisibility;
                 accum += transmittance * cirrusRad * cirrusAlpha;
                 transmittance *= 1.0 - cirrusAlpha;
                 if (!representativeFound || tCirrus < representativeT)

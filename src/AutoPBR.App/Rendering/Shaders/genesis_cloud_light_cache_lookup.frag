@@ -1,5 +1,5 @@
 #version 330 core
-// CQ3.1 fixed-world-position reference lookup; production cloud consumption starts in CQ3.3.
+// CQ3.3 fixed-world-position cache selection/fallback reference lookup.
 
 //!include "common/cloud_light_cache.glsl"
 
@@ -22,39 +22,34 @@ uniform float uFarLightDepthSpan;
 uniform int uNearDepth;
 uniform int uFarDepth;
 uniform float uNearOverlapFraction;
+uniform int uHasNear;
+uniform int uHasFar;
 
 layout(location = 0) out vec4 FragColor;
 
 void main()
 {
-    vec3 nearUnit = cqlWorldToUnit(
+    vec3 weights;
+    vec3 cacheLighting = cqlResolveLighting(
+        uNearCache,
+        uFarCache,
         uWorldPosition,
         uBasisRight,
         uBasisUp,
         uBasisForward,
         uNearPlaneCenter,
-        uNearWorldSpan,
-        uNearLightDepthMin,
-        uNearLightDepthSpan);
-    vec3 farUnit = cqlWorldToUnit(
-        uWorldPosition,
-        uBasisRight,
-        uBasisUp,
-        uBasisForward,
         uFarPlaneCenter,
+        uNearWorldSpan,
         uFarWorldSpan,
+        uNearLightDepthMin,
         uFarLightDepthMin,
-        uFarLightDepthSpan);
-    vec3 weights = cqlCascadeWeights(
-        nearUnit,
-        farUnit,
-        uNearOverlapFraction);
-    vec2 nearValue = weights.x > 0.0
-        ? cqlSampleCascadeExplicitDepth(uNearCache, nearUnit, uNearDepth)
-        : vec2(0.0, 1.0);
-    vec2 farValue = weights.y > 0.0
-        ? cqlSampleCascadeExplicitDepth(uFarCache, farUnit, uFarDepth)
-        : vec2(0.0, 1.0);
-    vec2 cacheValue = nearValue * weights.x + farValue * weights.y;
-    FragColor = vec4(cacheValue, weights.xy);
+        uNearLightDepthSpan,
+        uFarLightDepthSpan,
+        uNearDepth,
+        uFarDepth,
+        uNearOverlapFraction,
+        uHasNear,
+        uHasFar,
+        weights);
+    FragColor = vec4(cacheLighting.xy, weights.xy);
 }

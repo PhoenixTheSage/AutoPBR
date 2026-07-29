@@ -128,7 +128,14 @@ public sealed partial class OpenGlPreviewBackend
         int ShadowMap,
         int ShadowMapNear,
         int ShadowMapMid,
-        int SliceIndex);
+        int SliceIndex,
+        int CloudGroundTransmittance,
+        int HasCloudGroundTransmittance,
+        int CloudGroundBasisRight,
+        int CloudGroundBasisUp,
+        int CloudGroundPlaneCenter,
+        int CloudGroundWorldSpan,
+        int CloudGroundTexelSize);
 
     private readonly record struct VolumeInjectComputeUniformLocs(
         int CameraPos,
@@ -165,7 +172,14 @@ public sealed partial class OpenGlPreviewBackend
         int ShadowFadeStart,
         int ShadowMap,
         int ShadowMapNear,
-        int ShadowMapMid);
+        int ShadowMapMid,
+        int CloudGroundTransmittance,
+        int HasCloudGroundTransmittance,
+        int CloudGroundBasisRight,
+        int CloudGroundBasisUp,
+        int CloudGroundPlaneCenter,
+        int CloudGroundWorldSpan,
+        int CloudGroundTexelSize);
 
     private readonly record struct VolumeIntegrateUniformLocs(
         int FroxelVolume,
@@ -238,7 +252,34 @@ public sealed partial class OpenGlPreviewBackend
         int HasSkyLut,
         int CloudDataDirect,
         int DensityAssetVersion,
-        int DensityAssetProfileCode);
+        int DensityAssetProfileCode,
+        int CloudLightNear,
+        int CloudLightFar,
+        int CloudLightBasisRight,
+        int CloudLightBasisUp,
+        int CloudLightBasisForward,
+        int CloudLightNearPlaneCenter,
+        int CloudLightFarPlaneCenter,
+        int CloudLightNearWorldSpan,
+        int CloudLightFarWorldSpan,
+        int CloudLightNearDepthMin,
+        int CloudLightFarDepthMin,
+        int CloudLightNearDepthSpan,
+        int CloudLightFarDepthSpan,
+        int CloudLightNearDepth,
+        int CloudLightFarDepth,
+        int CloudLightNearOverlap,
+        int HasCloudLightNear,
+        int HasCloudLightFar,
+        int CloudScatterOctave1,
+        int CloudScatterOctave2,
+        int CloudScatterEnergyClamp,
+        int CloudCachedSkyVisibilityFloor,
+        int CloudGroundBounceColor,
+        int CloudGroundBounceStrength,
+        int CloudLocalConeTapCount,
+        int CloudLocalConeRange,
+        int CloudLocalConeOpticalDepthScale);
 
     private readonly record struct CloudTemporalUniformLocs(
         int CurrentClouds,
@@ -526,7 +567,14 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uShadowMap"),
             program.GetUniformLocation("uShadowMapNear"),
             program.GetUniformLocation("uShadowMapMid"),
-            program.GetUniformLocation("uSliceIndex"));
+            program.GetUniformLocation("uSliceIndex"),
+            program.GetUniformLocation("uCloudGroundTransmittance"),
+            program.GetUniformLocation("uHasCloudGroundTransmittance"),
+            program.GetUniformLocation("uCloudGroundBasisRight"),
+            program.GetUniformLocation("uCloudGroundBasisUp"),
+            program.GetUniformLocation("uCloudGroundPlaneCenter"),
+            program.GetUniformLocation("uCloudGroundWorldSpan"),
+            program.GetUniformLocation("uCloudGroundTexelSize"));
 
     private static VolumeInjectComputeUniformLocs ResolveVolumeInjectComputeUniformLocs(GlShaderProgram program) =>
         new(
@@ -564,7 +612,14 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uShadowFadeStart"),
             program.GetUniformLocation("uShadowMap"),
             program.GetUniformLocation("uShadowMapNear"),
-            program.GetUniformLocation("uShadowMapMid"));
+            program.GetUniformLocation("uShadowMapMid"),
+            program.GetUniformLocation("uCloudGroundTransmittance"),
+            program.GetUniformLocation("uHasCloudGroundTransmittance"),
+            program.GetUniformLocation("uCloudGroundBasisRight"),
+            program.GetUniformLocation("uCloudGroundBasisUp"),
+            program.GetUniformLocation("uCloudGroundPlaneCenter"),
+            program.GetUniformLocation("uCloudGroundWorldSpan"),
+            program.GetUniformLocation("uCloudGroundTexelSize"));
 
     private static VolumeIntegrateUniformLocs ResolveVolumeIntegrateUniformLocs(GlShaderProgram program) =>
         new(
@@ -639,7 +694,34 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uHasSkyLut"),
             program.GetUniformLocation("uCloudDataDirect"),
             program.GetUniformLocation("uDensityAssetVersion"),
-            program.GetUniformLocation("uDensityAssetProfileCode"));
+            program.GetUniformLocation("uDensityAssetProfileCode"),
+            program.GetUniformLocation("uCloudLightNear"),
+            program.GetUniformLocation("uCloudLightFar"),
+            program.GetUniformLocation("uCloudLightBasisRight"),
+            program.GetUniformLocation("uCloudLightBasisUp"),
+            program.GetUniformLocation("uCloudLightBasisForward"),
+            program.GetUniformLocation("uCloudLightNearPlaneCenter"),
+            program.GetUniformLocation("uCloudLightFarPlaneCenter"),
+            program.GetUniformLocation("uCloudLightNearWorldSpan"),
+            program.GetUniformLocation("uCloudLightFarWorldSpan"),
+            program.GetUniformLocation("uCloudLightNearDepthMin"),
+            program.GetUniformLocation("uCloudLightFarDepthMin"),
+            program.GetUniformLocation("uCloudLightNearDepthSpan"),
+            program.GetUniformLocation("uCloudLightFarDepthSpan"),
+            program.GetUniformLocation("uCloudLightNearDepth"),
+            program.GetUniformLocation("uCloudLightFarDepth"),
+            program.GetUniformLocation("uCloudLightNearOverlap"),
+            program.GetUniformLocation("uHasCloudLightNear"),
+            program.GetUniformLocation("uHasCloudLightFar"),
+            program.GetUniformLocation("uCloudScatterOctave1"),
+            program.GetUniformLocation("uCloudScatterOctave2"),
+            program.GetUniformLocation("uCloudScatterEnergyClamp"),
+            program.GetUniformLocation("uCloudCachedSkyVisibilityFloor"),
+            program.GetUniformLocation("uCloudGroundBounceColor"),
+            program.GetUniformLocation("uCloudGroundBounceStrength"),
+            program.GetUniformLocation("uCloudLocalConeTapCount"),
+            program.GetUniformLocation("uCloudLocalConeRange"),
+            program.GetUniformLocation("uCloudLocalConeOpticalDepthScale"));
 
     private static CloudTemporalUniformLocs ResolveCloudTemporalUniformLocs(GlShaderProgram program) =>
         new(

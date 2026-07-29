@@ -19,28 +19,61 @@ float vcDualLobePhase(float cosTheta, float g)
     return mix(vcHGPhase(cosTheta, -0.35 * g), vcHGPhase(cosTheta, g), 0.7);
 }
 
-// Multi-scattering approximation: each octave re-runs the single-scatter estimate with
-// extinction, phase eccentricity, and intensity scaled down, so optically thick cores
-// glow instead of clamping to black under pure Beer-Lambert.
-vec3 vcSunScatter(vec3 sunColor, float cosTheta, float lightOd)
+// CQ3.4 controlled direct term plus exactly two higher-order approximations. Each octave
+// vector stores extinction scale, phase-eccentricity scale, and energy scale. Cached local
+// sky visibility suppresses higher-order energy in enclosed interiors, while the short
+// Cinematic cone optical depth sharpens only the direct boundary response.
+vec3 vcSunScatterCq34(
+    vec3 sunColor,
+    float cosTheta,
+    float lightOd,
+    float skyVisibility,
+    float localConeOpticalDepth,
+    vec3 octave1,
+    vec3 octave2,
+    float energyClamp)
 {
-    vec3 sum = vec3(0.0);
-    float extScale = 1.0;
-    float phaseG = 0.72;
-    float intensity = 1.0;
-    for (int o = 0; o < 3; ++o)
-    {
-        float phase = vcDualLobePhase(cosTheta, phaseG);
-        sum += sunColor * (intensity * phase * exp(-lightOd * extScale));
-        extScale *= 0.5;
-        phaseG *= 0.5;
-        intensity *= 0.55;
-    }
+    float boundedLightOd = max(lightOd, 0.0);
+    float boundedSkyVisibility = clamp(skyVisibility, 0.0, 1.0);
+    float directPhase = vcDualLobePhase(cosTheta, 0.72);
+    vec3 sum = sunColor * directPhase *
+        exp(-(boundedLightOd + max(localConeOpticalDepth, 0.0)));
+
+    float octave1Visibility = mix(0.28, 1.0, boundedSkyVisibility);
+    float octave2Visibility = mix(0.14, 1.0, boundedSkyVisibility);
+    sum += sunColor *
+        (max(octave1.z, 0.0) * octave1Visibility) *
+        vcDualLobePhase(cosTheta, 0.72 * max(octave1.y, 0.0)) *
+        exp(-boundedLightOd * max(octave1.x, 0.0));
+    sum += sunColor *
+        (max(octave2.z, 0.0) * octave2Visibility) *
+        vcDualLobePhase(cosTheta, 0.72 * max(octave2.y, 0.0)) *
+        exp(-boundedLightOd * max(octave2.x, 0.0));
 
     // Restrained powder shaping: retain the bright-edge cue without whitening thick
     // interiors into the flat, cartoon-like appearance of an aggressive powder term.
-    float powder = 1.0 - exp(-lightOd * 2.0);
-    return sum * mix(0.72, 0.90, powder);
+    float powder = 1.0 - exp(-boundedLightOd * 2.0);
+    sum *= mix(0.72, 0.90, powder);
+
+    // Clamp once after all orders. Per-octave clamps flatten the structure that cached sky
+    // visibility is intended to preserve.
+    return min(
+        max(sum, vec3(0.0)),
+        max(sunColor, vec3(0.0)) * max(energyClamp, 0.0));
+}
+
+// Compatibility wrapper for Low/Medium, repair, and cache-fallback paths.
+vec3 vcSunScatter(vec3 sunColor, float cosTheta, float lightOd)
+{
+    return vcSunScatterCq34(
+        sunColor,
+        cosTheta,
+        lightOd,
+        1.0,
+        0.0,
+        vec3(0.50, 0.50, 0.55),
+        vec3(0.25, 0.25, 0.30),
+        2.25);
 }
 
 // Sun radiance at cloud altitude: warms and extinguishes as the sun drops to the horizon,

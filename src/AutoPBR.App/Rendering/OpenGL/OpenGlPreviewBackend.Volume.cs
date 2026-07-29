@@ -34,6 +34,8 @@ public sealed partial class OpenGlPreviewBackend
     private bool _loggedSharedCloudTransmittance;
     private bool _volumeSharedCloudSignalInitialized;
     private bool _volumePreviousSharedCloudSignal;
+    private bool _volumeGroundCloudSignalInitialized;
+    private bool _volumePreviousGroundCloudSignal;
 
     private const float VolumeHeightFogScale = 0.42f;
     private const uint VolumeFroxelImageUnit = 0;
@@ -185,6 +187,7 @@ public sealed partial class OpenGlPreviewBackend
         _volumeUseLiteShaders = false;
         _loggedSharedCloudTransmittance = false;
         _volumeSharedCloudSignalInitialized = false;
+        _volumeGroundCloudSignalInitialized = false;
     }
 
     private bool CanUseVolumeGodRays(in PreviewRenderSettingsSnapshot settings) =>
@@ -396,6 +399,18 @@ public sealed partial class OpenGlPreviewBackend
             SetIntOnProgramLoc(_volumeInjectProgram, vi.ShadowMapMid, 2);
         }
 
+        BindCloudGroundTransmittanceUniforms(
+            gl,
+            _volumeInjectProgram,
+            frame.Settings,
+            textureUnit: 3,
+            vi.CloudGroundTransmittance,
+            vi.HasCloudGroundTransmittance,
+            vi.CloudGroundBasisRight,
+            vi.CloudGroundBasisUp,
+            vi.CloudGroundPlaneCenter,
+            vi.CloudGroundWorldSpan,
+            vi.CloudGroundTexelSize);
         gl.BindVertexArray(_godRayQuadVao);
         for (var layer = 0; layer < _volumeFroxelTarget.Slices; layer++)
         {
@@ -517,6 +532,18 @@ public sealed partial class OpenGlPreviewBackend
 
         SetIntOnProgramLoc(_volumeInjectComputeProgram, vci.ShadowMapMid, 2);
 
+        BindCloudGroundTransmittanceUniforms(
+            gl,
+            _volumeInjectComputeProgram,
+            frame.Settings,
+            textureUnit: 3,
+            vci.CloudGroundTransmittance,
+            vci.HasCloudGroundTransmittance,
+            vci.CloudGroundBasisRight,
+            vci.CloudGroundBasisUp,
+            vci.CloudGroundPlaneCenter,
+            vci.CloudGroundWorldSpan,
+            vci.CloudGroundTexelSize);
         var groupsX = (uint)((_volumeFroxelTarget.Width + (int)VolumeComputeLocalSizeX - 1) / (int)VolumeComputeLocalSizeX);
         var groupsY = (uint)((_volumeFroxelTarget.Height + (int)VolumeComputeLocalSizeY - 1) / (int)VolumeComputeLocalSizeY);
         var groupsZ = (uint)_volumeFroxelTarget.Slices;
@@ -785,6 +812,9 @@ public sealed partial class OpenGlPreviewBackend
         injectMs = 0;
         integrateMs = 0;
         var hasSharedCloudSignal = ResolveSharedCloudTransmittanceTarget(frame.Settings) is not null;
+        var hasGroundCloudSignal =
+            _cloudGroundTransmittanceTarget is { IsPublished: true } groundTarget &&
+            groundTarget.IsCurrent(_cloudLightCache);
         if (_volumeSharedCloudSignalInitialized &&
             hasSharedCloudSignal != _volumePreviousSharedCloudSignal)
         {
@@ -793,8 +823,18 @@ public sealed partial class OpenGlPreviewBackend
             _godRayHistoryValid = false;
         }
 
+        if (_volumeGroundCloudSignalInitialized &&
+            hasGroundCloudSignal != _volumePreviousGroundCloudSignal)
+        {
+            _volumeIntegrateHistoryValid = false;
+            _volumeFroxelHistoryValid = false;
+            _godRayHistoryValid = false;
+        }
+
         _volumePreviousSharedCloudSignal = hasSharedCloudSignal;
         _volumeSharedCloudSignalInitialized = true;
+        _volumePreviousGroundCloudSignal = hasGroundCloudSignal;
+        _volumeGroundCloudSignalInitialized = true;
         var halfExtent = ResolveVolumeHalfExtent(ref frame);
         var quality = PreviewVolumetricQuality.Resolve(frame.Settings.VolumetricQuality);
         var froxelW = quality.ResolveFroxelWidth(frame.Vw);

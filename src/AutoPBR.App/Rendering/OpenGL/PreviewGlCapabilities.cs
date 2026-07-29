@@ -95,7 +95,10 @@ internal sealed record PreviewGlCapabilities(
         !IsOpenGlEs && Major >= 3 && TextureArrays;
 
     public bool CanUseComputeCloudLightingCache =>
-        CanUseFragmentCloudLightingCache && ComputeShaders && ImageLoadStore;
+        CanUseFragmentCloudLightingCache &&
+        (Major > 4 || Major == 4 && Minor >= 3) &&
+        ComputeShaders &&
+        ImageLoadStore;
 
     public string UploadTransportLabel => CanUsePersistentUploadRing ? "persistent-mapped UBO uploads" : "BufferSubData uploads";
 

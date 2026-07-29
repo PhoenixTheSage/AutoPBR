@@ -6,54 +6,32 @@ using Silk.NET.OpenGL;
 
 namespace AutoPBR.App.Rendering.OpenGL;
 
-internal readonly record struct GlCloudLightSliceGenerationInputs(
-    PreviewCloudLightCascadeTransform NearTransform,
-    PreviewCloudLightCascadeTransform FarTransform,
-    PreviewCloudLightAltitudeBounds AltitudeBounds,
-    Vector3 PlanetCenter,
-    float PlanetRadius,
-    float Density,
-    float CoverageScale,
-    float VolumeSize,
-    Vector3 WindOffset,
-    float CirrusStrength,
-    Vector2 CirrusWindOffset,
-    Vector2 CirrusWindDirection,
-    int Quality,
-    int DensityAssetVersion,
-    uint CloudNoiseTexture,
-    uint DetailNoiseTexture,
-    uint CoverageTexture,
-    float ReferenceDensity = -1f);
-
 /// <summary>
-/// Ordered GL 3.3 fragment-slice generator. Each layer writes the RG16F array and one alternating
-/// RG32F prefix surface; the next layer samples the other prefix surface, avoiding a texture
-/// feedback loop with the attached array.
+/// CQ3.2 desktop GL 4.3 compute/image-store generator. Each 4x4 XY workgroup uses 24 local
+/// Z lanes per column to build an ordered sun-to-world prefix, preserving optical depth
+/// without an inter-dispatch dependency between logical slices.
 /// </summary>
-internal sealed class GlCloudLightFragmentSliceGenerator
+internal sealed class GlCloudLightComputeGenerator
 {
+    private const int LocalSize = 4;
+    private const int MaximumSlices = 24;
+    private const uint TextureFetchBarrierBit = 0x00000008;
+    private const uint ShaderImageAccessBarrierBit = 0x00000020;
+
     private readonly GL _gl;
     private readonly GlShaderProgram _program;
-    private readonly uint _quadVertexArray;
     private readonly Uniforms _uniforms;
 
-    public GlCloudLightFragmentSliceGenerator(
-        GL gl,
-        GlShaderProgram program,
-        uint quadVertexArray)
+    public GlCloudLightComputeGenerator(GL gl, GlShaderProgram program)
     {
         _gl = gl;
         _program = program;
-        _quadVertexArray = quadVertexArray;
         _uniforms = Uniforms.Resolve(program);
     }
 
     public bool TryGenerate(
         GlCloudLightFroxelCache cache,
         in GlCloudLightSliceGenerationInputs inputs,
-        int restoreViewportWidth,
-        int restoreViewportHeight,
         out string diagnostic)
     {
         return TryGenerate(
@@ -61,8 +39,6 @@ internal sealed class GlCloudLightFragmentSliceGenerator
             inputs,
             PreviewCloudLightCascadeSelection.Both,
             0,
-            restoreViewportWidth,
-            restoreViewportHeight,
             out diagnostic);
     }
 
@@ -71,36 +47,29 @@ internal sealed class GlCloudLightFragmentSliceGenerator
         in GlCloudLightSliceGenerationInputs inputs,
         PreviewCloudLightCascadeSelection cascades,
         int generationFrame,
-        int restoreViewportWidth,
-        int restoreViewportHeight,
         out string diagnostic)
     {
         if (!_program.IsValid ||
-            _quadVertexArray == 0 ||
             !cache.IsValid ||
             cascades == PreviewCloudLightCascadeSelection.None)
         {
-            diagnostic = "program-quad-cache-or-selection-invalid";
+            diagnostic = "program-cache-or-selection-invalid";
             return false;
         }
 
-        var priorBlend = _gl.IsEnabled(EnableCap.Blend);
-        var priorDepth = _gl.IsEnabled(EnableCap.DepthTest);
-        var priorScissor = _gl.IsEnabled(EnableCap.ScissorTest);
-        var priorDepthMask = _gl.GetBoolean(GetPName.DepthWritemask);
-        var priorColorMask = new bool[4];
-        _gl.GetBoolean(GetPName.ColorWritemask, priorColorMask);
+        if (((cascades & PreviewCloudLightCascadeSelection.Near) != 0 &&
+             cache.Near.Profile.Depth > MaximumSlices) ||
+            ((cascades & PreviewCloudLightCascadeSelection.Far) != 0 &&
+             cache.Far.Profile.Depth > MaximumSlices))
+        {
+            diagnostic = $"profile-depth-exceeds-compute-bound-{MaximumSlices}";
+            return false;
+        }
 
         try
         {
-            _gl.Disable(EnableCap.Blend);
-            _gl.Disable(EnableCap.DepthTest);
-            _gl.Disable(EnableCap.ScissorTest);
-            _gl.DepthMask(false);
-            _gl.ColorMask(true, true, true, true);
             _program.Use();
             BindSharedInputs(inputs);
-            _gl.BindVertexArray(_quadVertexArray);
 
             if ((cascades & PreviewCloudLightCascadeSelection.Near) != 0 &&
                 !TryGenerateCascade(
@@ -131,10 +100,11 @@ internal sealed class GlCloudLightFragmentSliceGenerator
             }
 
             diagnostic =
-                $"generated-cq3.6-fragment;cascades={cascades};" +
+                $"generated-cq3.6-compute;cascades={cascades};" +
                 $"nearGeneration={cache.Near.GenerationId};" +
                 $"farGeneration={cache.Far.GenerationId};" +
-                $"fixture={(inputs.ReferenceDensity >= 0f ? "fixed-density" : "cq2-density")}";
+                $"fixture={(inputs.ReferenceDensity >= 0f ? "fixed-density" : "cq2-density")};" +
+                "barrier=image-access+texture-fetch";
             return true;
         }
         catch (Exception ex)
@@ -145,22 +115,14 @@ internal sealed class GlCloudLightFragmentSliceGenerator
         }
         finally
         {
-            _gl.BindVertexArray(0);
-            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-            _gl.Viewport(
+            _gl.BindImageTexture(
                 0,
                 0,
-                (uint)Math.Max(1, restoreViewportWidth),
-                (uint)Math.Max(1, restoreViewportHeight));
-            _gl.DepthMask(priorDepthMask);
-            _gl.ColorMask(
-                priorColorMask[0],
-                priorColorMask[1],
-                priorColorMask[2],
-                priorColorMask[3]);
-            SetEnabled(EnableCap.Blend, priorBlend);
-            SetEnabled(EnableCap.DepthTest, priorDepth);
-            SetEnabled(EnableCap.ScissorTest, priorScissor);
+                0,
+                false,
+                0,
+                GLEnum.WriteOnly,
+                GLEnum.RG16f);
         }
     }
 
@@ -173,29 +135,44 @@ internal sealed class GlCloudLightFragmentSliceGenerator
         out string diagnostic)
     {
         BindTransform(transform, referenceDensity);
+        SetInt3(
+            _uniforms.CacheSize,
+            target.Profile.Width,
+            target.Profile.Height,
+            target.Profile.Depth);
         FlushErrors();
-        for (var layer = 0; layer < target.Profile.Depth; layer++)
+        _gl.BindImageTexture(
+            0,
+            target.ArrayTextureHandle,
+            0,
+            true,
+            0,
+            GLEnum.WriteOnly,
+            GLEnum.RG16f);
+        var bindError = _gl.GetError();
+        if (bindError != GLEnum.NoError)
         {
-            if (!target.TryBindGenerationLayer(
-                    layer,
-                    out var previousPrefixTexture,
-                    out var bindDiagnostic))
-            {
-                diagnostic = $"layer-{layer}-{bindDiagnostic}";
-                return false;
-            }
+            diagnostic = "image-bind-" + bindError;
+            return false;
+        }
 
-            SetInt(_uniforms.LayerIndex, layer);
-            SetInt(_uniforms.HasPrevious, layer > 0 ? 1 : 0);
-            _gl.ActiveTexture(TextureUnit.Texture3);
-            _gl.BindTexture(TextureTarget.Texture2D, previousPrefixTexture);
-            _gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
-            var drawError = _gl.GetError();
-            if (drawError != GLEnum.NoError)
-            {
-                diagnostic = $"layer-{layer}-draw-{drawError}";
-                return false;
-            }
+        _gl.DispatchCompute(
+            (uint)((target.Profile.Width + LocalSize - 1) / LocalSize),
+            (uint)((target.Profile.Height + LocalSize - 1) / LocalSize),
+            1);
+        var dispatchError = _gl.GetError();
+        if (dispatchError != GLEnum.NoError)
+        {
+            diagnostic = "dispatch-" + dispatchError;
+            return false;
+        }
+
+        _gl.MemoryBarrier(ShaderImageAccessBarrierBit | TextureFetchBarrierBit);
+        var barrierError = _gl.GetError();
+        if (barrierError != GLEnum.NoError)
+        {
+            diagnostic = "barrier-" + barrierError;
+            return false;
         }
 
         target.CommitGeneration(
@@ -226,7 +203,6 @@ internal sealed class GlCloudLightFragmentSliceGenerator
         SetInt(_uniforms.CloudNoise, 0);
         SetInt(_uniforms.DetailNoise, 1);
         SetInt(_uniforms.CoverageMap, 2);
-        SetInt(_uniforms.PreviousPrefix, 3);
 
         _gl.ActiveTexture(TextureUnit.Texture0);
         _gl.BindTexture(TextureTarget.Texture3D, inputs.CloudNoiseTexture);
@@ -276,23 +252,19 @@ internal sealed class GlCloudLightFragmentSliceGenerator
         SetFloat(_uniforms.ReferenceDensity, referenceDensity);
     }
 
-    private void SetEnabled(EnableCap capability, bool enabled)
-    {
-        if (enabled)
-        {
-            _gl.Enable(capability);
-        }
-        else
-        {
-            _gl.Disable(capability);
-        }
-    }
-
     private void SetInt(int location, int value)
     {
         if (location >= 0)
         {
             _gl.Uniform1(location, value);
+        }
+    }
+
+    private void SetInt3(int location, int x, int y, int z)
+    {
+        if (location >= 0)
+        {
+            _gl.Uniform3(location, x, y, z);
         }
     }
 
@@ -328,10 +300,10 @@ internal sealed class GlCloudLightFragmentSliceGenerator
     }
 
     private readonly record struct Uniforms(
+        int CacheSize,
         int CloudNoise,
         int DetailNoise,
         int CoverageMap,
-        int PreviousPrefix,
         int BasisRight,
         int BasisUp,
         int BasisForward,
@@ -341,9 +313,7 @@ internal sealed class GlCloudLightFragmentSliceGenerator
         int LightDepthSpan,
         int SliceLength,
         int FroxelFootprint,
-        int LayerIndex,
         int LayerCount,
-        int HasPrevious,
         int PlanetCenter,
         int PlanetRadius,
         int CumulusBaseAltitude,
@@ -366,10 +336,10 @@ internal sealed class GlCloudLightFragmentSliceGenerator
     {
         public static Uniforms Resolve(GlShaderProgram program) =>
             new(
+                program.GetUniformLocation("uCacheSize"),
                 program.GetUniformLocation("uCloudNoise"),
                 program.GetUniformLocation("uDetailNoise"),
                 program.GetUniformLocation("uCoverageMap"),
-                program.GetUniformLocation("uPreviousPrefix"),
                 program.GetUniformLocation("uBasisRight"),
                 program.GetUniformLocation("uBasisUp"),
                 program.GetUniformLocation("uBasisForward"),
@@ -379,9 +349,7 @@ internal sealed class GlCloudLightFragmentSliceGenerator
                 program.GetUniformLocation("uLightDepthSpan"),
                 program.GetUniformLocation("uSliceLength"),
                 program.GetUniformLocation("uFroxelFootprint"),
-                program.GetUniformLocation("uLayerIndex"),
                 program.GetUniformLocation("uLayerCount"),
-                program.GetUniformLocation("uHasPrevious"),
                 program.GetUniformLocation("uPlanetCenter"),
                 program.GetUniformLocation("uPlanetRadius"),
                 program.GetUniformLocation("uCumulusBaseAltitude"),

@@ -5,6 +5,37 @@ namespace AutoPBR.App.Tests;
 public sealed class GlGpuTimingSnapshotTests
 {
     [Fact]
+    public void CloudLightGenerationTimings_AreReportedAndIncludedInPostTotal()
+    {
+        var snapshot = new GlGpuTimingSnapshot(
+            SetupMs: 0,
+            ShadowMs: 0,
+            SceneMs: 0,
+            PostMs: 0,
+            OverlayMs: 0,
+            CloudTraceMs: 0,
+            CloudTemporalMs: 0,
+            CloudUpsampleMs: 0,
+            GodRayInjectMs: 0,
+            GodRayIntegrateMs: 0,
+            GodRayResolveMs: 0,
+            TaaMs: 0,
+            CloudLightNearMs: 0.25,
+            CloudLightFarMs: 0.5);
+
+        Assert.Equal(0.75, snapshot.PostTotalMs, precision: 6);
+        Assert.Equal(0.75, snapshot.TotalMs, precision: 6);
+        Assert.Contains(
+            "Cloud Light Near 0.3 ms",
+            snapshot.FormatHudLine(expanded: true),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "cloudLightFar=0.5ms",
+            snapshot.FormatDiagnostic(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void FormatHudLine_DefaultsToTotalOnly()
     {
         var snapshot = new GlGpuTimingSnapshot(

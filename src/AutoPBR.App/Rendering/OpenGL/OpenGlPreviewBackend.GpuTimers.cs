@@ -113,6 +113,11 @@ public sealed partial class OpenGlPreviewBackend
             return;
         }
 
+        if (!GlTimingHudPublishGate.ShouldPublish(ref _lastCpuTimingHudPublishSeconds, renderTimeSeconds))
+        {
+            return;
+        }
+
         var expanded = _settings.ShowExpandedGpuTimingHud;
         SetLatestCpuTimingHudText(
             snapshot.FormatHudLine(
@@ -148,18 +153,23 @@ public sealed partial class OpenGlPreviewBackend
                     ? "; " + _gpuTimingWindow.FormatCloudDiagnostic()
                     : string.Empty;
             }
-            var expanded = _settings.ShowExpandedGpuTimingHud;
-            var hud = snapshot.FormatHudLine(
-                "GPU",
-                expanded,
-                expanded ? _gpuTimingHudLinger : null,
-                renderTimeSeconds);
-            if (!string.IsNullOrEmpty(_latestOcclusionDebugHudText))
+
+            if (GlTimingHudPublishGate.ShouldPublish(ref _lastGpuTimingHudPublishSeconds, renderTimeSeconds))
             {
-                hud += "\n" + _latestOcclusionDebugHudText;
+                var expanded = _settings.ShowExpandedGpuTimingHud;
+                var hud = snapshot.FormatHudLine(
+                    "GPU",
+                    expanded,
+                    expanded ? _gpuTimingHudLinger : null,
+                    renderTimeSeconds);
+                if (!string.IsNullOrEmpty(_latestOcclusionDebugHudText))
+                {
+                    hud += "\n" + _latestOcclusionDebugHudText;
+                }
+
+                SetLatestGpuTimingHudText(hud);
             }
 
-            SetLatestGpuTimingHudText(hud);
             if (_settings.LogGpuPassTimings &&
                 renderTimeSeconds - _lastGpuTimingDiagnosticSeconds >= 2.0)
             {
@@ -177,6 +187,18 @@ public sealed partial class OpenGlPreviewBackend
     {
         lock (_sync)
         {
+            if (text is null)
+            {
+                _latestGpuTimingHudText = null;
+                _lastGpuTimingHudPublishSeconds = double.NegativeInfinity;
+                return;
+            }
+
+            if (string.Equals(_latestGpuTimingHudText, text, StringComparison.Ordinal))
+            {
+                return;
+            }
+
             _latestGpuTimingHudText = text;
         }
     }
@@ -185,6 +207,18 @@ public sealed partial class OpenGlPreviewBackend
     {
         lock (_sync)
         {
+            if (text is null)
+            {
+                _latestCpuTimingHudText = null;
+                _lastCpuTimingHudPublishSeconds = double.NegativeInfinity;
+                return;
+            }
+
+            if (string.Equals(_latestCpuTimingHudText, text, StringComparison.Ordinal))
+            {
+                return;
+            }
+
             _latestCpuTimingHudText = text;
         }
     }
@@ -215,6 +249,8 @@ public sealed partial class OpenGlPreviewBackend
         _latestGpuTimingSnapshot = null;
         _cpuTimerProfiler = null;
         _latestCpuTimingHudText = null;
+        _lastGpuTimingHudPublishSeconds = double.NegativeInfinity;
+        _lastCpuTimingHudPublishSeconds = double.NegativeInfinity;
         _gpuTimingHudLinger.Reset();
         _cpuTimingHudLinger.Reset();
     }

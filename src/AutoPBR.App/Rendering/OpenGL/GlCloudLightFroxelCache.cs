@@ -61,8 +61,8 @@ internal sealed class GlCloudLightFroxelCache : IDisposable
             near = null;
             far = null;
             diagnostic =
-                $"allocated-cq3.1/{profile.Format};near={profile.Near.FormatDimensions()};" +
-                $"far={profile.Far.FormatDimensions()};prefixScratch=ping-pong-rg16f";
+                $"allocated-cq3/{profile.Format};near={profile.Near.FormatDimensions()};" +
+                $"far={profile.Far.FormatDimensions()};prefixScratch=ping-pong-rg32f";
             return true;
         }
         catch (Exception ex)
@@ -78,9 +78,9 @@ internal sealed class GlCloudLightFroxelCache : IDisposable
     }
 
     public string FormatDiagnostic() =>
-        $"resources={(IsValid ? "allocated-cq3.1" : "invalid")};" +
+        $"resources={(IsValid ? "allocated-cq3" : "invalid")};" +
         $"near={Near.FormatDiagnostic()};far={Far.FormatDiagnostic()};" +
-        $"fragmentReference={(IsReferenceReady ? "ready" : "pending")}";
+        $"referenceReady={(IsReferenceReady ? "ready" : "pending")}";
 
     public void Dispose()
     {
@@ -119,6 +119,8 @@ internal sealed class GlCloudLightCascadeTarget : IDisposable
         _framebuffer != 0;
     public bool IsGenerated { get; private set; }
     public int GenerationId { get; private set; }
+    public int LastGenerationFrame { get; private set; } = -1;
+    public System.Numerics.Vector3 GenerationWindOffset { get; private set; }
     public PreviewCloudLightCascadeTransform Transform { get; private set; }
 
     public static bool TryCreate(
@@ -199,14 +201,45 @@ internal sealed class GlCloudLightCascadeTarget : IDisposable
 
     public void CommitGeneration(in PreviewCloudLightCascadeTransform transform)
     {
+        CommitGeneration(transform, 0, System.Numerics.Vector3.Zero);
+    }
+
+    public void CommitGeneration(
+        in PreviewCloudLightCascadeTransform transform,
+        int generationFrame,
+        System.Numerics.Vector3 generationWindOffset)
+    {
         Transform = transform;
         IsGenerated = true;
+        LastGenerationFrame = Math.Max(0, generationFrame);
+        GenerationWindOffset = generationWindOffset;
         GenerationId++;
     }
 
     public void InvalidateGeneration()
     {
         IsGenerated = false;
+    }
+
+    public int AgeAt(int frameIndex) =>
+        IsGenerated && LastGenerationFrame >= 0
+            ? Math.Max(0, frameIndex - LastGenerationFrame)
+            : int.MaxValue;
+
+    public PreviewCloudLightCascadeTransform GetSamplingTransform(
+        System.Numerics.Vector3 currentWindOffset,
+        float windPeriod)
+    {
+        if (!IsGenerated)
+        {
+            return Transform;
+        }
+
+        var windDelta = PreviewCloudLightWindReprojection.WrappedDelta(
+            currentWindOffset,
+            GenerationWindOffset,
+            windPeriod);
+        return PreviewCloudLightWindReprojection.Apply(Transform, windDelta);
     }
 
     public bool TryReadLayer(int layer, Span<float> rg, out string diagnostic)
@@ -252,7 +285,7 @@ internal sealed class GlCloudLightCascadeTarget : IDisposable
 
     public string FormatDiagnostic() =>
         $"{Profile.FormatDimensions()}/allocated={IsAllocated}/generated={IsGenerated}/" +
-        $"generation={GenerationId}";
+        $"generation={GenerationId}/lastFrame={LastGenerationFrame}";
 
     private bool TryAllocate(out string diagnostic)
     {
@@ -318,12 +351,12 @@ internal sealed class GlCloudLightCascadeTarget : IDisposable
             _gl.TexImage2D(
                 TextureTarget.Texture2D,
                 0,
-                InternalFormat.RG16f,
+                InternalFormat.RG32f,
                 (uint)Profile.Width,
                 (uint)Profile.Height,
                 0,
                 PixelFormat.RG,
-                PixelType.HalfFloat,
+                PixelType.Float,
                 (void*)0);
         }
 

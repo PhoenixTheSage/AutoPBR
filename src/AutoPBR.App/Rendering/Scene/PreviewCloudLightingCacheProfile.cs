@@ -1,3 +1,5 @@
+using System.Numerics;
+
 using AutoPBR.App.Rendering.Abstractions;
 
 namespace AutoPBR.App.Rendering.Scene;
@@ -97,4 +99,77 @@ public static class PreviewCloudLightingCacheProfiles
                 NearOverlapFraction: 0f,
                 LocalConeTapCount: 0),
         };
+}
+
+/// <summary>
+/// CQ3.5 ground-shadow publication profile. High preserves the far cascade's native
+/// XY footprint; Cinematic publishes the same far footprint while combining near/far
+/// cache samples through the cloud-shading overlap contract.
+/// </summary>
+public readonly record struct PreviewCloudGroundTransmittanceProfile(
+    int Width,
+    int Height,
+    float WorldSpan,
+    bool CombineNearAndFar)
+{
+    public bool IsEnabled =>
+        Width > 0 &&
+        Height > 0 &&
+        WorldSpan > 0f;
+    public Vector2 TexelSize =>
+        IsEnabled
+            ? new Vector2(1f / Width, 1f / Height)
+            : Vector2.One;
+
+    public string FormatDiagnostic() =>
+        IsEnabled
+            ? $"R16F/{Width}x{Height}@{WorldSpan:0}/" +
+              (CombineNearAndFar ? "near-far-overlap" : "far-native")
+            : "disabled";
+}
+
+public static class PreviewCloudGroundTransmittanceProfiles
+{
+    public static PreviewCloudGroundTransmittanceProfile Resolve(
+        int volumetricQuality)
+    {
+        var cache = PreviewCloudLightingCacheProfiles.Resolve(
+            volumetricQuality);
+        if (!cache.IsEnabled)
+        {
+            return default;
+        }
+
+        return new PreviewCloudGroundTransmittanceProfile(
+            cache.Far.Width,
+            cache.Far.Height,
+            cache.Far.WorldSpan,
+            CombineNearAndFar:
+                PreviewVolumetricQuality.Clamp(volumetricQuality) ==
+                PreviewVolumetricQuality.Cinematic);
+    }
+}
+
+/// <summary>
+/// CQ3.4 view-shading controls. Each octave vector stores extinction scale, phase-eccentricity
+/// scale, and energy scale in that order. These are internal render profiles rather than user
+/// settings so every generator/backend observes one stable lighting contract.
+/// </summary>
+public readonly record struct PreviewCloudLightingShadingProfile(
+    Vector3 Octave1,
+    Vector3 Octave2,
+    float ScatteredEnergyClamp,
+    float CachedSkyVisibilityFloor,
+    float GroundBounceStrength,
+    float LocalConeOpticalDepthScale);
+
+public static class PreviewCloudLightingShadingProfiles
+{
+    public static readonly PreviewCloudLightingShadingProfile Default = new(
+        Octave1: new Vector3(0.50f, 0.50f, 0.55f),
+        Octave2: new Vector3(0.25f, 0.25f, 0.30f),
+        ScatteredEnergyClamp: 2.25f,
+        CachedSkyVisibilityFloor: 0.18f,
+        GroundBounceStrength: 0.11f,
+        LocalConeOpticalDepthScale: 0.45f);
 }

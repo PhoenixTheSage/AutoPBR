@@ -7,6 +7,7 @@ internal enum PreviewCloudLightingCacheGenerationPath
     ShortMarch,
     FragmentSlices,
     ComputeImageStore,
+    CacheSampling,
 }
 
 internal readonly record struct PreviewCloudLightingCachePlan(
@@ -14,8 +15,8 @@ internal readonly record struct PreviewCloudLightingCachePlan(
     PreviewCloudLightingCacheGenerationPath PreferredGenerationPath,
     PreviewCloudLightingCacheGenerationPath ActiveRuntimePath)
 {
-    // CQ3.0 freezes the ABI. CQ3.1 allocates and validates the fragment reference cache, but the
-    // production cloud-light consumer remains the short march until CQ3.3.
+    // Creation describes the capability/resource preference. CQ3.3 promotes ActiveRuntimePath
+    // to CacheSampling only after at least one generated cascade is safe to bind.
     public static PreviewCloudLightingCachePlan Create(
         PreviewGlCapabilities? capabilities,
         int volumetricQuality)
@@ -45,6 +46,34 @@ internal readonly record struct PreviewCloudLightingCachePlan(
         {
             PreviewCloudLightingCacheGenerationPath.ComputeImageStore => "compute-image-store",
             PreviewCloudLightingCacheGenerationPath.FragmentSlices => "fragment-slices",
+            PreviewCloudLightingCacheGenerationPath.CacheSampling => "cache-sampling",
             _ => "short-march",
         };
+}
+
+internal static class PreviewCloudLightingCacheGeneratorFallback
+{
+    public static PreviewCloudLightingCacheGenerationPath Select(
+        in PreviewCloudLightingCachePlan plan,
+        bool computeProgramReady,
+        bool computeSessionFaulted,
+        bool fragmentProgramReady)
+    {
+        if (!plan.Profile.IsEnabled)
+        {
+            return PreviewCloudLightingCacheGenerationPath.ShortMarch;
+        }
+
+        if (plan.PreferredGenerationPath ==
+                PreviewCloudLightingCacheGenerationPath.ComputeImageStore &&
+            computeProgramReady &&
+            !computeSessionFaulted)
+        {
+            return PreviewCloudLightingCacheGenerationPath.ComputeImageStore;
+        }
+
+        return fragmentProgramReady
+            ? PreviewCloudLightingCacheGenerationPath.FragmentSlices
+            : PreviewCloudLightingCacheGenerationPath.ShortMarch;
+    }
 }

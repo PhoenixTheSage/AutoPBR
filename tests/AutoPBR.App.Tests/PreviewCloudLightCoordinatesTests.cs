@@ -205,6 +205,81 @@ public sealed class PreviewCloudLightCoordinatesTests
         AssertClose(1f, fallbackWeights.Sum);
     }
 
+    [Fact]
+    public void Cq36WindReprojection_SamplesTheAdvectedWorldPosition()
+    {
+        var profile = PreviewCloudLightingCacheProfiles
+            .Resolve(PreviewVolumetricQuality.High)
+            .Near;
+        var basis = PreviewCloudLightBasisBuilder.Build(
+            Vector3.Normalize(new Vector3(0.25f, -0.9f, 0.35f)));
+        var generated = PreviewCloudLightCascadeTransform.Create(
+            basis,
+            profile,
+            Vector3.Zero,
+            -256f,
+            256f);
+        var windDelta = new Vector3(17f, 0f, -9f);
+        var sampling =
+            PreviewCloudLightWindReprojection.Apply(generated, windDelta);
+        var world = new Vector3(40f, 28f, -12f);
+
+        AssertVectorClose(
+            generated.WorldToUnit(world + windDelta),
+            sampling.WorldToUnit(world));
+    }
+
+    [Fact]
+    public void Cq36WrappedWindDelta_UsesTheShortestPeriodicOffset()
+    {
+        var delta = PreviewCloudLightWindReprojection.WrappedDelta(
+            current: new Vector3(2f, 0f, 126f),
+            generated: new Vector3(126f, 0f, 2f),
+            period: 128f);
+
+        AssertVectorClose(new Vector3(4f, 0f, -4f), delta);
+    }
+
+    [Fact]
+    public void Cq36ScrollPlan_ReportsWholeTexelReuseAndDepthInvalidation()
+    {
+        var profile = PreviewCloudLightingCacheProfiles
+            .Resolve(PreviewVolumetricQuality.High)
+            .Near;
+        var basis = PreviewCloudLightBasisBuilder.Build(
+            new Vector3(0f, 0f, -1f));
+        var first = PreviewCloudLightCascadeTransform.Create(
+            basis,
+            profile,
+            Vector3.Zero,
+            -256f,
+            256f);
+        var moved = first with
+        {
+            PlaneCenterX =
+                first.PlaneCenterX + first.PlaneTexelWorldSize * 2f,
+            PlaneCenterY =
+                first.PlaneCenterY - first.PlaneTexelWorldSize,
+        };
+        var planeScroll = PreviewCloudLightScrollPlan.Create(first, moved);
+        var depthScroll = PreviewCloudLightScrollPlan.Create(
+            first,
+            moved with
+            {
+                LightDepthMin =
+                    first.LightDepthMin + first.DepthSliceWorldSize,
+            });
+
+        Assert.Equal((2, -1, 0),
+            (planeScroll.TexelDeltaX,
+                planeScroll.TexelDeltaY,
+                planeScroll.SliceDelta));
+        Assert.True(planeScroll.CanReusePlaneColumns);
+        Assert.InRange(planeScroll.ReusableFraction, 0.97f, 1f);
+        Assert.False(depthScroll.CanReusePlaneColumns);
+        Assert.Equal(0f, depthScroll.ReusableFraction);
+    }
+
     private static void AssertClose(float expected, float actual, float epsilon = 1e-4f) =>
         Assert.InRange(actual, expected - epsilon, expected + epsilon);
 

@@ -6,7 +6,8 @@ namespace AutoPBR.App.Rendering.OpenGL;
 
 public sealed partial class OpenGlPreviewBackend
 {
-    // Keep clear of main-pass globals: shadow far/near/mid = 4/5/7, sky LUT = 6, material 2D = 0–3.
+    // Main-pass globals occupy shadow far/near/mid = 4/5/7, sky LUT = 6, and CQ3.5
+    // ground transmittance = 12. Material 2D samplers remain on 0-3.
     private const int MainPassAlbedoArrayUnit = 8;
     private const int MainPassNormalArrayUnit = 9;
     private const int MainPassSpecularArrayUnit = 10;

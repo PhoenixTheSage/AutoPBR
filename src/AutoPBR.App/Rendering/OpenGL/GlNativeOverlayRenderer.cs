@@ -5,7 +5,10 @@ using Silk.NET.OpenGL;
 
 namespace AutoPBR.App.Rendering.OpenGL;
 
-/// <summary>Draws UI-rendered premultiplied BGRA overlay bitmaps into the native WGL backbuffer.</summary>
+/// <summary>
+/// Draws UI-rendered premultiplied BGRA overlay bitmaps into the native WGL backbuffer.
+/// Texture uploads are dirty-flagged by bitmap instance identity (no per-frame content hash).
+/// </summary>
 internal sealed class GlNativeOverlayRenderer : IDisposable
 {
     private const string Vert330 = """
@@ -317,7 +320,7 @@ void main()
         private readonly uint _id;
         private int _width;
         private int _height;
-        private ulong _fingerprint;
+        private PreviewNativeWglOverlayBitmap? _uploadedBitmap;
         private bool _hasUpload;
 
         public OverlayTexture()
@@ -343,13 +346,12 @@ void main()
                 return;
             }
 
-            var fingerprint = GlRgbaFingerprint.Compute(bitmap.BgraPremultiplied);
             _gl.ActiveTexture(TextureUnit.Texture0);
             _gl.BindTexture(TextureTarget.Texture2D, _id);
-            if (_hasUpload &&
-                _width == bitmap.Width &&
-                _height == bitmap.Height &&
-                _fingerprint == fingerprint)
+
+            // UI publishes a new bitmap instance only when overlay pixels change. Same
+            // instance ⇒ skip hash / TexSubImage so Overlay CPU stays near zero.
+            if (_hasUpload && ReferenceEquals(_uploadedBitmap, bitmap))
             {
                 return;
             }
@@ -385,12 +387,13 @@ void main()
 
             _width = bitmap.Width;
             _height = bitmap.Height;
-            _fingerprint = fingerprint;
+            _uploadedBitmap = bitmap;
             _hasUpload = true;
         }
 
         public void Dispose()
         {
+            _uploadedBitmap = null;
             if (_gl is not null && _id != 0)
             {
                 _gl.DeleteTexture(_id);

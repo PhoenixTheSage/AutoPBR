@@ -21,23 +21,25 @@ internal enum GlGpuTimerScope
     DepthPrepass = 12,
     HiZ = 13,
     CloudRepair = 14,
+    CloudLightNear = 15,
+    CloudLightFar = 16,
 
     // CPU-only detail scopes (nest under a pass scope; not used by GL timer queries).
-    SetupBones = 15,
-    SetupBounds = 16,
-    ShadowTerrainCull = 17,
-    TerrainStream = 18,
-    TerrainDraw = 19,
-    SubjectDraw = 20,
+    SetupBones = 17,
+    SetupBounds = 18,
+    ShadowTerrainCull = 19,
+    TerrainStream = 20,
+    TerrainDraw = 21,
+    SubjectDraw = 22,
 }
 
 internal static class GlGpuTimerScopes
 {
     /// <summary>Pass scopes that own GPU <c>GL_TIME_ELAPSED</c> queries.</summary>
-    public const int PassScopeCount = 15;
+    public const int PassScopeCount = 17;
 
     /// <summary>Pass scopes plus CPU-only detail buckets.</summary>
-    public const int CpuScopeCount = 21;
+    public const int CpuScopeCount = 23;
 
     public static bool IsCpuDetail(GlGpuTimerScope scope) => (int)scope >= PassScopeCount;
 }
@@ -63,7 +65,9 @@ internal readonly record struct GlGpuTimingSnapshot(
     double TerrainStreamMs = 0.0,
     double TerrainDrawMs = 0.0,
     double SubjectDrawMs = 0.0,
-    double CloudRepairMs = 0.0)
+    double CloudRepairMs = 0.0,
+    double CloudLightNearMs = 0.0,
+    double CloudLightFarMs = 0.0)
 {
     public GlGpuTimingSnapshot(double SetupMs, double ShadowMs, double SceneMs, double PostMs, double OverlayMs)
         : this(SetupMs, ShadowMs, SceneMs, PostMs, OverlayMs, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
@@ -74,6 +78,8 @@ internal readonly record struct GlGpuTimingSnapshot(
 
     public double PostTotalMs =>
         PostMs +
+        CloudLightNearMs +
+        CloudLightFarMs +
         CloudTraceMs +
         CloudTemporalMs +
         CloudRepairMs +
@@ -116,6 +122,8 @@ internal readonly record struct GlGpuTimingSnapshot(
         AppendHudPass(lines, "  Terrain Stream", TerrainStreamMs, (int)GlGpuTimerScope.TerrainStream, linger, nowSeconds);
         AppendHudPass(lines, "  Terrain Draw", TerrainDrawMs, (int)GlGpuTimerScope.TerrainDraw, linger, nowSeconds);
         AppendHudPass(lines, "  Subject", SubjectDrawMs, (int)GlGpuTimerScope.SubjectDraw, linger, nowSeconds);
+        AppendHudPass(lines, "Cloud Light Near", CloudLightNearMs, (int)GlGpuTimerScope.CloudLightNear, linger, nowSeconds);
+        AppendHudPass(lines, "Cloud Light Far", CloudLightFarMs, (int)GlGpuTimerScope.CloudLightFar, linger, nowSeconds);
         AppendHudPass(lines, "Cloud Trace", CloudTraceMs, (int)GlGpuTimerScope.CloudTrace, linger, nowSeconds);
         AppendHudPass(lines, "Cloud Temporal", CloudTemporalMs, (int)GlGpuTimerScope.CloudTemporal, linger, nowSeconds);
         AppendHudPass(lines, "Cloud Repair", CloudRepairMs, (int)GlGpuTimerScope.CloudRepair, linger, nowSeconds);
@@ -150,14 +158,17 @@ internal readonly record struct GlGpuTimingSnapshot(
         string.Format(
             CultureInfo.InvariantCulture,
             "setup={0:0.###}ms, shadow={1:0.###}ms, depthPrepass={2:0.###}ms, hiZ={3:0.###}ms, scene={4:0.###}ms, " +
-            "cloudTrace={5:0.###}ms, cloudTemporal={6:0.###}ms, cloudRepair={7:0.###}ms, cloudUpsample={8:0.###}ms, " +
-            "godRayInject={9:0.###}ms, godRayIntegrate={10:0.###}ms, godRayResolve={11:0.###}ms, " +
-            "taa={12:0.###}ms, post={14:0.###}ms, postOther={13:0.###}ms, overlay={15:0.###}ms, total={16:0.###}ms",
+            "cloudLightNear={5:0.###}ms, cloudLightFar={6:0.###}ms, cloudTrace={7:0.###}ms, " +
+            "cloudTemporal={8:0.###}ms, cloudRepair={9:0.###}ms, cloudUpsample={10:0.###}ms, " +
+            "godRayInject={11:0.###}ms, godRayIntegrate={12:0.###}ms, godRayResolve={13:0.###}ms, " +
+            "taa={14:0.###}ms, post={16:0.###}ms, postOther={15:0.###}ms, overlay={17:0.###}ms, total={18:0.###}ms",
             SetupMs,
             ShadowMs,
             DepthPrepassMs,
             HiZMs,
             SceneMs,
+            CloudLightNearMs,
+            CloudLightFarMs,
             CloudTraceMs,
             CloudTemporalMs,
             CloudRepairMs,
@@ -382,7 +393,9 @@ internal sealed class GlGpuTimerProfiler : IDisposable
                 elapsed[(int)GlGpuTimerScope.Taa] * NanosecondsToMilliseconds,
                 elapsed[(int)GlGpuTimerScope.DepthPrepass] * NanosecondsToMilliseconds,
                 elapsed[(int)GlGpuTimerScope.HiZ] * NanosecondsToMilliseconds,
-                CloudRepairMs: elapsed[(int)GlGpuTimerScope.CloudRepair] * NanosecondsToMilliseconds));
+                CloudRepairMs: elapsed[(int)GlGpuTimerScope.CloudRepair] * NanosecondsToMilliseconds,
+                CloudLightNearMs: elapsed[(int)GlGpuTimerScope.CloudLightNear] * NanosecondsToMilliseconds,
+                CloudLightFarMs: elapsed[(int)GlGpuTimerScope.CloudLightFar] * NanosecondsToMilliseconds));
         }
     }
 

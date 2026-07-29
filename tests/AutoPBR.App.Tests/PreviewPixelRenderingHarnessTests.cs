@@ -266,6 +266,31 @@ public sealed class PreviewPixelRenderingHarnessTests
                                         $"[terrain harness] final eye={eye}, target={target}."));
                             }
 
+                            var groundTransmittanceField = typeof(OpenGlPreviewBackend).GetField(
+                                "_cloudGroundTransmittanceTarget",
+                                BindingFlags.Instance | BindingFlags.NonPublic);
+                            if (groundTransmittanceField?.GetValue(backend) is
+                                GlCloudGroundTransmittanceTarget groundTransmittance)
+                            {
+                                var groundValues = new float[
+                                    groundTransmittance.Profile.Width *
+                                    groundTransmittance.Profile.Height];
+                                if (groundTransmittance.TryRead(
+                                        groundValues,
+                                        out var groundReadDiagnostic))
+                                {
+                                    diagnostics.Add(
+                                        FormattableString.Invariant(
+                                            $"[terrain harness] CQ3.5 ground field: min={groundValues.Min():0.000000}, max={groundValues.Max():0.000000}, finite={groundValues.Count(float.IsFinite)}/{groundValues.Length}."));
+                                }
+                                else
+                                {
+                                    diagnostics.Add(
+                                        "[terrain harness] CQ3.5 ground-field readback failed: " +
+                                        groundReadDiagnostic + ".");
+                                }
+                            }
+
                             return ReadFramebufferSnapshot(
                                 context.Gl,
                                 context.RenderFbo,
@@ -339,17 +364,33 @@ public sealed class PreviewPixelRenderingHarnessTests
         Assert.Contains(
             diagnostics,
             line => line.Contains(
-                        "CQ3.1 cloud-light froxel cache contract",
+                        "CQ3.3 cloud-light froxel cache contract",
                         StringComparison.Ordinal) &&
                     line.Contains("activeRuntime=short-march", StringComparison.Ordinal) &&
                     line.Contains("cameraFogFroxels=separate", StringComparison.Ordinal));
         Assert.Contains(
             diagnostics,
             line => line.Contains(
-                        "CQ3.1 cloud-light fragment reference ready",
+                        "CQ3.4 cloud-light shading ready",
                         StringComparison.Ordinal) &&
-                    line.Contains("fragmentReference=ready", StringComparison.Ordinal) &&
-                    line.Contains("activeRuntime=short-march", StringComparison.Ordinal));
+                    line.Contains("referenceReady=ready", StringComparison.Ordinal) &&
+                    line.Contains("generatedBy=compute-image-store", StringComparison.Ordinal) &&
+                    line.Contains("activeRuntime=cache-sampling", StringComparison.Ordinal) &&
+                    line.Contains(
+                        "lighting=cq3.4-two-octave+sky-visibility+ground-bounce",
+                        StringComparison.Ordinal) &&
+                    line.Contains("localConeTaps=2", StringComparison.Ordinal));
+        Assert.Contains(
+            diagnostics,
+            line => line.Contains(
+                        "CQ3.5 ground transmittance ready",
+                        StringComparison.Ordinal) &&
+                    line.Contains(
+                        "consumers=terrain-direct+camera-froxel-direct(god-rays)",
+                        StringComparison.Ordinal) &&
+                    line.Contains(
+                        "missing/out-of-range=full-sun",
+                        StringComparison.Ordinal));
         Assert.DoesNotContain(
             diagnostics,
             line => line.Contains("bounded pool rejected growth", StringComparison.Ordinal) ||

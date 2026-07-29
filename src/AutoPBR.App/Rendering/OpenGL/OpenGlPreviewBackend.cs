@@ -253,6 +253,9 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private GlGpuTimingSnapshot? _latestGpuTimingSnapshot;
     private long _gpuTimingSnapshotSequence;
     private double _lastGpuTimingDiagnosticSeconds = double.NegativeInfinity;
+    /// <summary>Matches the UI camera-pose / FPS overlay poll (~5 Hz) so HUD bitmaps rebuild less often.</summary>
+    private double _lastGpuTimingHudPublishSeconds = double.NegativeInfinity;
+    private double _lastCpuTimingHudPublishSeconds = double.NegativeInfinity;
 
     /// <summary>Orbit camera is re-synced from the scene only when this changes (block vs item), so texture swaps keep user framing.</summary>
     private string? _orbitSyncedKey;
@@ -553,6 +556,8 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
         {
             _grassGroundMaterial = material;
             _grassGroundSlotMaterials = material is null ? null : [material];
+            _cloudGroundBounceColorLinear =
+                PreviewCloudGroundBounceEstimator.Estimate(material);
             _grassGroundSlotCutout = null;
             _grassGroundOverlayCutout = true;
             _grassGroundMaterialDirty = true;
@@ -572,11 +577,15 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
                 _grassGroundMaterial = null;
                 _grassGroundSlotMaterials = null;
                 _grassGroundSlotCutout = null;
+                _cloudGroundBounceColorLinear =
+                    PreviewCloudGroundBounceEstimator.DefaultLinear;
             }
             else
             {
                 _grassGroundSlotMaterials = slotMaterials;
                 _grassGroundMaterial = slotMaterials[0];
+                _cloudGroundBounceColorLinear =
+                    PreviewCloudGroundBounceEstimator.Estimate(slotMaterials[0]);
                 _grassGroundSlotCutout = cutoutBySlot;
             }
 

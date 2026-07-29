@@ -76,6 +76,21 @@ public sealed class PreviewCloudLiveGlSmokeTests
                     "CQ3.1 cloud-light fragment-slice shader failed to compile: " +
                     cloudLightSliceError);
 
+                string? cloudLightComputeError = null;
+                using var cloudLightCompute = caps.CanUseComputeCloudLightingCache
+                    ? compile.CreateComputeProgram(
+                        "genesis_cloud_light_cache.comp",
+                        out cloudLightComputeError,
+                        "cq3.2-cloud-light-compute-live-smoke")
+                    : new GlShaderProgram(gl, 0);
+                if (caps.CanUseComputeCloudLightingCache)
+                {
+                    Assert.True(
+                        cloudLightCompute.IsValid,
+                        "CQ3.2 cloud-light compute shader failed to compile: " +
+                        cloudLightComputeError);
+                }
+
                 using var cloudLightLookup = compile.CreateProgram(
                     "genesis_godrays.vert",
                     "genesis_cloud_light_cache_lookup.frag",
@@ -85,6 +100,16 @@ public sealed class PreviewCloudLiveGlSmokeTests
                     cloudLightLookup.IsValid,
                     "CQ3.1 cloud-light lookup shader failed to compile: " +
                     cloudLightLookupError);
+
+                using var cloudGroundTransmittance = compile.CreateProgram(
+                    "genesis_godrays.vert",
+                    "genesis_cloud_ground_transmittance.frag",
+                    out var cloudGroundTransmittanceError,
+                    "cq3.5-ground-transmittance-live-smoke");
+                Assert.True(
+                    cloudGroundTransmittance.IsValid,
+                    "CQ3.5 ground transmittance shader failed to compile: " +
+                    cloudGroundTransmittanceError);
 
                 using var fallbackComposite = compile.CreateProgram(
                     "genesis_godrays.vert",
@@ -189,7 +214,9 @@ public sealed class PreviewCloudLiveGlSmokeTests
                 ValidateCloudLightFragmentReference(
                     gl,
                     cloudLightSlice,
-                    cloudLightLookup);
+                    cloudLightLookup,
+                    cloudGroundTransmittance,
+                    cloudLightCompute.IsValid ? cloudLightCompute : null);
             }
 
             return true;
@@ -199,13 +226,15 @@ public sealed class PreviewCloudLiveGlSmokeTests
     private static void ValidateCloudLightFragmentReference(
         GL gl,
         GlShaderProgram program,
-        GlShaderProgram lookupProgram)
+        GlShaderProgram lookupProgram,
+        GlShaderProgram groundTransmittanceProgram,
+        GlShaderProgram? computeProgram)
     {
         var profile = new PreviewCloudLightingCacheProfile(
             "CQ3.1 test",
             PreviewCloudLightingCacheProfiles.StorageFormat,
-            new PreviewCloudLightCascadeProfile(8, 8, 4, 64f, 1),
-            new PreviewCloudLightCascadeProfile(8, 8, 4, 128f, 1),
+            new PreviewCloudLightCascadeProfile(8, 8, 24, 64f, 1),
+            new PreviewCloudLightCascadeProfile(8, 8, 16, 128f, 1),
             PreviewCloudLightingCacheProfiles.NearOverlapFraction,
             0);
         Assert.True(
@@ -227,14 +256,14 @@ public sealed class PreviewCloudLiveGlSmokeTests
                     basis,
                     profile.Near,
                     Vector3.Zero,
-                    0f,
-                    40f);
+                    -40f,
+                    0f);
                 var farTransform = PreviewCloudLightCascadeTransform.Create(
                     basis,
                     profile.Far,
                     Vector3.Zero,
-                    0f,
-                    40f);
+                    -40f,
+                    0f);
                 var generator = new GlCloudLightFragmentSliceGenerator(
                     gl,
                     program,
@@ -268,6 +297,33 @@ public sealed class PreviewCloudLiveGlSmokeTests
                     generationDiagnostic);
                 Assert.True(cache!.IsReferenceReady);
 
+                if (computeProgram is { IsValid: true })
+                {
+                    Assert.True(
+                        GlCloudLightFroxelCache.TryCreate(
+                            gl,
+                            profile,
+                            out var computeCache,
+                            out var computeAllocationDiagnostic),
+                        computeAllocationDiagnostic);
+                    Assert.NotNull(computeCache);
+                    using (computeCache)
+                    {
+                        var computeGenerator = new GlCloudLightComputeGenerator(
+                            gl,
+                            computeProgram);
+                        Assert.True(
+                            computeGenerator.TryGenerate(
+                                computeCache!,
+                                inputs,
+                                out var computeDiagnostic),
+                            computeDiagnostic);
+                        Assert.True(computeCache!.IsReferenceReady);
+                        AssertCloudLightCascadeParity(cache.Near, computeCache.Near);
+                        AssertCloudLightCascadeParity(cache.Far, computeCache.Far);
+                    }
+                }
+
                 var previousOpticalDepth = -1f;
                 var expectedDelta = 0.5f * nearTransform.DepthSliceWorldSize * 0.18f;
                 for (var layer = 0; layer < profile.Near.Depth; layer++)
@@ -288,7 +344,7 @@ public sealed class PreviewCloudLiveGlSmokeTests
                         expectedDelta * (layer + 1) - 0.02f,
                         expectedDelta * (layer + 1) + 0.02f);
                     var expectedVisibility = MathF.Exp(
-                        -expectedDelta * 0.35f * (layer + 1));
+                        -expectedDelta * 0.35f);
                     Assert.InRange(
                         skyVisibility,
                         expectedVisibility - 0.01f,
@@ -303,7 +359,13 @@ public sealed class PreviewCloudLiveGlSmokeTests
                     nearTransform,
                     farTransform,
                     vao,
-                    expectedDelta);
+                    expectedDelta * (profile.Near.Depth + 1f) * 0.5f);
+                ValidateCloudGroundTransmittance(
+                    gl,
+                    groundTransmittanceProgram,
+                    cache,
+                    vao,
+                    expectedTransmittance: MathF.Exp(-0.5f * 40f * 0.18f));
             }
         }
         finally
@@ -314,6 +376,168 @@ public sealed class PreviewCloudLiveGlSmokeTests
         }
     }
 
+    private static void ValidateCloudGroundTransmittance(
+        GL gl,
+        GlShaderProgram program,
+        GlCloudLightFroxelCache cache,
+        uint vao,
+        float expectedTransmittance)
+    {
+        var profile = new PreviewCloudGroundTransmittanceProfile(
+            cache.Profile.Far.Width,
+            cache.Profile.Far.Height,
+            cache.Profile.Far.WorldSpan,
+            CombineNearAndFar: true);
+        var allocationReadFramebuffer =
+            gl.GetInteger(GetPName.ReadFramebufferBinding);
+        var allocationDrawFramebuffer =
+            gl.GetInteger(GetPName.DrawFramebufferBinding);
+        var allocationActiveTexture =
+            gl.GetInteger(GetPName.ActiveTexture);
+        var allocationTexture2D =
+            gl.GetInteger(GetPName.TextureBinding2D);
+        Assert.True(
+            GlCloudGroundTransmittanceTarget.TryCreate(
+                gl,
+                profile,
+                out var target,
+                out var allocationDiagnostic),
+            allocationDiagnostic);
+        Assert.NotNull(target);
+        Assert.Equal(
+            allocationReadFramebuffer,
+            gl.GetInteger(GetPName.ReadFramebufferBinding));
+        Assert.Equal(
+            allocationDrawFramebuffer,
+            gl.GetInteger(GetPName.DrawFramebufferBinding));
+        Assert.Equal(
+            allocationActiveTexture,
+            gl.GetInteger(GetPName.ActiveTexture));
+        Assert.Equal(
+            allocationTexture2D,
+            gl.GetInteger(GetPName.TextureBinding2D));
+
+        using (target)
+        {
+            var publisher = new GlCloudGroundTransmittancePublisher(
+                gl,
+                program,
+                vao);
+            var priorReadFramebuffer =
+                gl.GetInteger(GetPName.ReadFramebufferBinding);
+            var priorDrawFramebuffer =
+                gl.GetInteger(GetPName.DrawFramebufferBinding);
+            var priorProgram =
+                gl.GetInteger(GetPName.CurrentProgram);
+            var priorVertexArray =
+                gl.GetInteger(GetPName.VertexArrayBinding);
+            var priorActiveTexture =
+                gl.GetInteger(GetPName.ActiveTexture);
+            var priorViewport = new int[4];
+            gl.GetInteger(GetPName.Viewport, priorViewport);
+            Assert.True(
+                publisher.TryPublish(
+                    cache,
+                    target!,
+                    groundWorldY: 0f,
+                    out var publishDiagnostic),
+                publishDiagnostic);
+            Assert.Equal(
+                priorReadFramebuffer,
+                gl.GetInteger(GetPName.ReadFramebufferBinding));
+            Assert.Equal(
+                priorDrawFramebuffer,
+                gl.GetInteger(GetPName.DrawFramebufferBinding));
+            Assert.Equal(
+                priorProgram,
+                gl.GetInteger(GetPName.CurrentProgram));
+            Assert.Equal(
+                priorVertexArray,
+                gl.GetInteger(GetPName.VertexArrayBinding));
+            Assert.Equal(
+                priorActiveTexture,
+                gl.GetInteger(GetPName.ActiveTexture));
+            var restoredViewport = new int[4];
+            gl.GetInteger(GetPName.Viewport, restoredViewport);
+            Assert.Equal(priorViewport, restoredViewport);
+            Assert.True(target!.IsCurrent(cache));
+            Assert.NotEqual(0u, target.TextureHandle);
+
+            var values = new float[profile.Width * profile.Height];
+            Assert.True(
+                target.TryRead(values, out var readDiagnostic),
+                readDiagnostic);
+            var center =
+                profile.Height / 2 * profile.Width +
+                profile.Width / 2;
+            Assert.InRange(
+                values[center],
+                expectedTransmittance - 0.01f,
+                expectedTransmittance + 0.01f);
+            Assert.All(values, value =>
+            {
+                Assert.True(float.IsFinite(value));
+                Assert.InRange(value, 0f, 1f);
+            });
+        }
+    }
+
+    private static void AssertCloudLightCascadeParity(
+        GlCloudLightCascadeTarget fragment,
+        GlCloudLightCascadeTarget compute)
+    {
+        Assert.Equal(fragment.Profile, compute.Profile);
+        for (var layer = 0; layer < fragment.Profile.Depth; layer++)
+        {
+            var fragmentValues =
+                new float[fragment.Profile.Width * fragment.Profile.Height * 2];
+            var computeValues =
+                new float[compute.Profile.Width * compute.Profile.Height * 2];
+            Assert.True(
+                fragment.TryReadLayer(
+                    layer,
+                    fragmentValues,
+                    out var fragmentReadDiagnostic),
+                fragmentReadDiagnostic);
+            Assert.True(
+                compute.TryReadLayer(
+                    layer,
+                    computeValues,
+                    out var computeReadDiagnostic),
+                computeReadDiagnostic);
+
+            for (var index = 0; index < fragmentValues.Length; index += 2)
+            {
+                var opticalDifference = MathF.Abs(
+                    computeValues[index] - fragmentValues[index]);
+                var visibilityDifference = MathF.Abs(
+                    computeValues[index + 1] - fragmentValues[index + 1]);
+                var opticalTolerance = HalfUlpTolerance(fragmentValues[index]);
+                var visibilityTolerance = HalfUlpTolerance(fragmentValues[index + 1]);
+                Assert.True(
+                    opticalDifference <= opticalTolerance,
+                    $"CQ3.2 optical-depth parity failed at layer={layer}, texel={index / 2}: " +
+                    $"fragment={fragmentValues[index]}, compute={computeValues[index]}, " +
+                    $"difference={opticalDifference}, twoHalfUlp={opticalTolerance}.");
+                Assert.True(
+                    visibilityDifference <= visibilityTolerance,
+                    $"CQ3.2 visibility parity failed at layer={layer}, texel={index / 2}: " +
+                    $"fragment={fragmentValues[index + 1]}, compute={computeValues[index + 1]}, " +
+                    $"difference={visibilityDifference}, twoHalfUlp={visibilityTolerance}.");
+            }
+        }
+    }
+
+    private static float HalfUlpTolerance(float value)
+    {
+        var half = (Half)Math.Clamp(value, 0f, (float)Half.MaxValue);
+        var bits = BitConverter.HalfToInt16Bits(half);
+        var next = BitConverter.Int16BitsToHalf((short)(bits + 1));
+        return MathF.Max(
+            MathF.Abs((float)next - (float)half) * 2f,
+            1e-6f);
+    }
+
     private static unsafe void ValidateCloudLightLookup(
         GL gl,
         GlShaderProgram program,
@@ -321,7 +545,7 @@ public sealed class PreviewCloudLiveGlSmokeTests
         in PreviewCloudLightCascadeTransform nearTransform,
         in PreviewCloudLightCascadeTransform farTransform,
         uint vao,
-        float expectedDelta)
+        float expectedCenterOpticalDepth)
     {
         var framebuffer = gl.GenFramebuffer();
         var outputTexture = gl.GenTexture();
@@ -416,30 +640,83 @@ public sealed class PreviewCloudLiveGlSmokeTests
                 "uNearOverlapFraction",
                 PreviewCloudLightingCacheProfiles.NearOverlapFraction);
 
-            gl.Viewport(0, 0, 1, 1);
-            gl.Disable(EnableCap.Blend);
-            gl.Disable(EnableCap.DepthTest);
-            gl.BindVertexArray(vao);
-            gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
-            gl.BindVertexArray(0);
-            var output = new float[4];
-            fixed (float* pointer = output)
+            float[] ReadLookup(Vector3 sampleWorld, int hasNear, int hasFar)
             {
-                gl.ReadPixels(
-                    0,
-                    0,
-                    1,
-                    1,
-                    PixelFormat.Rgba,
-                    PixelType.Float,
-                    pointer);
+                SetUniform3(
+                    gl,
+                    program,
+                    "uWorldPosition",
+                    sampleWorld.X,
+                    sampleWorld.Y,
+                    sampleWorld.Z);
+                SetUniform1(gl, program, "uHasNear", hasNear);
+                SetUniform1(gl, program, "uHasFar", hasFar);
+                gl.Viewport(0, 0, 1, 1);
+                gl.Disable(EnableCap.Blend);
+                gl.Disable(EnableCap.DepthTest);
+                gl.BindVertexArray(vao);
+                gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
+                gl.BindVertexArray(0);
+                var result = new float[4];
+                fixed (float* pointer = result)
+                {
+                    gl.ReadPixels(
+                        0,
+                        0,
+                        1,
+                        1,
+                        PixelFormat.Rgba,
+                        PixelType.Float,
+                        pointer);
+                }
+
+                Assert.Equal(GLEnum.NoError, gl.GetError());
+                return result;
             }
 
-            Assert.Equal(GLEnum.NoError, gl.GetError());
-            Assert.InRange(output[0], expectedDelta * 2.5f - 0.03f, expectedDelta * 2.5f + 0.03f);
+            var output = ReadLookup(world, hasNear: 1, hasFar: 1);
+            Assert.InRange(
+                output[0],
+                expectedCenterOpticalDepth - 0.03f,
+                expectedCenterOpticalDepth + 0.03f);
             Assert.InRange(output[1], 0f, 1f);
             Assert.InRange(output[2], 0.999f, 1.001f);
             Assert.InRange(output[3], 0f, 0.001f);
+
+            var overlap = ReadLookup(
+                nearTransform.UnitToWorld(new Vector3(0.95f, 0.5f, 0.5f)),
+                hasNear: 1,
+                hasFar: 1);
+            Assert.InRange(overlap[0], 0f, 8f);
+            Assert.InRange(overlap[1], 0f, 1f);
+            Assert.InRange(overlap[2], 0.45f, 0.55f);
+            Assert.InRange(overlap[3], 0.45f, 0.55f);
+
+            var farOnly = ReadLookup(
+                nearTransform.UnitToWorld(new Vector3(1.10f, 0.5f, 0.5f)),
+                hasNear: 1,
+                hasFar: 1);
+            Assert.InRange(farOnly[0], 0f, 8f);
+            Assert.InRange(farOnly[1], 0f, 1f);
+            Assert.InRange(farOnly[2], 0f, 0.001f);
+            Assert.InRange(farOnly[3], 0.999f, 1.001f);
+
+            var outsideFar = ReadLookup(
+                nearTransform.UnitToWorld(new Vector3(1.60f, 0.5f, 0.5f)),
+                hasNear: 1,
+                hasFar: 1);
+            Assert.InRange(outsideFar[0], 0f, 0.001f);
+            Assert.InRange(outsideFar[1], 0.999f, 1.001f);
+            Assert.InRange(outsideFar[2], 0f, 0.001f);
+            Assert.InRange(outsideFar[3], 0f, 0.001f);
+
+            var missingNear = ReadLookup(world, hasNear: 0, hasFar: 1);
+            Assert.InRange(missingNear[2], 0f, 0.001f);
+            Assert.InRange(missingNear[3], 0.999f, 1.001f);
+
+            var missingFar = ReadLookup(world, hasNear: 1, hasFar: 0);
+            Assert.InRange(missingFar[2], 0.999f, 1.001f);
+            Assert.InRange(missingFar[3], 0f, 0.001f);
         }
         finally
         {

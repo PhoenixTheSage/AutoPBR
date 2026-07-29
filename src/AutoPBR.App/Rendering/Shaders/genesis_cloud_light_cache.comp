@@ -1,0 +1,70 @@
+#version 430 core
+// CQ3.2 compute/image-store cloud-light cache generator.
+
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 24) in;
+layout(rg16f, binding = 0) writeonly uniform image2DArray uCloudLightCacheOut;
+
+uniform ivec3 uCacheSize;
+
+//!include "common/common.glsl"
+//!include "common/volumetric_clouds_density_maps.glsl"
+//!include "common/cloud_light_cache_generation.glsl"
+
+const int CQ3_TILE_WIDTH = 4;
+const int CQ3_MAX_SLICES = 24;
+shared vec2 cq3ColumnPrefix[
+    CQ3_TILE_WIDTH * CQ3_TILE_WIDTH * CQ3_MAX_SLICES];
+
+void main()
+{
+    ivec2 column = ivec2(gl_GlobalInvocationID.xy);
+    int layer = int(gl_LocalInvocationID.z);
+    int columnInTile =
+        int(gl_LocalInvocationID.y) * CQ3_TILE_WIDTH +
+        int(gl_LocalInvocationID.x);
+    int sharedIndex = columnInTile * CQ3_MAX_SLICES + layer;
+    bool columnActive =
+        column.x < uCacheSize.x &&
+        column.y < uCacheSize.y;
+    bool layerActive =
+        layer < uLayerCount &&
+        layer < uCacheSize.z;
+
+    vec2 localValue = vec2(0.0, 1.0);
+    if (columnActive && layerActive)
+    {
+        vec2 unitPlane = (vec2(column) + vec2(0.5)) /
+            vec2(max(uCacheSize.xy, ivec2(1)));
+        localValue = cq3EvaluateLayer(unitPlane, layer);
+    }
+
+    cq3ColumnPrefix[sharedIndex] = localValue;
+
+    // Every Z lane evaluates one depth sample in parallel. Lane zero then performs the
+    // ordered full-precision prefix, matching the fragment fallback's RG32F prefix scratch.
+    // Both paths round only when publishing each logical layer to the RG16F cache.
+    barrier();
+    if (layer == 0)
+    {
+        int columnBase = columnInTile * CQ3_MAX_SLICES;
+        vec2 prefix = vec2(0.0, 1.0);
+        for (int prefixLayer = 0;
+            prefixLayer < CQ3_MAX_SLICES;
+            ++prefixLayer)
+        {
+            prefix = cq3CombinePrefix(
+                prefix,
+                cq3ColumnPrefix[columnBase + prefixLayer]);
+            cq3ColumnPrefix[columnBase + prefixLayer] = prefix;
+        }
+    }
+
+    barrier();
+    if (columnActive && layerActive)
+    {
+        imageStore(
+            uCloudLightCacheOut,
+            ivec3(column, layer),
+            vec4(cq3ColumnPrefix[sharedIndex], 0.0, 0.0));
+    }
+}

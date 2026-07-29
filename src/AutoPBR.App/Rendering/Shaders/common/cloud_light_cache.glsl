@@ -68,4 +68,86 @@ vec3 cqlCascadeWeights(
     return vec3(1.0 - farWeight, farWeight, 0.0);
 }
 
+// Returns cumulative sun optical depth, sky visibility, and cache-use weight.
+// Missing cascades are treated independently: a valid far cascade can cover a missing/outside
+// near cascade, while a valid near cascade remains useful if the far cascade failed. Any point
+// outside all generated coverage returns z=0 so the caller can run the compatibility light march.
+vec3 cqlResolveLighting(
+    sampler2DArray nearCache,
+    sampler2DArray farCache,
+    vec3 worldPosition,
+    vec3 basisRight,
+    vec3 basisUp,
+    vec3 basisForward,
+    vec2 nearPlaneCenter,
+    vec2 farPlaneCenter,
+    float nearWorldSpan,
+    float farWorldSpan,
+    float nearLightDepthMin,
+    float farLightDepthMin,
+    float nearLightDepthSpan,
+    float farLightDepthSpan,
+    int nearDepth,
+    int farDepth,
+    float nearOverlapFraction,
+    int hasNear,
+    int hasFar,
+    out vec3 resolvedWeights)
+{
+    vec3 nearUnit = cqlWorldToUnit(
+        worldPosition,
+        basisRight,
+        basisUp,
+        basisForward,
+        nearPlaneCenter,
+        nearWorldSpan,
+        nearLightDepthMin,
+        nearLightDepthSpan);
+    vec3 farUnit = cqlWorldToUnit(
+        worldPosition,
+        basisRight,
+        basisUp,
+        basisForward,
+        farPlaneCenter,
+        farWorldSpan,
+        farLightDepthMin,
+        farLightDepthSpan);
+
+    bool nearAvailable = hasNear > 0 && cqlUnitInside(nearUnit);
+    bool farAvailable = hasFar > 0 && cqlUnitInside(farUnit);
+    if (!nearAvailable && !farAvailable)
+    {
+        resolvedWeights = vec3(0.0, 0.0, 1.0);
+        return vec3(0.0, 1.0, 0.0);
+    }
+
+    vec3 weights;
+    if (nearAvailable && farAvailable)
+    {
+        weights = cqlCascadeWeights(
+            nearUnit,
+            farUnit,
+            nearOverlapFraction);
+    }
+    else
+    {
+        weights = nearAvailable
+            ? vec3(1.0, 0.0, 0.0)
+            : vec3(0.0, 1.0, 0.0);
+    }
+
+    vec2 nearValue = weights.x > 0.0
+        ? cqlSampleCascadeExplicitDepth(nearCache, nearUnit, nearDepth)
+        : vec2(0.0, 1.0);
+    vec2 farValue = weights.y > 0.0
+        ? cqlSampleCascadeExplicitDepth(farCache, farUnit, farDepth)
+        : vec2(0.0, 1.0);
+    vec2 cacheValue = nearValue * weights.x + farValue * weights.y;
+    resolvedWeights = weights;
+    return vec3(
+        max(cacheValue.x, 0.0),
+        clamp(cacheValue.y, 0.0, 1.0),
+        clamp(weights.x + weights.y, 0.0, 1.0));
+}
+
 #endif // GENESIS_CLOUD_LIGHT_CACHE_GLSL

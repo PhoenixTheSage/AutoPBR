@@ -187,6 +187,169 @@ public sealed class PreviewVolumeInjectShaderEsTests
     }
 
     [Fact]
+    public void Cq34CloudLighting_UsesExplicitScatteringSkyGroundAndTwoConeTaps()
+    {
+        var clouds = ResolveAndAdapt("genesis_clouds.frag", useOpenGlEs: false);
+        var cacheGeneration = ResolveAndAdapt(
+            "genesis_cloud_light_cache_slice.frag",
+            useOpenGlEs: false);
+
+        Assert.Contains("vec3 vcSunScatterCq34(", clouds, StringComparison.Ordinal);
+        Assert.Contains("uCloudScatterOctave1", clouds, StringComparison.Ordinal);
+        Assert.Contains("uCloudScatterOctave2", clouds, StringComparison.Ordinal);
+        Assert.Contains("uCloudScatterEnergyClamp", clouds, StringComparison.Ordinal);
+        Assert.Contains("uCloudCachedSkyVisibilityFloor", clouds, StringComparison.Ordinal);
+        Assert.Contains("uCloudGroundBounceColor", clouds, StringComparison.Ordinal);
+        Assert.Contains("lowerAltitudeProfile", clouds, StringComparison.Ordinal);
+        Assert.Contains("uCloudLocalConeTapCount < 2", clouds, StringComparison.Ordinal);
+        Assert.Contains("float density0 = cloudLocalConeDensity(", clouds,
+            StringComparison.Ordinal);
+        Assert.Contains("float density1 = cloudLocalConeDensity(", clouds,
+            StringComparison.Ordinal);
+        Assert.Contains("float distance1 = rangeWorld * 0.88", clouds,
+            StringComparison.Ordinal);
+        Assert.Contains("vec3 cirrusCachedLighting", clouds, StringComparison.Ordinal);
+
+        Assert.Contains("float cq34SkyVisibility(", cacheGeneration,
+            StringComparison.Ordinal);
+        Assert.Contains("float probeDensity0 = cq3CumulusDensity(", cacheGeneration,
+            StringComparison.Ordinal);
+        Assert.Contains("float probeDensity1 = cq3CumulusDensity(", cacheGeneration,
+            StringComparison.Ordinal);
+        Assert.Contains("clamp(localValue.g, 0.0, 1.0)", cacheGeneration,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("previous.g * localValue.g", cacheGeneration,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Cq35GroundTransmittance_AttenuatesOnlyTerrainAndFogDirectLight()
+    {
+        var publisher = ResolveAndAdapt(
+            "genesis_cloud_ground_transmittance.frag",
+            useOpenGlEs: false);
+        var terrain = ResolveAndAdapt(
+            "genesis.frag",
+            useOpenGlEs: false);
+        var fogFragment = ResolveAndAdapt(
+            "genesis_volume_inject.frag",
+            useOpenGlEs: false);
+        var fogCompute = ResolveAndAdaptCompute(
+            "genesis_volume_inject.comp");
+        var fogLite = ResolveAndAdapt(
+            "genesis_volume_inject_lite.frag",
+            useOpenGlEs: false);
+
+        Assert.Contains("cqlResolveLighting(", publisher,
+            StringComparison.Ordinal);
+        Assert.Contains("exp(-max(opticalDepth, 0.0))", publisher,
+            StringComparison.Ordinal);
+        Assert.Contains("isnan(opticalDepth)", publisher,
+            StringComparison.Ordinal);
+        Assert.Contains("isinf(opticalDepth)", publisher,
+            StringComparison.Ordinal);
+        Assert.Contains("uOutputPlaneCenter", publisher,
+            StringComparison.Ordinal);
+
+        Assert.Contains("uIsGroundPass > 0", terrain,
+            StringComparison.Ordinal);
+        Assert.Contains("float cloudGroundTransmittance =", terrain,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "float lightVis = pomShadow * shadowVis * cloudGroundTransmittance",
+            terrain,
+            StringComparison.Ordinal);
+        var cloudDirectGate = terrain.IndexOf(
+            "float lightVis = pomShadow * shadowVis * cloudGroundTransmittance",
+            StringComparison.Ordinal);
+        var indirectLighting = terrain.IndexOf(
+            "vec3 indirect = vec3(0.0)",
+            StringComparison.Ordinal);
+        Assert.True(cloudDirectGate >= 0 && indirectLighting > cloudDirectGate,
+            "cloud ground transmittance must gate direct lighting before the untouched indirect/IBL block");
+
+        Assert.Contains("float cloudGroundTransmittance = cgtSampleGroundTransmittance(",
+            fogFragment,
+            StringComparison.Ordinal);
+        Assert.Contains("isnan(shadowGate) || isinf(shadowGate)",
+            fogFragment,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "FragColor = viPackFroxelInject(mediumRho, uLightColor, shadowGate)",
+            fogFragment,
+            StringComparison.Ordinal);
+        Assert.Contains("float cloudGroundTransmittance = cgtSampleGroundTransmittance(",
+            fogCompute,
+            StringComparison.Ordinal);
+        Assert.Contains("isnan(shadowGate) || isinf(shadowGate)",
+            fogCompute,
+            StringComparison.Ordinal);
+        Assert.Contains("imageStore(uFroxelOccupancyOut, gid, vec4(mediumRho",
+            fogCompute,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("uCloudGroundTransmittance", fogLite,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Cq35GroundTransmittance_MissingAndOutOfRangeReturnFullSun()
+    {
+        var terrain = ResolveAndAdapt(
+            "genesis.frag",
+            useOpenGlEs: false);
+
+        Assert.Contains("if (hasTransmittance <= 0)", terrain,
+            StringComparison.Ordinal);
+        Assert.Contains("return 1.0;", terrain,
+            StringComparison.Ordinal);
+        Assert.Contains("any(lessThan(uv, vec2(0.0)))", terrain,
+            StringComparison.Ordinal);
+        Assert.Contains("any(isnan(uv))", terrain,
+            StringComparison.Ordinal);
+        Assert.Contains("isnan(sampledRaw)", terrain,
+            StringComparison.Ordinal);
+        Assert.Contains("texelSize * 2.0", terrain,
+            StringComparison.Ordinal);
+        Assert.Contains("return mix(1.0, sampled, coverage)", terrain,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Cq35GroundTransmittance_MainSamplerDoesNotAliasMaterialArrayUnits()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            ".."));
+        var passSource = File.ReadAllText(Path.Combine(
+            repoRoot,
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.Render.PassScene.cs"));
+        var arraySource = File.ReadAllText(Path.Combine(
+            repoRoot,
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.MaterialTextureArrays.cs"));
+
+        Assert.Contains(
+            "MainPassCloudGroundTransmittanceUnit = 12",
+            passSource,
+            StringComparison.Ordinal);
+        Assert.Contains("MainPassAlbedoArrayUnit = 8", arraySource,
+            StringComparison.Ordinal);
+        Assert.Contains("MainPassHeightArrayUnit = 11", arraySource,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CloudUpsample_RejectsCloudsBehindOpaqueSceneDepth()
     {
         var adapted = ResolveAndAdapt("genesis_clouds_upsample.frag");
@@ -381,5 +544,29 @@ public sealed class PreviewVolumeInjectShaderEsTests
             GlslIncludeResolver.Resolve(fragmentFile, Read),
             ShaderType.FragmentShader,
             useOpenGlEs);
+    }
+
+    private static string ResolveAndAdaptCompute(string computeFile)
+    {
+        var root = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            "..",
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "Shaders"));
+        string Read(string name) =>
+            File.ReadAllText(Path.Combine(
+                root,
+                name.Replace('/', Path.DirectorySeparatorChar)));
+
+        return GlslSourceAdapter.Adapt(
+            GlslIncludeResolver.Resolve(computeFile, Read),
+            ShaderType.ComputeShader,
+            useOpenGlEs: false);
     }
 }

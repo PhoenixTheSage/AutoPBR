@@ -15,6 +15,7 @@
 //!include "common/volume_froxel_math.glsl"
 
 //!include "common/volume_inject_pack.glsl"
+//!include "common/cloud_ground_transmittance.glsl"
 
 
 
@@ -25,6 +26,7 @@ uniform sampler2DShadow uShadowMap;
 uniform sampler2DShadow uShadowMapNear;
 
 uniform sampler2DShadow uShadowMapMid;
+uniform sampler2D uCloudGroundTransmittance;
 
 uniform mat4 uLightViewProj;
 
@@ -85,6 +87,12 @@ uniform float uCascadeMidSplitDistance;
 uniform float uCascadeBlendWidth;
 uniform float uShadowDistance;
 uniform float uShadowFadeStart;
+uniform int uHasCloudGroundTransmittance;
+uniform vec3 uCloudGroundBasisRight;
+uniform vec3 uCloudGroundBasisUp;
+uniform vec2 uCloudGroundPlaneCenter;
+uniform float uCloudGroundWorldSpan;
+uniform vec2 uCloudGroundTexelSize;
 
 
 
@@ -119,6 +127,22 @@ void main()
             uShadowTexelSizeNear, uShadowTexelSizeMid, uShadowTexelSize, uShadowMinBias, uEnableShadowMap,
             uEnableShadowCascades, uCascadeSplitDistance, uCascadeMidSplitDistance, uCascadeBlendWidth,
             uShadowDistance, uShadowFadeStart);
+        // CQ3.5 modifies sun-lit in-scatter only. viPackFroxelInject keeps density
+        // and occupancy unchanged, preserving view-ray depth/transmittance behavior.
+        float cloudGroundTransmittance = cgtSampleGroundTransmittance(
+            uCloudGroundTransmittance,
+            worldPos,
+            uCloudGroundBasisRight,
+            uCloudGroundBasisUp,
+            uCloudGroundPlaneCenter,
+            uCloudGroundWorldSpan,
+            uCloudGroundTexelSize,
+            uHasCloudGroundTransmittance);
+        shadowGate *= cloudGroundTransmittance;
+        shadowGate =
+            isnan(shadowGate) || isinf(shadowGate)
+                ? 1.0
+                : clamp(shadowGate, 0.0, 1.0);
     }
 
     FragColor = viPackFroxelInject(mediumRho, uLightColor, shadowGate);
