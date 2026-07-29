@@ -203,7 +203,21 @@ public partial class MainWindowViewModel
     [
         LocalizedStrings.Preview3DCloudDebugViewOff,
         LocalizedStrings.Preview3DCloudDebugViewCoverage,
-        LocalizedStrings.Preview3DCloudDebugViewDensitySlice
+        LocalizedStrings.Preview3DCloudDebugViewDensitySlice,
+        LocalizedStrings.Preview3DCloudDebugViewWeatherType,
+        LocalizedStrings.Preview3DCloudDebugViewWeatherDensity,
+        LocalizedStrings.Preview3DCloudDebugViewWeatherConvection,
+        LocalizedStrings.Preview3DCloudDebugViewShapeR,
+        LocalizedStrings.Preview3DCloudDebugViewShapeG,
+        LocalizedStrings.Preview3DCloudDebugViewShapeB,
+        LocalizedStrings.Preview3DCloudDebugViewShapeA,
+        LocalizedStrings.Preview3DCloudDebugViewDetailR,
+        LocalizedStrings.Preview3DCloudDebugViewDetailG,
+        LocalizedStrings.Preview3DCloudDebugViewDetailB,
+        LocalizedStrings.Preview3DCloudDebugViewDetailA,
+        LocalizedStrings.Preview3DCloudDebugViewSelectedLod,
+        LocalizedStrings.Preview3DCloudDebugViewBaseDensity,
+        LocalizedStrings.Preview3DCloudDebugViewAssetProfile
     ];
 
     public bool IsPreview2D => PreviewDisplayMode == 0;
@@ -784,7 +798,10 @@ public partial class MainWindowViewModel
             CloudWindSpeed = (float)Preview3DCloudWindSpeed,
             CloudWindHeadingDegrees = (float)Preview3DCloudWindHeadingDegrees,
             CloudCirrusStrength = (float)Preview3DCloudCirrusStrength,
-            CloudDebugView = (PreviewCloudDebugView)Math.Clamp(Preview3DCloudDebugView, 0, 2),
+            CloudDebugView = (PreviewCloudDebugView)Math.Clamp(
+                Preview3DCloudDebugView,
+                0,
+                (int)PreviewCloudDebugView.AssetProfile),
             CloudDisableTemporal = Preview3DCloudDisableTemporal,
             CloudMarchStepOverride = (int)Math.Clamp(Math.Round(Preview3DCloudMarchStepOverride), 0, 64),
             CloudFreezeWind = Preview3DCloudFreezeWind,

@@ -188,7 +188,7 @@ internal sealed class GlGpuTimerProfiler : IDisposable
     private int _activeFrameSlot = -1;
     private int _activeScope = -1;
     private bool _disposed;
-    private GlGpuTimingSnapshot? _latest;
+    private readonly Queue<GlGpuTimingSnapshot> _completed = new(FrameSlots);
 
     public GlGpuTimerProfiler(GL gl)
     {
@@ -273,10 +273,9 @@ internal sealed class GlGpuTimerProfiler : IDisposable
 
     public bool TryTakeLatestSnapshot(out GlGpuTimingSnapshot snapshot)
     {
-        if (_latest is { } latest)
+        if (_completed.Count > 0)
         {
-            snapshot = latest;
-            _latest = null;
+            snapshot = _completed.Dequeue();
             return true;
         }
 
@@ -298,6 +297,7 @@ internal sealed class GlGpuTimerProfiler : IDisposable
 
         _activeScope = -1;
         _activeFrameSlot = -1;
+        _completed.Clear();
         for (var frame = 0; frame < FrameSlots; frame++)
         {
             for (var scope = 0; scope < ScopeCount; scope++)
@@ -364,7 +364,10 @@ internal sealed class GlGpuTimerProfiler : IDisposable
                 _pending[frame, scope] = false;
             }
 
-            _latest = new GlGpuTimingSnapshot(
+            // More than one of the five in-flight frames can retire during a single
+            // availability poll. Preserve every result so timing windows do not silently
+            // discard up to four samples and become dependent on CPU/GPU queue depth.
+            _completed.Enqueue(new GlGpuTimingSnapshot(
                 elapsed[(int)GlGpuTimerScope.Setup] * NanosecondsToMilliseconds,
                 elapsed[(int)GlGpuTimerScope.Shadow] * NanosecondsToMilliseconds,
                 elapsed[(int)GlGpuTimerScope.Scene] * NanosecondsToMilliseconds,
@@ -379,7 +382,7 @@ internal sealed class GlGpuTimerProfiler : IDisposable
                 elapsed[(int)GlGpuTimerScope.Taa] * NanosecondsToMilliseconds,
                 elapsed[(int)GlGpuTimerScope.DepthPrepass] * NanosecondsToMilliseconds,
                 elapsed[(int)GlGpuTimerScope.HiZ] * NanosecondsToMilliseconds,
-                CloudRepairMs: elapsed[(int)GlGpuTimerScope.CloudRepair] * NanosecondsToMilliseconds);
+                CloudRepairMs: elapsed[(int)GlGpuTimerScope.CloudRepair] * NanosecondsToMilliseconds));
         }
     }
 

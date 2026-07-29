@@ -17,9 +17,26 @@
           Condition="Exists('$(ProjectDir)Assets\AutoPBR-logo.png')">
     <Exec Command="dotnet run --project &quot;$(ProjectDir)..\AutoPBR.Tools.GenerateIcon\AutoPBR.Tools.GenerateIcon.csproj&quot; -- &quot;$(ProjectDir)Assets\AutoPBR-logo.png&quot; &quot;$(ProjectDir)Assets\AutoPBR-logo.ico&quot;" IgnoreExitCode="true" />
   </Target>
+
+  <ItemGroup>
+    <_PreviewCloudAssetGeneratorInput Include="$(ProjectDir)..\AutoPBR.PreviewGpuAssets\*.cs" />
+    <_PreviewCloudAssetGeneratorInput Include="$(ProjectDir)..\AutoPBR.PreviewGpuAssets\AutoPBR.PreviewGpuAssets.csproj" />
+    <_PreviewCloudAssetGeneratorInput Include="$(ProjectDir)..\AutoPBR.Tools.GeneratePreviewCloudAssets\*.cs" />
+    <_PreviewCloudAssetGeneratorInput Include="$(ProjectDir)..\AutoPBR.Tools.GeneratePreviewCloudAssets\AutoPBR.Tools.GeneratePreviewCloudAssets.csproj" />
+
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_noise_shape_128.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_noise_detail_32.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_coverage_256.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_stbn_128x128x64_r8_v1.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_noise_shape_128_v2.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_noise_detail_64_v2.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_weather_1024_v2.bin" />
+  </ItemGroup>
+
   <Target Name="GeneratePreviewCloudAssets"
           BeforeTargets="BeforeBuild"
-          Condition="!Exists('$(ProjectDir)Assets\Preview\cloud_noise_shape_128.bin') Or !Exists('$(ProjectDir)Assets\Preview\cloud_stbn_128x128x64_r8_v1.bin')">
+          Inputs="@(_PreviewCloudAssetGeneratorInput)"
+          Outputs="@(_PreviewCloudAssetOutput)">
     <Exec Command="dotnet run --project &quot;$(ProjectDir)..\AutoPBR.Tools.GeneratePreviewCloudAssets\AutoPBR.Tools.GeneratePreviewCloudAssets.csproj&quot; -- &quot;$(ProjectDir)Assets\Preview&quot;" />
   </Target>
   <Target Name="GeneratePreviewGroundAssets" BeforeTargets="BeforeBuild" Condition="!Exists('$(ProjectDir)Assets\Preview\grass_block_top_n.png')">

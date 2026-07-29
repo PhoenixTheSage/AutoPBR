@@ -220,6 +220,7 @@ public sealed partial class OpenGlPreviewBackend
         int Density,
         int CoverageScale,
         int VolumeSize,
+        int PixelAngularSize,
         int WindOffset,
         int CirrusStrength,
         int CirrusWindOffset,
@@ -235,7 +236,9 @@ public sealed partial class OpenGlPreviewBackend
         int HasCloudStbn,
         int HasCoverageMap,
         int HasSkyLut,
-        int CloudDataDirect);
+        int CloudDataDirect,
+        int DensityAssetVersion,
+        int DensityAssetProfileCode);
 
     private readonly record struct CloudTemporalUniformLocs(
         int CurrentClouds,
@@ -268,6 +271,9 @@ public sealed partial class OpenGlPreviewBackend
         int CameraPos,
         int GroundWorldY,
         int PlanetRadius,
+        int SunDir,
+        int SunCosDiscEdge,
+        int SunDiscVisibility,
         int CloudDataDirect,
         int CloudExposure,
         int HdrPresent,
@@ -295,6 +301,7 @@ public sealed partial class OpenGlPreviewBackend
         int Density,
         int CoverageScale,
         int VolumeSize,
+        int PixelAngularSize,
         int WindOffset,
         int CirrusStrength,
         int CirrusWindOffset,
@@ -307,6 +314,7 @@ public sealed partial class OpenGlPreviewBackend
         int HasCoverageMap,
         int HasSkyLut,
         int SourceCloudDataDirect,
+        int DensityAssetVersion,
         int CloudFrameIndex);
 
     private readonly record struct CloudCompositeUniformLocs(
@@ -613,6 +621,7 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uDensity"),
             program.GetUniformLocation("uCoverageScale"),
             program.GetUniformLocation("uVolumeSize"),
+            program.GetUniformLocation("uPixelAngularSize"),
             program.GetUniformLocation("uWindOffset"),
             program.GetUniformLocation("uCirrusStrength"),
             program.GetUniformLocation("uCirrusWindOffset"),
@@ -628,7 +637,9 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uHasCloudStbn"),
             program.GetUniformLocation("uHasCoverageMap"),
             program.GetUniformLocation("uHasSkyLut"),
-            program.GetUniformLocation("uCloudDataDirect"));
+            program.GetUniformLocation("uCloudDataDirect"),
+            program.GetUniformLocation("uDensityAssetVersion"),
+            program.GetUniformLocation("uDensityAssetProfileCode"));
 
     private static CloudTemporalUniformLocs ResolveCloudTemporalUniformLocs(GlShaderProgram program) =>
         new(
@@ -663,6 +674,9 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uCameraPos"),
             program.GetUniformLocation("uGroundWorldY"),
             program.GetUniformLocation("uPlanetRadius"),
+            program.GetUniformLocation("uSunDir"),
+            program.GetUniformLocation("uSunCosDiscEdge"),
+            program.GetUniformLocation("uSunDiscVisibility"),
             program.GetUniformLocation("uCloudDataDirect"),
             program.GetUniformLocation("uCloudExposure"),
             program.GetUniformLocation("uHdrPresent"),
@@ -691,6 +705,7 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uDensity"),
             program.GetUniformLocation("uCoverageScale"),
             program.GetUniformLocation("uVolumeSize"),
+            program.GetUniformLocation("uPixelAngularSize"),
             program.GetUniformLocation("uWindOffset"),
             program.GetUniformLocation("uCirrusStrength"),
             program.GetUniformLocation("uCirrusWindOffset"),
@@ -703,6 +718,7 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uHasCoverageMap"),
             program.GetUniformLocation("uHasSkyLut"),
             program.GetUniformLocation("uSourceCloudDataDirect"),
+            program.GetUniformLocation("uDensityAssetVersion"),
             program.GetUniformLocation("uCloudFrameIndex"));
 
     private static CloudCompositeUniformLocs ResolveCloudCompositeUniformLocs(GlShaderProgram program) =>

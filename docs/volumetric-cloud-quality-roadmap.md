@@ -50,8 +50,8 @@ Increasing the existing fog-froxel resolution is therefore not a substitute for 
 | Phase | Deliverable | Depends on | Compatibility fallback | Status | Exit summary |
 |------|-------------|------------|------------------------|--------|--------------|
 | CQ1 | Linear HDR targets, precise metadata, STBN temporal reconstruction, Cinematic trace/edge repair | Baseline and green build | Current RGBA8 shell target/history | Complete | Accepted 2026-07-28 with stable HDR reconstruction, depth ordering, deterministic STBN, and 1080p timing evidence |
-| CQ2 | Versioned shape/detail/weather assets and explicit ray-footprint LOD | CQ1 | Existing v1 128³/32³/256² assets | Proposed | Finer, non-repeating structure with bounded density-stage cost |
-| CQ3 | Snapped light-aligned cloud-light cascades, long-range shadowing, cloud AO and ground contribution | CQ2 | Current per-sample short light march | Proposed | Coherent deep self-shadowing and terrain shadows without swimming |
+| CQ2 | Versioned shape/detail/weather assets and explicit ray-footprint LOD | CQ1 | Existing v1 128³/32³/256² assets | Complete | Accepted 2026-07-28 with deterministic v2 assets, coherent fallback, explicit LOD, weather/material shaping, fixed-scene visual evidence, and a passing High trace-performance gate |
+| CQ3 | Snapped light-aligned cloud-light cascades, long-range shadowing, cloud AO and ground contribution | CQ2 | Current per-sample short light march | In progress | CQ3.0–CQ3.1 complete: profile/coordinate ABI, owned `RG16F` resources, GL 3.3 fragment generation and explicit lookup validated; runtime remains the short march pending CQ3.2 compute parity and CQ3.3 consumption |
 | CQ4 | Desktop sparse brick/SDF density backend and deterministic cloud envelope library | CQ3 | CQ3 shell renderer | Proposed | Stable fly-through density with bounded residency, memory, and traversal cost |
 
 ## Roadmap milestones
@@ -71,17 +71,17 @@ Increasing the existing fog-froxel resolution is therefore not a substitute for 
 
 ### CQ2 — Density textures and weather data
 
-- [ ] CQ2.0: Freeze and document the v2 asset channel ABI.
-- [ ] CQ2.1: Generate deterministic shape-128, detail-64, and weather-1024 assets.
-- [ ] CQ2.2: Add strict versioned loading with v1 fallback and diagnostics.
-- [ ] CQ2.3: Add explicit shape/detail mip selection from ray footprint.
-- [ ] CQ2.4: Add High/Cinematic rotated boundary detail and weather-channel shaping.
-- [ ] CQ2.5: Complete seam, hash, distribution, upload, visual, and performance coverage.
+- [x] CQ2.0: Freeze and document the v2 asset channel ABI. Completed 2026-07-28 in shared generator/runtime code with fixed filenames, dimensions, four-channel meanings, per-channel seeds, strict byte validation, exact base/mip memory totals, coherent v1 selection, and profile diagnostics. Its initial rollout gate was opened for desktop by detailed CQ2.5 after generation and shader consumption were ready together.
+- [x] CQ2.1: Generate deterministic shape-128, detail-64, and weather-1024 assets. Completed 2026-07-28 with fixed-point toroidal value/cellular generation, exact periodic edges, anisotropic curl-warped wispy detail, four independent weather fields, pinned SHA-256 values, repeat-run equality, channel distribution/correlation coverage, atomic validated tool output, complete-set MSBuild outputs, and bundled payload verification. The detailed specification's CQ2.2 build-output milestone is complete; runtime v2 selection remains disabled pending the roadmap's CQ2.2–CQ2.4 integration work.
+- [x] CQ2.2: Add strict versioned loading with v1 fallback and diagnostics. Completed 2026-07-28 with exact-length and pinned-SHA validation, all-or-nothing v2/v1 selection, transactional three-texture upload and cleanup, bundled/generated/procedural fallback stages, profile/dimension/byte diagnostics, and asset-version temporal-history invalidation. Detailed CQ2.4 and CQ2.5 subsequently completed its shader LOD/channel prerequisites and opened desktop v2 selection.
+- [x] CQ2.3: Add explicit shape/detail mip selection from ray footprint. Completed 2026-07-28 with an active-FOV/trace-height CPU contract; separate trace and full-resolution repair pixel angles; step/distance-derived view footprints; interval-aware light footprints; explicit shape, detail, and loop-time weather `textureLod`; conservative occupancy bias; Cinematic `-0.35` detail bias; LOD-zero debug inspection; and FOV history invalidation.
+- [x] CQ2.4: Add High/Cinematic rotated boundary detail and weather-channel shaping. Completed 2026-07-28 across detailed CQ2.5–CQ2.6: desktop v2 independently consumes all weather/material channels, uses a four-times-longer primary weather period with a bounded rotated secondary address, and evaluates the second detail lookup only on High/Cinematic boundaries. V1/GLES remains single-address/single-detail. Full-resolution post-temporal direct-disc extinction also allows dense reconstructed cloud to fully occlude the Sun without altering off-disc cloud opacity.
+- [x] CQ2.5: Complete seam, hash, distribution, upload, visual, and performance coverage. Detailed CQ2.7 completed deterministic seam/hash/distribution, atomic failure, transactional cleanup, explicit-LOD, GLES, live mip/upload, shader and debug-view automation. Detailed CQ2.8 then captured thirteen 1080p debug-off cases with 3,120 retained GPU samples on 2026-07-28. The asynchronous CQ1-comparable High dense-overcast trace measured `0.552/0.565 ms` p50/p95, or `0.729×` the accepted CQ1 High median and below the `1.20×` gate. The matrix covers height transitions, material structure, long-horizon tiling, camera translation, cirrus and four weather classes; Cinematic v2 also gains a bounded explicit-LOD cirrus B/A feathering warp without changing High or compatibility paths.
 
 ### CQ3 — Cloud-light froxel cache
 
-- [ ] CQ3.0: Add cloud-light cache profiles, coordinates, and stable snapped origins.
-- [ ] CQ3.1: Add fragment-slice generation and lookup on desktop GL 3.3.
+- [x] CQ3.0: Add cloud-light cache profiles, coordinates, and stable snapped origins. Completed 2026-07-29 with the accepted High/Cinematic `RG16F` dimensions, update cadences, local-tap policy, hysteretic sun-to-world basis, texel/slice-snapped transforms, desktop compute/fragment capability preference, explicit GLES short-march fallback, and diagnostics that keep the unallocated CQ3.0 runtime on the existing short march.
+- [x] CQ3.1: Add fragment-slice generation and lookup on desktop GL 3.3. Completed 2026-07-29 with transactional High/Cinematic arrays, ping-pong prefix accumulation, conservative curved-shell/detail-padded bounds, shared overlap/lookup math, fixed-density half-float readback, and a production-backend reference generation that does not yet change cloud pixels.
 - [ ] CQ3.2: Add compute/image-store generation on capable desktop GL.
 - [ ] CQ3.3: Replace long cloud light marches with cache sampling and local Cinematic cone taps.
 - [ ] CQ3.4: Feed cloud ground transmittance to terrain, fog, and god-ray consumers.

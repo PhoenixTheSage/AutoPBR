@@ -331,6 +331,25 @@ public sealed class PreviewPixelRenderingHarnessTests
         Assert.Contains(
             diagnostics,
             line => line.Contains("post-residency camera recenter", StringComparison.Ordinal));
+        Assert.Contains(
+            diagnostics,
+            line => line.Contains(
+                "P5.4 voxel DDA occlusion enabled",
+                StringComparison.Ordinal));
+        Assert.Contains(
+            diagnostics,
+            line => line.Contains(
+                        "CQ3.1 cloud-light froxel cache contract",
+                        StringComparison.Ordinal) &&
+                    line.Contains("activeRuntime=short-march", StringComparison.Ordinal) &&
+                    line.Contains("cameraFogFroxels=separate", StringComparison.Ordinal));
+        Assert.Contains(
+            diagnostics,
+            line => line.Contains(
+                        "CQ3.1 cloud-light fragment reference ready",
+                        StringComparison.Ordinal) &&
+                    line.Contains("fragmentReference=ready", StringComparison.Ordinal) &&
+                    line.Contains("activeRuntime=short-march", StringComparison.Ordinal));
         Assert.DoesNotContain(
             diagnostics,
             line => line.Contains("bounded pool rejected growth", StringComparison.Ordinal) ||

@@ -91,6 +91,12 @@ internal sealed record PreviewGlCapabilities(
         MaxColorAttachments >= 3 &&
         MaxDrawBuffers >= 3;
 
+    public bool CanUseFragmentCloudLightingCache =>
+        !IsOpenGlEs && Major >= 3 && TextureArrays;
+
+    public bool CanUseComputeCloudLightingCache =>
+        CanUseFragmentCloudLightingCache && ComputeShaders && ImageLoadStore;
+
     public string UploadTransportLabel => CanUsePersistentUploadRing ? "persistent-mapped UBO uploads" : "BufferSubData uploads";
 
     public string FormatDiagnostic()
@@ -116,6 +122,8 @@ internal sealed record PreviewGlCapabilities(
                $"materialTextureArrays={(CanUseMaterialTextureArrays ? "on" : "off")}, " +
                $"cloudFpTargets={(CanUseFloatingPointCloudTargets ? "on" : "off")}, " +
                $"cloudMoments={(CanUseCloudTemporalMoments ? "on" : "off")}({MaxColorAttachments}/{MaxDrawBuffers}), " +
+               $"cloudLightCacheFragment={(CanUseFragmentCloudLightingCache ? "on" : "off")}, " +
+               $"cloudLightCacheCompute={(CanUseComputeCloudLightingCache ? "on" : "off")}, " +
                $"gpuTimers={(CanUseGpuTimerQueries ? "on" : "off")}, " +
                $"compute={(ComputeShaders ? "yes" : "no")}, " +
                $"imageStore={(ImageLoadStore ? "yes" : "no")}, " +

@@ -147,6 +147,8 @@ public sealed partial class OpenGlPreviewBackend
         // Atlas may survive reload; re-emit the enable diagnostic when DDA comes back.
         _loggedVoxelDdaOcclusionEnabled = false;
         _loggedVoxelDdaOcclusionPending = false;
+        _loggedVoxelDdaSlowBake = false;
+        _loggedVoxelDdaFailure = "none";
         _loggedHiZOcclusionEnabled = false;
         _voxelDdaReadyThisFrame = false;
         _hiZReadyThisFrame = false;

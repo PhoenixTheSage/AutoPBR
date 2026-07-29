@@ -255,21 +255,31 @@ public sealed class PreviewLiveGlSmokeTests
         }
 
         using var profiler = new GlGpuTimerProfiler(gl);
-        Assert.True(profiler.BeginFrame());
-        Assert.True(profiler.TryBeginScope(GlGpuTimerScope.Setup));
-        gl.ClearColor(0.02f, 0.03f, 0.04f, 1f);
-        gl.Clear(ClearBufferMask.ColorBufferBit);
-        profiler.EndScope(GlGpuTimerScope.Setup);
-        profiler.EndFrame();
+        const int submittedFrames = 3;
+        for (var frame = 0; frame < submittedFrames; frame++)
+        {
+            Assert.True(profiler.BeginFrame());
+            Assert.True(profiler.TryBeginScope(GlGpuTimerScope.Setup));
+            gl.ClearColor(0.02f, 0.03f, 0.04f, 1f);
+            gl.Clear(ClearBufferMask.ColorBufferBit);
+            profiler.EndScope(GlGpuTimerScope.Setup);
+            profiler.EndFrame();
+        }
 
         gl.Finish();
         Assert.True(profiler.BeginFrame());
         profiler.EndFrame();
-        Assert.True(profiler.TryTakeLatestSnapshot(out var snapshot));
-        Assert.True(snapshot.SetupMs >= 0.0);
-        Assert.Contains("GPU ", snapshot.FormatHudLine(), StringComparison.Ordinal);
+        var snapshots = new List<GlGpuTimingSnapshot>();
+        while (profiler.TryTakeLatestSnapshot(out var snapshot))
+        {
+            snapshots.Add(snapshot);
+        }
+
+        Assert.Equal(submittedFrames, snapshots.Count);
+        Assert.All(snapshots, snapshot => Assert.True(snapshot.SetupMs >= 0.0));
+        Assert.Contains("GPU ", snapshots[0].FormatHudLine(), StringComparison.Ordinal);
         diagnostics.Add("[3D preview] P8 GPU timer query returned a non-blocking pass snapshot: " +
-                        snapshot.FormatDiagnostic() + ".");
+                        snapshots[0].FormatDiagnostic() + ".");
     }
 
     private static void EvaluateShaderToolchainPlan(
@@ -744,7 +754,11 @@ public sealed class PreviewLiveGlSmokeTests
                 worldGenRevision: 1);
         }
 
-        Assert.True(atlas.IsValid, "Timed out waiting for async voxel occluder atlas bake.");
+        Assert.True(
+            atlas.IsValid,
+            "Timed out waiting for async voxel occluder atlas bake; " +
+            $"inFlight={atlas.IsBakeInFlight}, elapsedMs={atlas.BakeElapsedMilliseconds}, " +
+            $"lastFailure={atlas.LastFailureDiagnostic}.");
 
         PreviewDrawBatch[] batches =
         [

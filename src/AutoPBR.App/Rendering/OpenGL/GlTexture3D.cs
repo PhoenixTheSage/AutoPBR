@@ -30,6 +30,21 @@ internal sealed class GlTexture3D : IDisposable
 
     public void UploadRgba(int size, ReadOnlySpan<byte> rgba)
     {
+        if (size <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(size),
+                "RGBA8 volume size must be positive.");
+        }
+
+        var expectedLength = checked(size * size * size * 4);
+        if (rgba.Length != expectedLength)
+        {
+            throw new ArgumentException(
+                $"RGBA8 volume payload is {rgba.Length} bytes; expected {expectedLength}.",
+                nameof(rgba));
+        }
+
         Bind(0);
         _gl.TexImage3D(TextureTarget.Texture3D, 0, InternalFormat.Rgba8, (uint)size, (uint)size, (uint)size, 0,
             PixelFormat.Rgba, PixelType.UnsignedByte, rgba);
@@ -83,6 +98,14 @@ internal sealed class GlTexture3D : IDisposable
         }
 
         _disposed = true;
-        _gl.DeleteTexture(_id);
+        try
+        {
+            _gl.DeleteTexture(_id);
+        }
+        catch
+        {
+            // Context teardown and failed transactional uploads can make deletion
+            // unavailable. The native context owns the remaining object lifetime.
+        }
     }
 }

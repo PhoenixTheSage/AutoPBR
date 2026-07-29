@@ -20,33 +20,52 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
     private int _originZ;
     private int _settingsVersion = -1;
     private int _filledVersion = -1;
+    private bool _hasResidentData;
     private float[] _cpuScratch = [];
     private bool _disposed;
 
     private int _bakeInFlight;
+    private int _bakeGeneration;
     private BakePayload? _readyPayload;
     private readonly object _payloadGate = new();
     private long _lastRebuildRequestUnixMs;
+    private long _bakeStartedUnixMs;
+    private string _lastFailureDiagnostic = "none";
 
     public uint TextureHandle => _texture;
     public int Width => _width;
     public int Height => _height;
     public int OriginX => _originX;
     public int OriginZ => _originZ;
-    public bool IsValid => _texture != 0 && _width > 0 && _height > 0 && _filledVersion >= 0;
+    public bool IsValid => EvaluateValidity(_texture, _width, _height, _hasResidentData);
     public float GroundPlaneWorldY => PreviewStageConstants.GroundPlaneWorldY;
+    public string LastFailureDiagnostic => Volatile.Read(ref _lastFailureDiagnostic);
 
     /// <summary>Minimum time between starting atlas rebuilds while flying.</summary>
     public const int RebuildDebounceMs = 400;
 
     /// <summary>
-    /// If a bake latch stays set without producing a payload (thread-pool delay / abandoned worker),
-    /// allow a retry so DDA is not stuck off after startup.
+    /// A bake beyond this threshold is slow, not abandoned. The single-flight worker owns its
+    /// latch until it publishes or reports a failure; launching duplicate full-atlas bakes under
+    /// startup CPU pressure prevents any generation from reaching upload.
     /// </summary>
-    public const int BakeStuckTimeoutMs = 3000;
+    public const int BakeSlowDiagnosticMs = 3000;
 
     /// <summary>True while a CPU bake worker holds the single-flight latch.</summary>
     public bool IsBakeInFlight => Volatile.Read(ref _bakeInFlight) != 0;
+    public long BakeElapsedMilliseconds =>
+        IsBakeInFlight
+            ? Math.Max(0, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() -
+                          Volatile.Read(ref _bakeStartedUnixMs))
+            : 0;
+    public bool IsBakeSlow => BakeElapsedMilliseconds >= BakeSlowDiagnosticMs;
+
+    internal static bool EvaluateValidity(
+        uint texture,
+        int width,
+        int height,
+        bool hasResidentData) =>
+        texture != 0 && width > 0 && height > 0 && hasResidentData;
 
     /// <summary>
     /// Request a rebuild when the camera nears the atlas edge, or view distance / world-gen changes.
@@ -134,8 +153,13 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
             return;
         }
 
+        while (gl.GetError() != GLEnum.NoError)
+        {
+        }
+
         if (!EnsureTexture(payload.SizeColumns, payload.SizeColumns))
         {
+            RecordFailure("atlas texture allocation failed");
             Interlocked.Exchange(ref _bakeInFlight, 0);
             return;
         }
@@ -165,10 +189,22 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
         }
 
         gl.BindTexture(TextureTarget.Texture2D, 0);
+        var uploadError = gl.GetError();
+        if (uploadError != GLEnum.NoError)
+        {
+            RecordFailure($"atlas RG32F upload produced {uploadError}");
+            _hasResidentData = false;
+            _filledVersion = -1;
+            Interlocked.Exchange(ref _bakeInFlight, 0);
+            return;
+        }
+
         _originX = payload.OriginX;
         _originZ = payload.OriginZ;
         _settingsVersion = payload.SettingsVersion;
         _filledVersion = payload.Version;
+        _hasResidentData = true;
+        Volatile.Write(ref _lastFailureDiagnostic, "none");
         Interlocked.Exchange(ref _bakeInFlight, 0);
     }
 
@@ -240,23 +276,14 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
 
         if (Interlocked.CompareExchange(ref _bakeInFlight, 1, 0) != 0)
         {
-            // Worker published a payload but PumpUpload has not run yet, or a prior bake stalled.
-            // Unstick after timeout so startup/reload cannot leave DDA permanently unavailable.
-            if (now - _lastRebuildRequestUnixMs >= BakeStuckTimeoutMs)
-            {
-                Interlocked.Exchange(ref _bakeInFlight, 0);
-                if (Interlocked.CompareExchange(ref _bakeInFlight, 1, 0) != 0)
-                {
-                    return;
-                }
-            }
-            else
-            {
-                return;
-            }
+            // The worker reports exceptions and clears its own latch. Retrying solely because a
+            // valid large bake is slow creates a generation storm where every result is stale.
+            return;
         }
 
         _lastRebuildRequestUnixMs = now;
+        Volatile.Write(ref _bakeStartedUnixMs, now);
+        var generation = Interlocked.Increment(ref _bakeGeneration);
         var genCopy = worldGen;
         var ox = originX;
         var oz = originZ;
@@ -264,13 +291,14 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
         var ver = version;
         var settingsVer = settingsVersion;
 
-        _ = Task.Run(() =>
+        _ = Task.Factory.StartNew(() =>
         {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 if (_disposed)
                 {
-                    Interlocked.Exchange(ref _bakeInFlight, 0);
+                    ClearBakeLatchIfCurrent(generation);
                     return;
                 }
 
@@ -293,22 +321,41 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
 
                 if (_disposed)
                 {
-                    Interlocked.Exchange(ref _bakeInFlight, 0);
+                    ClearBakeLatchIfCurrent(generation);
                     return;
                 }
 
                 lock (_payloadGate)
                 {
-                    _readyPayload = new BakePayload(ox, oz, size, ver, settingsVer, data);
+                    if (generation == Volatile.Read(ref _bakeGeneration))
+                    {
+                        _readyPayload = new BakePayload(ox, oz, size, ver, settingsVer, data);
+                    }
                 }
 
                 // Latch stays set until PumpUpload (or Dispose) so a second bake cannot race the payload.
             }
-            catch
+            catch (Exception exception)
             {
-                Interlocked.Exchange(ref _bakeInFlight, 0);
+                RecordFailure(
+                    $"heightfield bake failed after {stopwatch.Elapsed.TotalMilliseconds:F0} ms: " +
+                    $"{exception.GetType().Name}: {exception.Message}");
+                ClearBakeLatchIfCurrent(generation);
             }
-        });
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+    }
+
+    private void ClearBakeLatchIfCurrent(int generation)
+    {
+        if (generation == Volatile.Read(ref _bakeGeneration))
+        {
+            Interlocked.Exchange(ref _bakeInFlight, 0);
+        }
+    }
+
+    private void RecordFailure(string diagnostic)
+    {
+        Volatile.Write(ref _lastFailureDiagnostic, diagnostic);
     }
 
     private bool EnsureTexture(int width, int height)
@@ -346,6 +393,7 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
         _height = height;
         _filledVersion = -1;
         _settingsVersion = -1;
+        _hasResidentData = false;
         return _texture != 0;
     }
 
@@ -361,6 +409,7 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
         _height = 0;
         _filledVersion = -1;
         _settingsVersion = -1;
+        _hasResidentData = false;
     }
 
     private sealed record BakePayload(

@@ -33,6 +33,7 @@ uniform float uVolumeHeight;
 uniform float uDensity;
 uniform float uCoverageScale;
 uniform float uVolumeSize;
+uniform float uPixelAngularSize;
 uniform vec3 uWindOffset;
 uniform float uCirrusStrength;
 uniform vec2 uCirrusWindOffset;
@@ -45,6 +46,7 @@ uniform int uHasCloudStbn;
 uniform int uHasCoverageMap;
 uniform int uHasSkyLut;
 uniform int uSourceCloudDataDirect;
+uniform int uDensityAssetVersion;
 uniform int uCloudFrameIndex;
 
 layout(location = 0) out vec4 FragColor;
@@ -373,16 +375,25 @@ void main()
             float(CLOUD_REPAIR_STEPS);
         float sampleDistance = mix(repairStart, repairEnd, sampleFraction);
         vec3 worldPos = uCameraPos + rayDir * sampleDistance;
+        float sampleFootprint = max(
+            segmentLength,
+            sampleDistance * uPixelAngularSize);
         float density = 0.0;
         vec3 radiance = vec3(0.0);
 
         if (repairCirrus)
         {
-            float cirrusDensity = vcCirrusDensity(
+            float cirrusDensity = vcCirrusDensityWithDetail(
                 worldPos.xz,
                 uCirrusWindOffset,
                 uCirrusWindDir,
-                uVolumeSize);
+                uVolumeSize,
+                uDetailNoise,
+                uHasDetailNoise,
+                sampleFootprint,
+                -0.35,
+                3,
+                uDensityAssetVersion);
             density = cirrusDensity * uCirrusStrength * 0.27 /
                 max(cirrusThickness, 0.01);
             radiance = vcSunScatter(
@@ -392,7 +403,15 @@ void main()
         }
         else
         {
-            float baseShape = vcCloudBaseDensity(
+            vec4 weather = vcSampleWeather(
+                uCoverageMap,
+                uHasCoverageMap,
+                worldPos,
+                uVolumeSize,
+                uWindOffset.xz,
+                sampleFootprint,
+                uDensityAssetVersion);
+            float baseShape = vcCloudBaseDensityFromWeather(
                 worldPos,
                 planetCenter,
                 planetRadius,
@@ -402,10 +421,10 @@ void main()
                 uVolumeSize,
                 uCloudNoise,
                 uHasCloudNoise,
-                uCoverageMap,
-                uHasCoverageMap,
                 uWindOffset,
-                0.0);
+                sampleFootprint,
+                weather,
+                uDensityAssetVersion);
             density = vcCloudDensityFromBase(
                 baseShape,
                 worldPos,
@@ -417,7 +436,13 @@ void main()
                 uVolumeSize,
                 uDetailNoise,
                 uHasDetailNoise,
-                uWindOffset);
+                uWindOffset,
+                sampleFootprint,
+                -0.35,
+                3,
+                weather.z,
+                weather.w,
+                uDensityAssetVersion);
             float lightOd = vcLightOpticalDepthFromBase(
                 baseShape,
                 worldPos,
@@ -434,7 +459,9 @@ void main()
                 uHasCloudNoise,
                 uCoverageMap,
                 uHasCoverageMap,
-                uWindOffset);
+                uWindOffset,
+                sampleFootprint,
+                uDensityAssetVersion);
             float altitude = vcsAltitude(worldPos, planetCenter, planetRadius);
             float heightSample = saturate1(
                 (altitude - layerBaseAltitude) / max(uVolumeHeight, 0.001));

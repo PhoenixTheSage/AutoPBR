@@ -847,8 +847,10 @@ public sealed partial class OpenGlPreviewBackend
                 environmentCeilingY: envCeiling);
         }
 
+        frame.VerticalFieldOfViewRadians =
+            cam.FieldOfViewDegrees * (MathF.PI / 180f);
         frame.UnjitteredProj = PreviewGlMatrices.CreatePerspectiveFieldOfViewOpenGl(
-            cam.FieldOfViewDegrees * (MathF.PI / 180f),
+            frame.VerticalFieldOfViewRadians,
             aspect,
             nearPlane,
             farPlane);

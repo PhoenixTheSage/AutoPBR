@@ -51,6 +51,21 @@ internal sealed class GlTexture2D : IDisposable
 
     public bool UploadRgbaIfChanged(int width, int height, ReadOnlySpan<byte> rgba, bool nearestFilter = true)
     {
+        if (width <= 0 || height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(width),
+                "RGBA8 texture dimensions must be positive.");
+        }
+
+        var expectedLength = checked(width * height * 4);
+        if (rgba.Length != expectedLength)
+        {
+            throw new ArgumentException(
+                $"RGBA8 texture payload is {rgba.Length} bytes; expected {expectedLength}.",
+                nameof(rgba));
+        }
+
         var fingerprint = GlRgbaFingerprint.Compute(rgba);
         if (_hasCache &&
             _cachedWidth == width &&

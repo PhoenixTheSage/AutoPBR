@@ -1,6 +1,6 @@
 # CQ2 — Volumetric cloud density textures and weather data
 
-**Status:** Proposed  
+**Status:** Complete
 **Roadmap:** [Volumetric cloud quality roadmap](volumetric-cloud-quality-roadmap.md)  
 **Depends on:** [CQ1 precision and reconstruction](volumetric-cloud-cq1-precision-reconstruction.md)  
 **Required by:** [CQ3 lighting](volumetric-cloud-cq3-lighting-cache.md), [CQ4 sparse volume](volumetric-cloud-cq4-sparse-voxel-sdf.md)
@@ -36,6 +36,26 @@ The current bundled inputs are:
 - `cloud_coverage_256.bin`: 256² RGBA8 periodic coverage/type data.
 
 The base shape uses explicit LOD for some queries, but detail erosion relies on implicit texture derivatives inside a dynamic ray-march branch. The detail volume is small enough that its repeating cells and interpolation are visible near the camera. The weather field repeats too frequently relative to the new 72,000-unit shell radius and approximately 1,610-unit default cloud horizon.
+
+## Implementation checkpoint
+
+CQ2.0 completed on 2026-07-28. `PreviewCloudDensityAssetContract` is the source of truth for the v2 filenames, dimensions, RGBA channel semantics, deterministic per-channel seeds, byte counts, and mip-chain memory. The runtime now selects the three legacy blobs as one coherent profile and reports that profile in cloud diagnostics.
+
+CQ2.1 completed on 2026-07-28. `PreviewCloudDensityAssetGenerator` now produces all three v2 payloads with fixed-point toroidal value/cellular fields. Generation writes independent texels in parallel without floating-point operations or order-dependent reductions. Shape R remains a coherent field while G/B/A add progressively finer cellular structure; detail B uses integer-transformed, curl-warped anisotropic coordinates; weather produces distinct coverage, type, density-potential, and convection fields. Tests pin every SHA-256, compare repeated parallel runs byte-for-byte, require identical texels at every opposing edge, and reject constant, narrow, duplicate, or highly correlated channels. The v2 profile remains deliberately disabled at runtime until the generated assets, shader semantics, and upload path land together; this preserves the accepted CQ1.9 image during the asset rollout.
+
+CQ2.2 completed on 2026-07-28. The three pinned v2 blobs are bundled under `Assets/Preview` and included by the existing recursive Avalonia resource declaration. `GeneratePreviewCloudAssets` now declares the generator/tool sources as inputs and all seven legacy, STBN, and v2 blobs as one output set. A missing or stale member therefore regenerates the complete set rather than leaving mixed channel versions. Repository tests compare every bundled v2 byte against a fresh deterministic generation, verify pinned hashes and dimensions, assert the complete MSBuild output list, and confirm that the bundled loader can resolve one complete v2 profile when explicitly allowed. Production continued to pass `allowV2: false` at this checkpoint; CQ2.3–CQ2.5 subsequently landed the strict runtime selection and shader semantics required to open the desktop profile.
+
+CQ2.3 completed on 2026-07-28. V2 selection now requires the exact descriptor byte count and pinned SHA-256 for every member before it can return one coherent profile. A missing, short, or corrupt v2 member rejects the entire set and records the per-asset reason before selecting one complete bundled v1 set. GPU replacement is transactional across shape, detail, and weather: candidate textures are allocated, uploaded, mipmapped, and GL-error checked before the prior set is released. A v2 upload failure retries bundled v1; bundled load/upload failure retries a complete generated v1 set; total texture failure leaves the shader procedural fallback available. Profile diagnostics include selection/fallback reason, dimensions, and base-level bytes. Asset-version changes participate in the CQ1 history settings key and explicitly invalidate temporal history. The production gate remained on v1 at this checkpoint and was opened on desktop by CQ2.5 after its matching channel semantics landed.
+
+CQ2.4 completed on 2026-07-28. `PreviewCloudRayFootprint` computes vertical pixel angular size from the active camera FOV and actual trace-target height. The half/two-thirds cloud trace receives its own value, while full-resolution Cinematic edge repair receives the display-height value. View samples derive `sampleFootprint = max(marchStepLength, rayDistance × pixelAngularSize)`; light samples conservatively combine that view footprint with each sun-march interval. Shape, detail, and loop-time weather reads now use explicit `textureLod` based on their world repeat size and runtime texture dimensions. Conservative weather occupancy may read one mip coarser, Cinematic detail applies the bounded `-0.35` bias, and debug density inspection passes a zero footprint to force LOD zero. Camera-FOV changes participate in temporal-history invalidation. Source, CPU-policy, GLES-adaptation, and live desktop shader compilation tests are green. CQ2.5 subsequently mapped the independent weather/detail channels and opened desktop v2 selection.
+
+CQ2.5 completed on 2026-07-28. The shader ABI now receives the selected density-asset version in both the primary trace and full-resolution repair passes. V1 retains its accepted density equations and explicitly neutralizes the legacy weather map's placeholder B/A bytes; GLES/ANGLE continues to select this coherent v1 profile. Validated desktop v2 profiles independently use weather R for placement/coverage, G for vertical type, B for lower-body density/extinction potential, and A for convective vertical development. V2 detail R/G form boundary billows while B supplies lower/evaporating wisps; channel weights remain bounded so detail erosion cannot hollow the body. The short sun march reuses each filtered weather sample and applies the same B-channel extinction scale, allowing denser systems to develop darker bases without changing their coverage footprint. The desktop rollout gate is now open after strict asset validation and transactional upload; any v2 load/upload failure still selects one complete v1 set and invalidates temporal history. Source-policy, GLES-adaptation, and native WGL compile/draw tests cover the version branch and both trace/repair uniform paths.
+
+CQ2.6 completed on 2026-07-28. V2 weather now uses a world-anchored primary period four times the legacy v1 period plus a fixed toroidal `26.6°` scaled-rotation secondary address at `1/√5` effective period. Its integer matrix preserves exact wrapping while changing frequency and direction. Primary convection selects a bounded secondary blend from `0.08` to `0.22`; both fields derive from the same advected primary coordinate, so they move with one wind velocity rather than sliding. CPU wind wrapping and temporal wind-delta unwrapping now use the `16×` v2 primary period, which remains an integer multiple of v1 weather/detail periods. V1 returns before secondary addressing and retains its prior sampling semantics. V2 detail keeps one lookup on Low/Medium. High/Cinematic perform a second explicitly filtered lookup only when the base-density edge weight is nonzero, rotating advected XZ, adding a fixed offset and a bounded A-channel curl distortion, then blending at `0.35/0.50`. Dense interiors and coherent v1 never execute it. The same quality argument is used by primary tracing, density debug inspection, and Cinematic repair. As an adjacent visual correction, the full-resolution post-temporal upsample now converts reconstructed opacity into stronger direct-beam extinction only inside the projected visible Sun disc: thin cloud softens the core, opacity `>= 0.60` seals it, off-disc opacity and cloud radiance remain unchanged, and debug/disabled/nighttime Sun states bypass the adjustment. A live floating-point GPU readback verifies `0.60 → >=0.995` alpha on-disc and unchanged `0.60` alpha off-disc.
+
+CQ2.7 completed on 2026-07-28. The persisted debug ABI retains Off/Weather Coverage/Final Density at values `0/1/2` and appends individual Weather G/B/A, Shape RGBA, Detail RGBA, selected shape/detail LOD, base density, and asset-profile views through value `16`. Raw channel slices force LOD zero; the LOD inspector uses the production trace-step, pixel-angular-size and Cinematic detail-bias policy and encodes normalized shape LOD in red and detail LOD in green. The asset-profile view distinguishes v2 bundled, intentional v1 compatibility, v1 fallback, runtime-generated v1 and procedural shader fallback; selecting it also logs the exact loader/upload reason. Every debug view disables temporal reconstruction, Cinematic edge repair, final cloud presentation encoding and direct-disc adjustment while preserving scene-depth, planet and horizon clipping. The deterministic tool now shares a tested atomic writer whose failed commit leaves the prior valid asset untouched. Automated coverage includes enum/settings compatibility, all shader inspectors, fallback diagnostics, partial-upload cleanup, explicit-LOD contracts, GLES source adaptation, complete repeat-filtered 3D/2D mip-chain state, native desktop shader compilation, and the existing CQ1 depth/HDR/disc readbacks.
+
+CQ2.8 completed on 2026-07-28. The opt-in `PreviewCloudCq2AcceptanceTests` harness captures thirteen debug-off `1920×1080` fixtures after 32 discarded warm-up frames and retains 240 pass-scoped GPU-query samples per fixture. The matrix covers below/inside/above cumulus, upper billows and lower wisps, long-horizon tiling, a three-pose camera translation, High/Cinematic cirrus, and fair, broken, congested and overcast weather. Each PNG is paired with camera/material metadata, SHA-256, luminance range, timing mode and adjacent-translation deltas in JSON/CSV artifacts. The final evidence used desktop GL `4.6.0 NVIDIA 610.74` on an RTX 2080 Ti and confirmed the validated `cq2-v2/v2-bundled/cq2-density-v2` profile with debug inspection disabled. The gated High dense-overcast window preserves asynchronous CQ1-comparable query scheduling and measured `0.552/0.565 ms` trace p50/p95: `0.729×` the accepted CQ1 High trace median and below the `0.908 ms` (`1.20×`) gate. Its cloud-total p50/p95 was `1.583/6.630 ms`. Non-gated visual fixtures serialize query retirement so terrain-heavy poses cannot starve the five-slot profiler; their timings are labeled and reported, but are not compared to CQ1. A final visual-gap correction adds one explicitly filtered, Cinematic-v2-only cirrus B/A lookup that subtly warps and feathers the procedural field; High and all v1/GLES paths return before that lookup.
 
 ## Formats and dimensions: versioned v2 asset ABI
 
@@ -101,13 +121,21 @@ Generation requirements:
 - the build target declares all v2 assets as outputs instead of checking only the legacy shape file;
 - missing outputs regenerate the complete matching v2 set so channel generations cannot become mixed.
 
+Pinned CQ2.1 generation hashes:
+
+| Asset | SHA-256 |
+|-------|---------|
+| Shape | `13966e74ccf9b03bcac896ab0f1869eb0cca3c01813ecfd83566e0571531f906` |
+| Detail | `71782f1b10c30b38c1fa7c80da18c01fc73ba12153b1063a494dd9304c786083` |
+| Weather | `c58a1549ed26a8da72c519e430b20cc5166b9d0680642cc62ea112ad4583556c` |
+
 The asset tool writes to a temporary sibling file and atomically replaces the destination after validating byte count. It must not leave a partially written asset that passes only an existence check.
 
 ## Texture upload and memory
 
 Upload v2 assets as RGBA8 with full mip chains and repeat wrapping. Use trilinear minification and linear magnification. The first CQ2 implementation keeps portable uncompressed GL formats; BC4/BC5 is a later desktop optimization and is not an acceptance dependency.
 
-V2 base-level storage is approximately 13 MiB; mip chains raise this to roughly 17.3 MiB. Initialization diagnostics report actual dimensions and estimated allocated bytes.
+V2 base-level storage is exactly `13,631,488` bytes (13 MiB). Complete uncompressed mip chains total `16,377,756` bytes (approximately 15.62 MiB): `9,586,980` shape, `1,198,372` detail, and `5,592,404` weather bytes. Initialization diagnostics report actual dimensions and estimated allocated bytes.
 
 ## Capability fallback
 
@@ -211,6 +239,17 @@ Extend cloud debug views to identify:
 
 Debug views bypass temporal history and edge repair. They preserve scene/planet clipping so inspection cannot reintroduce the old foreground-cloud artifact.
 
+The selected-LOD view uses `R = normalized shape LOD`, `G = normalized detail LOD`, and `B = max(R,G)`. The asset-profile legend is:
+
+- green: validated v2 bundled profile;
+- blue: intentional v1 compatibility policy, including GLES/ANGLE;
+- orange: v1 selected after a v2 load or upload failure;
+- purple: runtime-generated v1;
+- red: procedural shader fallback;
+- gray: not initialized.
+
+The log remains authoritative for the exact filename, validation, upload or capability reason behind the profile color.
+
 ## Failure handling
 
 - Invalid asset byte count rejects the entire asset; never upload truncated data.
@@ -222,15 +261,15 @@ Debug views bypass temporal history and edge repair. They preserve scene/planet 
 
 ## Implementation milestones
 
-- [ ] CQ2.0: Freeze v2 filenames, dimensions, channel ABI, seeds, and expected memory.
-- [ ] CQ2.1: Implement deterministic shape, detail, and weather generation.
-- [ ] CQ2.2: Update the asset-generation build target and commit generated v2 assets.
-- [ ] CQ2.3: Add strict v2 loading, coherent v1 fallback, profile diagnostics, and cleanup.
-- [ ] CQ2.4: Add pixel-angular-size uniform and explicit shape/detail ray-footprint LOD.
-- [ ] CQ2.5: Consume type, precipitation, and convection independently in density shaping.
-- [ ] CQ2.6: Add edge-only rotated detail and expanded weather addressing.
-- [ ] CQ2.7: Add debug views and automated asset/shader tests.
-- [ ] CQ2.8: Complete fixed-scene visual and GPU performance acceptance.
+- [x] CQ2.0: Freeze v2 filenames, dimensions, channel ABI, seeds, and expected memory.
+- [x] CQ2.1: Implement deterministic shape, detail, and weather generation.
+- [x] CQ2.2: Update the asset-generation build target and commit generated v2 assets.
+- [x] CQ2.3: Add strict v2 loading, coherent v1 fallback, profile diagnostics, and cleanup.
+- [x] CQ2.4: Add pixel-angular-size uniform and explicit shape/detail ray-footprint LOD.
+- [x] CQ2.5: Consume type, precipitation, and convection independently in density shaping.
+- [x] CQ2.6: Add edge-only rotated detail and expanded weather addressing.
+- [x] CQ2.7: Add debug views and automated asset/shader tests.
+- [x] CQ2.8: Complete fixed-scene visual and GPU performance acceptance.
 
 ## Test matrix
 
@@ -279,6 +318,19 @@ Debug views bypass temporal history and edge repair. They preserve scene/planet 
 
 - High density-evaluation GPU time is no more than `1.20×` the accepted CQ1 High density-stage median.
 - Cinematic cost is reported independently and must not change Low/Medium/High profile settings to compensate.
+
+### CQ2.8 acceptance evidence
+
+The acceptance run used the CQ1.9 viewport, warm-up and sample-count protocol on the same RTX 2080 Ti: desktop GL `4.6.0 NVIDIA 610.74`, fixed `6.64 h` sun pose, frozen wind, `1920×1080`, 32 discarded frames and 240 retained samples per case. `Cloud Trace` is the conservative density-stage proxy because density evaluation occurs inside that pass and has no independent GPU scope. The gated High case stays asynchronous and CQ1-comparable. Other visual cases use a GPU completion point per measured frame after the profiler's multi-retirement queue fix; this prevents terrain-heavy frames from filling all five non-blocking slots, and the artifact records `serialized-visual-fixture` so those values cannot be mistaken for the gate.
+
+| Fixture/preset | Trace p50/p95 | CQ1 High trace ratio | Cloud total p50/p95 | Frame total p50/p95 |
+|----------------|---------------|----------------------|---------------------|---------------------|
+| Dense overcast, High | `0.552/0.565 ms` | `0.729×` | `1.583/6.630 ms` | `6.939/10.818 ms` |
+| Dense overcast, Cinematic | `2.748/8.768 ms` | serialized/report only | `13.532/20.590 ms` | `16.280/23.476 ms` |
+| Cirrus comparison, High | `0.384/0.391 ms` | serialized/report only | `1.158/6.830 ms` | `2.625/8.762 ms` |
+| Cirrus comparison, Cinematic | `2.617/8.731 ms` | serialized/report only | `7.415/11.081 ms` | `9.157/16.163 ms` |
+
+The High gate ceiling is `0.757 × 1.20 = 0.9084 ms`; the measured `0.552 ms` median passes with approximately `39.2%` headroom. The three translation captures have distinct hashes and adjacent mean RGB deltas of `0.00158` and `0.00780`, both inside the bounded continuity check, so the acceptance test rejects a frozen output and a catastrophic mip transition. Generated PNG/JSON/CSV evidence is retained under the opt-in `.artifacts` workflow rather than committed as driver-specific goldens.
 
 ## Exit criteria
 

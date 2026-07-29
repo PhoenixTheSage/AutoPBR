@@ -1511,7 +1511,7 @@
     <value>Debug view</value>
   </data>
   <data name="Preview3DCloudDebugViewTooltip" xml:space="preserve">
-    <value>Replace lit clouds with a coverage map or mid-layer density slice overlay.</value>
+    <value>Inspect weather, shape/detail channels, selected mip levels, density stages, or the active asset profile. Debug views bypass cloud history and Cinematic edge repair.</value>
   </data>
   <data name="Preview3DCloudDebugViewOff" xml:space="preserve">
     <value>Off</value>
@@ -1520,7 +1520,49 @@
     <value>Coverage map</value>
   </data>
   <data name="Preview3DCloudDebugViewDensitySlice" xml:space="preserve">
-    <value>Density slice</value>
+    <value>Final density</value>
+  </data>
+  <data name="Preview3DCloudDebugViewWeatherType" xml:space="preserve">
+    <value>Weather G — cloud type</value>
+  </data>
+  <data name="Preview3DCloudDebugViewWeatherDensity" xml:space="preserve">
+    <value>Weather B — density</value>
+  </data>
+  <data name="Preview3DCloudDebugViewWeatherConvection" xml:space="preserve">
+    <value>Weather A — convection</value>
+  </data>
+  <data name="Preview3DCloudDebugViewShapeR" xml:space="preserve">
+    <value>Shape R — coherent body</value>
+  </data>
+  <data name="Preview3DCloudDebugViewShapeG" xml:space="preserve">
+    <value>Shape G — broad billow</value>
+  </data>
+  <data name="Preview3DCloudDebugViewShapeB" xml:space="preserve">
+    <value>Shape B — medium breakup</value>
+  </data>
+  <data name="Preview3DCloudDebugViewShapeA" xml:space="preserve">
+    <value>Shape A — fine erosion</value>
+  </data>
+  <data name="Preview3DCloudDebugViewDetailR" xml:space="preserve">
+    <value>Detail R — broad billow</value>
+  </data>
+  <data name="Preview3DCloudDebugViewDetailG" xml:space="preserve">
+    <value>Detail G — fine billow</value>
+  </data>
+  <data name="Preview3DCloudDebugViewDetailB" xml:space="preserve">
+    <value>Detail B — wispy erosion</value>
+  </data>
+  <data name="Preview3DCloudDebugViewDetailA" xml:space="preserve">
+    <value>Detail A — curl distortion</value>
+  </data>
+  <data name="Preview3DCloudDebugViewSelectedLod" xml:space="preserve">
+    <value>Selected LOD — shape/detail</value>
+  </data>
+  <data name="Preview3DCloudDebugViewBaseDensity" xml:space="preserve">
+    <value>Base density (before erosion)</value>
+  </data>
+  <data name="Preview3DCloudDebugViewAssetProfile" xml:space="preserve">
+    <value>Asset profile / fallback</value>
   </data>
   <data name="Preview3DCloudDisableTemporal" xml:space="preserve">
     <value>Disable temporal</value>

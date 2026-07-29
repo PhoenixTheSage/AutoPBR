@@ -43,6 +43,8 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.False(caps.CanUseSeparableShaderPrograms);
         Assert.False(caps.CanUseFloatingPointCloudTargets);
         Assert.False(caps.CanUseCloudTemporalMoments);
+        Assert.False(caps.CanUseFragmentCloudLightingCache);
+        Assert.False(caps.CanUseComputeCloudLightingCache);
         Assert.Contains("persistentUpload=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("entitySsbo=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("materialDrawSsbo=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
@@ -59,6 +61,8 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.Contains("imageHistogram=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("materialTextureArrays=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("cloudFpTargets=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
+        Assert.Contains("cloudLightCacheFragment=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
+        Assert.Contains("cloudLightCacheCompute=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("gpuTimers=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("separablePrograms=no", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("GLES-safe uploads", caps.FormatContextSuffix(), StringComparison.Ordinal);
@@ -86,6 +90,8 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.True(caps.CanUseGpuTimerQueries);
         Assert.True(caps.CanUseFloatingPointCloudTargets);
         Assert.True(caps.CanUseCloudTemporalMoments);
+        Assert.True(caps.CanUseFragmentCloudLightingCache);
+        Assert.False(caps.CanUseComputeCloudLightingCache);
         Assert.False(caps.CanUseSpirVShaderBinaries);
         Assert.False(caps.CanUseSeparableShaderPrograms);
         Assert.False(caps.BufferStorage);
@@ -180,6 +186,8 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.True(caps.CanUseSeparableShaderPrograms);
         Assert.True(caps.CanUseFloatingPointCloudTargets);
         Assert.True(caps.CanUseCloudTemporalMoments);
+        Assert.True(caps.CanUseFragmentCloudLightingCache);
+        Assert.True(caps.CanUseComputeCloudLightingCache);
         Assert.Contains("persistentUpload=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("entitySsbo=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("materialDrawSsbo=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
@@ -196,6 +204,8 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.Contains("imageHistogram=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("materialTextureArrays=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("cloudFpTargets=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
+        Assert.Contains("cloudLightCacheFragment=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
+        Assert.Contains("cloudLightCacheCompute=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("gpuTimers=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("separablePrograms=yes", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("persistent uploads", caps.FormatContextSuffix(), StringComparison.Ordinal);

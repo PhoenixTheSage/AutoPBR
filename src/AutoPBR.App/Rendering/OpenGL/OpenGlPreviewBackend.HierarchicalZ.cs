@@ -18,6 +18,8 @@ public sealed partial class OpenGlPreviewBackend
     private bool _loggedHiZOcclusionEnabled;
     private bool _loggedVoxelDdaOcclusionEnabled;
     private bool _loggedVoxelDdaOcclusionPending;
+    private bool _loggedVoxelDdaSlowBake;
+    private string _loggedVoxelDdaFailure = "none";
     private bool _hiZReadyThisFrame;
     private bool _voxelDdaReadyThisFrame;
     private int _terrainOccluderWorldGenRevision;
@@ -114,6 +116,8 @@ public sealed partial class OpenGlPreviewBackend
         _loggedHiZOcclusionEnabled = false;
         _loggedVoxelDdaOcclusionEnabled = false;
         _loggedVoxelDdaOcclusionPending = false;
+        _loggedVoxelDdaSlowBake = false;
+        _loggedVoxelDdaFailure = "none";
         _voxelDdaReadyThisFrame = false;
         _latestOcclusionDebugHudText = null;
     }
@@ -128,6 +132,8 @@ public sealed partial class OpenGlPreviewBackend
         _loggedHiZOcclusionEnabled = false;
         _loggedVoxelDdaOcclusionEnabled = false;
         _loggedVoxelDdaOcclusionPending = false;
+        _loggedVoxelDdaSlowBake = false;
+        _loggedVoxelDdaFailure = "none";
         _voxelDdaReadyThisFrame = false;
         _latestOcclusionDebugHudText = null;
     }
@@ -199,6 +205,7 @@ public sealed partial class OpenGlPreviewBackend
         _terrainOccluderAtlas ??= new GlTerrainOccluderAtlas(_gl);
         // Apply any completed off-thread bake, then request a rebuild if the camera ring moved.
         _terrainOccluderAtlas.PumpUpload();
+        MaybeLogTerrainOccluderFailure();
         EnsureTerrainStreamer();
         var cameraChunk = TerrainChunkKey.FromWorld(frame.Eye.X, frame.Eye.Z);
         var worldGen = _terrainStreamer!.WorldGenSettings;
@@ -277,6 +284,7 @@ public sealed partial class OpenGlPreviewBackend
             _terrainOccluderWorldGenRevision,
             lodRingChunks);
         _terrainOccluderAtlas.PumpUpload();
+        MaybeLogTerrainOccluderFailure();
     }
 
     /// <summary>
@@ -292,5 +300,33 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         _terrainOccluderAtlas.PumpUpload();
+        MaybeLogTerrainOccluderFailure();
+    }
+
+    private void MaybeLogTerrainOccluderFailure()
+    {
+        if (_terrainOccluderAtlas is null)
+        {
+            return;
+        }
+
+        if (_terrainOccluderAtlas.IsBakeSlow && !_loggedVoxelDdaSlowBake)
+        {
+            _loggedVoxelDdaSlowBake = true;
+            EmitDiagnostic(
+                "[3D preview] P5.4 voxel DDA initialization is still baking after " +
+                $"{_terrainOccluderAtlas.BakeElapsedMilliseconds} ms; retaining one " +
+                "single-flight worker and Hi-Z fallback.");
+        }
+
+        var failure = _terrainOccluderAtlas.LastFailureDiagnostic;
+        if (failure == "none" ||
+            string.Equals(failure, _loggedVoxelDdaFailure, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _loggedVoxelDdaFailure = failure;
+        EmitDiagnostic($"[3D preview] P5.4 voxel DDA initialization: {failure}.");
     }
 }

@@ -5,4 +5,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>AutoPBR.PreviewGpuAssets</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="AutoPBR.App.Tests" />
+  </ItemGroup>
 </Project>

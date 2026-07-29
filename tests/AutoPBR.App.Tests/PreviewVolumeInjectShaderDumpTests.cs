@@ -204,7 +204,8 @@ public sealed class PreviewVolumeInjectShaderEsTests
         Assert.Contains("return horizonVisibility > 1e-4 ? 1.0 : 0.0", adapted,
             StringComparison.Ordinal);
         Assert.Contains("uCloudSourceFullResolution", adapted, StringComparison.Ordinal);
-        Assert.Contains("FragColor = vec4(presentedRgb, coverage) * planetMask", adapted,
+        Assert.Contains("cdoDirectDiscOcclusionAlpha", adapted, StringComparison.Ordinal);
+        Assert.Contains("FragColor = vec4(presentedRgb, compositeCoverage) * planetMask", adapted,
             StringComparison.Ordinal);
     }
 

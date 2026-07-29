@@ -28,6 +28,7 @@ uniform float uVolumeHeight;
 uniform float uDensity;
 uniform float uCoverageScale;
 uniform float uVolumeSize;
+uniform float uPixelAngularSize;
 uniform vec3 uWindOffset;
 uniform float uCirrusStrength;
 uniform vec2 uCirrusWindOffset;
@@ -42,6 +43,8 @@ uniform int uHasCloudStbn;
 uniform int uHasCoverageMap;
 uniform int uHasSkyLut;
 uniform int uCloudDataDirect;
+uniform int uDensityAssetVersion;
+uniform int uDensityAssetProfileCode;
 uniform float uFramePhase;
 uniform int uCloudFrameIndex;
 
@@ -55,6 +58,18 @@ const float CLOUD_STBN_HEIGHT = 128.0;
 const float CLOUD_STBN_FRAMES = 64.0;
 const float SKY_VIEW_LUT_WIDTH = 192.0;
 const float SKY_VIEW_LUT_HEIGHT = 108.0;
+const int CLOUD_DEBUG_WEATHER_COVERAGE = 1;
+const int CLOUD_DEBUG_FINAL_DENSITY = 2;
+const int CLOUD_DEBUG_WEATHER_TYPE = 3;
+const int CLOUD_DEBUG_WEATHER_DENSITY = 4;
+const int CLOUD_DEBUG_WEATHER_CONVECTION = 5;
+const int CLOUD_DEBUG_SHAPE_R = 6;
+const int CLOUD_DEBUG_SHAPE_A = 9;
+const int CLOUD_DEBUG_DETAIL_R = 10;
+const int CLOUD_DEBUG_DETAIL_A = 13;
+const int CLOUD_DEBUG_SELECTED_LOD = 14;
+const int CLOUD_DEBUG_BASE_DENSITY = 15;
+const int CLOUD_DEBUG_ASSET_PROFILE = 16;
 
 float cloudDayFactor(vec3 lightPropagationDir, float sunIntensity)
 {
@@ -136,6 +151,98 @@ float cloudSceneDistance(vec3 rd)
         conservativeDepth, vUv, uInvViewProj, uCameraPos, rd, uHasSceneDepth);
 }
 
+float cloudDebugChannel(vec4 value, int channel)
+{
+    if (channel == 0)
+    {
+        return value.r;
+    }
+    if (channel == 1)
+    {
+        return value.g;
+    }
+    if (channel == 2)
+    {
+        return value.b;
+    }
+    return value.a;
+}
+
+vec4 cloudDebugShapeCoordinates(
+    vec3 worldPos,
+    vec3 planetCenter,
+    float planetRadius,
+    float layerBase,
+    float layerTop,
+    vec4 weather)
+{
+    float altitude = length(worldPos - planetCenter) - planetRadius;
+    float h = saturate1(
+        (altitude - layerBase) / max(layerTop - layerBase, 0.001));
+    float sizeScale = max(uVolumeSize, 8.0) * 2.0;
+    float type = saturate1(weather.y);
+    float convection = uDensityAssetVersion >= 2
+        ? saturate1(weather.w)
+        : 0.0;
+    float convectionLift = type * convection;
+    float horizontalScale = sizeScale * mix(1.16, 0.78, type);
+    if (uDensityAssetVersion >= 2)
+    {
+        horizontalScale *= mix(1.04, 0.86, convectionLift);
+    }
+
+    vec2 upperDrift = vec2(0.19, -0.13) *
+        (h * h * type * horizontalScale) *
+        mix(1.0, 1.42, convection);
+    vec2 shapeXz =
+        (worldPos.xz + uWindOffset.xz + upperDrift) /
+        horizontalScale;
+    float shapeY =
+        h * mix(0.34, 0.86, type) +
+        uWindOffset.y / sizeScale;
+    if (uDensityAssetVersion >= 2)
+    {
+        shapeY += h * h * convectionLift * 0.08;
+    }
+
+    vec3 shapeUvw = fract(vec3(shapeXz.x, shapeY, shapeXz.y));
+    return vec4(shapeUvw, horizontalScale);
+}
+
+vec4 cloudDebugDetailCoordinates(vec3 worldPos)
+{
+    float detailRepeatSize = max(uVolumeSize, 8.0) * 0.5;
+    vec3 detailWorld = worldPos + uWindOffset * 0.5;
+    return vec4(fract(detailWorld / detailRepeatSize), detailRepeatSize);
+}
+
+vec3 cloudDebugAssetProfileColor(int profileCode)
+{
+    // 1=v2 bundled, 2=v1 compatibility policy, 3=v1 fallback,
+    // 4=runtime-generated v1, 5=procedural shader fallback.
+    if (profileCode == 1)
+    {
+        return vec3(0.08, 0.92, 0.48);
+    }
+    if (profileCode == 2)
+    {
+        return vec3(0.10, 0.48, 1.00);
+    }
+    if (profileCode == 3)
+    {
+        return vec3(1.00, 0.55, 0.06);
+    }
+    if (profileCode == 4)
+    {
+        return vec3(0.78, 0.20, 0.96);
+    }
+    if (profileCode == 5)
+    {
+        return vec3(1.00, 0.08, 0.08);
+    }
+    return vec3(0.35);
+}
+
 void main()
 {
     vec3 rd = grWorldRayDir(vUv, uInvViewProj, uCameraPos);
@@ -174,31 +281,208 @@ void main()
     {
         discard;
     }
+    if (uDebugView != 0 && !slabHit)
+    {
+        // Density-map inspectors describe the cumulus shell only. Do not allow the
+        // independently procedural cirrus sheet to leak into a selected debug view.
+        discard;
+    }
 
     vec3 cloudCol = vec3(0.0);
     float alpha = 0.0;
     bool debugViewActive = false;
 
-    if (uDebugView == 1 && slabHit)
+    if (uDebugView != 0 && slabHit)
     {
         float tSample = (tEnter + tExit) * 0.5;
         vec3 pos = uCameraPos + rd * tSample;
-        vec2 weather = vcSampleWeather(uCoverageMap, uHasCoverageMap, pos, uVolumeSize, uWindOffset.xz);
-        float cov = saturate1(weather.x * uCoverageScale);
-        cloudCol = vec3(cov, weather.y, 0.35) * slabHorizonVisibility;
-        alpha = (cov > 0.02 ? 0.95 : 0.0) * slabHorizonVisibility;
-        debugViewActive = true;
-    }
-    else if (uDebugView == 2 && slabHit)
-    {
-        float tSlice = (tEnter + tExit) * 0.5;
-        vec3 pos = uCameraPos + rd * tSlice;
-        float density = vcCloudDensityEx(pos, planetCenter, planetRadius,
-            layerBaseAltitude, layerTopAltitude, uDensity, uCoverageScale, uVolumeSize,
-            uCloudNoise, uHasCloudNoise, uDetailNoise, uHasDetailNoise,
-            uCoverageMap, uHasCoverageMap, uWindOffset);
-        cloudCol = vec3(density * 2.8, density * 1.4, density * 0.35);
-        alpha = saturate1(density * 3.5);
+        vec4 weather = vcSampleWeather(
+            uCoverageMap,
+            uHasCoverageMap,
+            pos,
+            uVolumeSize,
+            uWindOffset.xz,
+            0.0,
+            uDensityAssetVersion);
+        float debugValue = 0.0;
+        bool scalarView = true;
+
+        if (uDebugView >= CLOUD_DEBUG_WEATHER_COVERAGE &&
+            uDebugView <= CLOUD_DEBUG_WEATHER_CONVECTION)
+        {
+            int weatherChannel = uDebugView == CLOUD_DEBUG_FINAL_DENSITY
+                ? -1
+                : (uDebugView == CLOUD_DEBUG_WEATHER_COVERAGE
+                    ? 0
+                    : uDebugView - 2);
+            if (weatherChannel >= 0)
+            {
+                debugValue = cloudDebugChannel(weather, weatherChannel);
+            }
+        }
+
+        if (uDebugView >= CLOUD_DEBUG_SHAPE_R &&
+            uDebugView <= CLOUD_DEBUG_SHAPE_A)
+        {
+            if (uHasCloudNoise > 0)
+            {
+                vec4 shapeCoordinates = cloudDebugShapeCoordinates(
+                    pos,
+                    planetCenter,
+                    planetRadius,
+                    layerBaseAltitude,
+                    layerTopAltitude,
+                    weather);
+                vec4 shapeChannels = textureLod(
+                    uCloudNoise,
+                    shapeCoordinates.xyz,
+                    0.0);
+                debugValue = cloudDebugChannel(
+                    shapeChannels,
+                    uDebugView - CLOUD_DEBUG_SHAPE_R);
+            }
+            else
+            {
+                scalarView = false;
+                cloudCol = vec3(1.0, 0.0, 1.0);
+            }
+        }
+        else if (uDebugView >= CLOUD_DEBUG_DETAIL_R &&
+            uDebugView <= CLOUD_DEBUG_DETAIL_A)
+        {
+            if (uHasDetailNoise > 0)
+            {
+                vec4 detailCoordinates = cloudDebugDetailCoordinates(pos);
+                vec4 detailChannels = textureLod(
+                    uDetailNoise,
+                    detailCoordinates.xyz,
+                    0.0);
+                debugValue = cloudDebugChannel(
+                    detailChannels,
+                    uDebugView - CLOUD_DEBUG_DETAIL_R);
+            }
+            else
+            {
+                scalarView = false;
+                cloudCol = vec3(1.0, 0.0, 1.0);
+            }
+        }
+        else if (uDebugView == CLOUD_DEBUG_SELECTED_LOD)
+        {
+            scalarView = false;
+            int steps = uMarchSteps > 0
+                ? clamp(uMarchSteps, 1, CLOUD_MAX_STEPS)
+                : (uQuality <= 0
+                    ? 16
+                    : (uQuality >= 3
+                        ? 48
+                        : (uQuality >= 2 ? 32 : 24)));
+            float marchStep = max((tExit - tEnter) / float(steps), 0.01);
+            float sampleFootprint = max(
+                marchStep,
+                tSample * uPixelAngularSize);
+            vec4 shapeCoordinates = cloudDebugShapeCoordinates(
+                pos,
+                planetCenter,
+                planetRadius,
+                layerBaseAltitude,
+                layerTopAltitude,
+                weather);
+            vec4 detailCoordinates = cloudDebugDetailCoordinates(pos);
+
+            float shapeLod = 0.0;
+            float shapeMaxMip = 1.0;
+            if (uHasCloudNoise > 0)
+            {
+                ivec3 shapeSize = textureSize(uCloudNoise, 0);
+                float shapeDimension = float(max(
+                    shapeSize.x,
+                    max(shapeSize.y, shapeSize.z)));
+                shapeLod = vcCloudRayFootprintLod(
+                    sampleFootprint,
+                    shapeCoordinates.w,
+                    shapeDimension,
+                    0.0);
+                shapeMaxMip = max(floor(log2(shapeDimension)), 1.0);
+            }
+
+            float detailLod = 0.0;
+            float detailMaxMip = 1.0;
+            if (uHasDetailNoise > 0)
+            {
+                ivec3 detailSize = textureSize(uDetailNoise, 0);
+                float detailDimension = float(max(
+                    detailSize.x,
+                    max(detailSize.y, detailSize.z)));
+                float detailBias = uQuality >= 3 ? -0.35 : 0.0;
+                detailLod = vcCloudRayFootprintLod(
+                    sampleFootprint,
+                    detailCoordinates.w,
+                    detailDimension,
+                    detailBias);
+                detailMaxMip = max(floor(log2(detailDimension)), 1.0);
+            }
+
+            float shapeNormalized = shapeLod / shapeMaxMip;
+            float detailNormalized = detailLod / detailMaxMip;
+            cloudCol = vec3(
+                shapeNormalized,
+                detailNormalized,
+                max(shapeNormalized, detailNormalized));
+        }
+        else if (uDebugView == CLOUD_DEBUG_BASE_DENSITY)
+        {
+            debugValue = vcCloudBaseDensityFromWeather(
+                pos,
+                planetCenter,
+                planetRadius,
+                layerBaseAltitude,
+                layerTopAltitude,
+                uCoverageScale,
+                uVolumeSize,
+                uCloudNoise,
+                uHasCloudNoise,
+                uWindOffset,
+                0.0,
+                weather,
+                uDensityAssetVersion);
+        }
+        else if (uDebugView == CLOUD_DEBUG_FINAL_DENSITY)
+        {
+            debugValue = vcCloudDensityEx(
+                pos,
+                planetCenter,
+                planetRadius,
+                layerBaseAltitude,
+                layerTopAltitude,
+                uDensity,
+                uCoverageScale,
+                uVolumeSize,
+                uCloudNoise,
+                uHasCloudNoise,
+                uDetailNoise,
+                uHasDetailNoise,
+                uCoverageMap,
+                uHasCoverageMap,
+                uWindOffset,
+                0.0,
+                0.0,
+                uQuality,
+                uDensityAssetVersion);
+        }
+        else if (uDebugView == CLOUD_DEBUG_ASSET_PROFILE)
+        {
+            scalarView = false;
+            cloudCol = cloudDebugAssetProfileColor(
+                uDensityAssetProfileCode);
+        }
+
+        if (scalarView)
+        {
+            cloudCol = vec3(saturate1(debugValue));
+        }
+
+        alpha = 0.95;
         cloudCol *= slabHorizonVisibility;
         alpha *= slabHorizonVisibility;
         debugViewActive = true;
@@ -225,8 +509,18 @@ void main()
             {
                 float tCov = mix(tEnter, tExit, (float(i) + 0.5) / 4.0);
                 vec3 covPos = uCameraPos + rd * tCov;
+                float coverageFootprint = max(
+                    (tExit - tEnter) / 4.0,
+                    tCov * uPixelAngularSize);
                 covMax = max(covMax,
-                    vcSampleWeather(uCoverageMap, uHasCoverageMap, covPos, uVolumeSize, uWindOffset.xz).x);
+                    vcSampleWeather(
+                        uCoverageMap,
+                        uHasCoverageMap,
+                        covPos,
+                        uVolumeSize,
+                        uWindOffset.xz,
+                        coverageFootprint,
+                        uDensityAssetVersion).x);
             }
 
             bool hasCumulus = covMax * uCoverageScale > 1e-3;
@@ -238,7 +532,7 @@ void main()
                 float fineStep = max((tExit - tEnter) / float(steps), 0.01);
                 float coarseStep = fineStep * (uQuality <= 0 ? 4.0 : 3.0);
                 int lightSteps = uQuality >= 2 ? 4 : (uQuality <= 0 ? 2 : 3);
-                float weatherLod = uQuality <= 0 ? 3.0 : 2.0;
+                float detailLodBias = uQuality >= 3 ? -0.35 : 0.0;
                 float jitter01 = cloudPrimaryMarchJitter();
                 float t = tEnter + jitter01 * fineStep;
 
@@ -251,18 +545,41 @@ void main()
 
                     float sampleT = min(t + fineStep * 0.5, tExit);
                     vec3 worldPos = uCameraPos + rd * sampleT;
+                    float pixelFootprint = sampleT * uPixelAngularSize;
+                    float sampleFootprint = max(fineStep, pixelFootprint);
+                    float conservativeFootprint = max(coarseStep, pixelFootprint);
                     float conservative = vcCloudConservativeDensity(worldPos, planetCenter, planetRadius,
                         layerBaseAltitude, layerTopAltitude, uCoverageScale, uVolumeSize,
-                        uCoverageMap, uHasCoverageMap, uWindOffset, weatherLod);
+                        uCoverageMap, uHasCoverageMap, uWindOffset, conservativeFootprint,
+                        uDensityAssetVersion);
                     if (conservative <= 1e-4)
                     {
                         t += coarseStep;
                         continue;
                     }
 
-                    float baseShape = vcCloudBaseDensity(worldPos, planetCenter, planetRadius,
-                        layerBaseAltitude, layerTopAltitude, uCoverageScale, uVolumeSize,
-                        uCloudNoise, uHasCloudNoise, uCoverageMap, uHasCoverageMap, uWindOffset, 0.0);
+                    vec4 weather = vcSampleWeather(
+                        uCoverageMap,
+                        uHasCoverageMap,
+                        worldPos,
+                        uVolumeSize,
+                        uWindOffset.xz,
+                        sampleFootprint,
+                        uDensityAssetVersion);
+                    float baseShape = vcCloudBaseDensityFromWeather(
+                        worldPos,
+                        planetCenter,
+                        planetRadius,
+                        layerBaseAltitude,
+                        layerTopAltitude,
+                        uCoverageScale,
+                        uVolumeSize,
+                        uCloudNoise,
+                        uHasCloudNoise,
+                        uWindOffset,
+                        sampleFootprint,
+                        weather,
+                        uDensityAssetVersion);
                     if (baseShape <= 1e-5)
                     {
                         t += fineStep;
@@ -271,14 +588,17 @@ void main()
 
                     float density = vcCloudDensityFromBase(baseShape, worldPos, planetCenter, planetRadius,
                         layerBaseAltitude, layerTopAltitude, uDensity, uVolumeSize,
-                        uDetailNoise, uHasDetailNoise, uWindOffset);
+                        uDetailNoise, uHasDetailNoise, uWindOffset,
+                        sampleFootprint, detailLodBias, uQuality,
+                        weather.z, weather.w, uDensityAssetVersion);
                     if (density > 1e-5)
                     {
                         float segmentLength = min(fineStep, tExit - t);
                         float lightOd = vcLightOpticalDepthFromBase(baseShape, worldPos, sunToward,
                             planetCenter, planetRadius, layerBaseAltitude, layerTopAltitude,
                             uDensity, uCoverageScale, uVolumeSize, lightSteps,
-                            uCloudNoise, uHasCloudNoise, uCoverageMap, uHasCoverageMap, uWindOffset);
+                            uCloudNoise, uHasCloudNoise, uCoverageMap, uHasCoverageMap,
+                            uWindOffset, sampleFootprint, uDensityAssetVersion);
                         float altitude = vcsAltitude(worldPos, planetCenter, planetRadius);
                         float hSample = saturate1((altitude - layerBaseAltitude) / max(uVolumeHeight, 0.001));
                         vec3 radiance = vcSunScatter(sunColor, cosTheta, lightOd);
@@ -331,8 +651,22 @@ void main()
                 float sampleFrac = cirrusSamples > 1 ? (float(i) + 0.5) / float(cirrusSamples) : 0.5;
                 float sampleT = mix(cirrusSeg.x, cirrusSeg.y, sampleFrac);
                 vec3 cirrusPos = uCameraPos + rd * sampleT;
-                float sampleDensity = vcCirrusDensity(
-                    cirrusPos.xz, uCirrusWindOffset, uCirrusWindDir, uVolumeSize);
+                float cirrusSampleFootprint = max(
+                    max(
+                        (cirrusSeg.y - cirrusSeg.x) / float(cirrusSamples),
+                        0.01),
+                    sampleT * uPixelAngularSize);
+                float sampleDensity = vcCirrusDensityWithDetail(
+                    cirrusPos.xz,
+                    uCirrusWindOffset,
+                    uCirrusWindDir,
+                    uVolumeSize,
+                    uDetailNoise,
+                    uHasDetailNoise,
+                    cirrusSampleFootprint,
+                    uQuality >= 3 ? -0.35 : 0.0,
+                    uQuality,
+                    uDensityAssetVersion);
                 cirrusDensity += sampleDensity / float(cirrusSamples);
                 if (sampleDensity > 1e-3)
                 {

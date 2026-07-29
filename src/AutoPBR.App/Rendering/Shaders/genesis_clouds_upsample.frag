@@ -5,6 +5,7 @@
 
 //!include "common/cloud_temporal.glsl"
 //!include "common/cloud_present.glsl"
+//!include "common/cloud_direct_disc.glsl"
 //!include "common/cloud_shell.glsl"
 //!include "common/ray_reconstruct.glsl"
 //!include "common/cloud_scene_depth.glsl"
@@ -18,6 +19,9 @@ uniform mat4 uInvViewProj;
 uniform vec3 uCameraPos;
 uniform float uGroundWorldY;
 uniform float uPlanetRadius;
+uniform vec3 uSunDir;
+uniform float uSunCosDiscEdge;
+uniform float uSunDiscVisibility;
 uniform int uHasSceneDepth;
 uniform int uCloudDataDirect;
 uniform float uCloudExposure;
@@ -128,5 +132,15 @@ void main()
     vec3 rgb = (c0.rgb * w0 + c1.rgb * w1 + c2.rgb * w2 + c3.rgb * w3) / wSum;
     vec3 presentedRgb = cpEncodeCloudRadiance(
         rgb, coverage, uCloudExposure, uHdrPresent, uApplyCloudEncoding);
-    FragColor = vec4(presentedRgb, coverage) * planetMask;
+    float directDiscCoverage = cdoDirectDiscOcclusionAlpha(
+            coverage,
+            dot(rayDir, normalize(-uSunDir)),
+            uSunCosDiscEdge);
+    float compositeCoverage = uApplyCloudEncoding > 0
+        ? mix(
+            coverage,
+            directDiscCoverage,
+            clamp(uSunDiscVisibility, 0.0, 1.0))
+        : coverage;
+    FragColor = vec4(presentedRgb, compositeCoverage) * planetMask;
 }

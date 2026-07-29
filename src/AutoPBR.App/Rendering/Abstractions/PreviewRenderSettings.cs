@@ -4,8 +4,22 @@ namespace AutoPBR.App.Rendering.Abstractions;
 public enum PreviewCloudDebugView
 {
     Off = 0,
-    CoverageMap = 1,
-    DensitySlice = 2
+    WeatherCoverage = 1,
+    FinalDensity = 2,
+    WeatherCloudType = 3,
+    WeatherDensityPotential = 4,
+    WeatherConvection = 5,
+    ShapeCoherentBody = 6,
+    ShapeBroadBillow = 7,
+    ShapeMediumBreakup = 8,
+    ShapeFineErosion = 9,
+    DetailBroadBillow = 10,
+    DetailFineBillow = 11,
+    DetailWispyErosion = 12,
+    DetailCurlDistortion = 13,
+    SelectedLod = 14,
+    BaseDensity = 15,
+    AssetProfile = 16
 }
 
 public sealed class PreviewRenderSettings

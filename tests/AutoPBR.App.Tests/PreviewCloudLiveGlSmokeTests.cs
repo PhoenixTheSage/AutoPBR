@@ -66,6 +66,26 @@ public sealed class PreviewCloudLiveGlSmokeTests
                     "cloud-edge-repair-live-smoke");
                 Assert.True(repair.IsValid, "Cloud edge-repair shader failed to compile: " + repairError);
 
+                using var cloudLightSlice = compile.CreateProgram(
+                    "genesis_godrays.vert",
+                    "genesis_cloud_light_cache_slice.frag",
+                    out var cloudLightSliceError,
+                    "cq3.1-cloud-light-slice-live-smoke");
+                Assert.True(
+                    cloudLightSlice.IsValid,
+                    "CQ3.1 cloud-light fragment-slice shader failed to compile: " +
+                    cloudLightSliceError);
+
+                using var cloudLightLookup = compile.CreateProgram(
+                    "genesis_godrays.vert",
+                    "genesis_cloud_light_cache_lookup.frag",
+                    out var cloudLightLookupError,
+                    "cq3.1-cloud-light-lookup-live-smoke");
+                Assert.True(
+                    cloudLightLookup.IsValid,
+                    "CQ3.1 cloud-light lookup shader failed to compile: " +
+                    cloudLightLookupError);
+
                 using var fallbackComposite = compile.CreateProgram(
                     "genesis_godrays.vert",
                     "genesis_godrays_composite.frag",
@@ -103,6 +123,7 @@ public sealed class PreviewCloudLiveGlSmokeTests
                 Assert.Equal(
                     GLEnum.NoError,
                     gl.GetError());
+                ValidateCloudDensityTextureMipState(gl);
 
                 using var temporalTarget = new GlCloudTemporalRenderTarget(gl);
                 using var temporalHistory = new GlCloudTemporalRenderTarget(gl);
@@ -162,12 +183,353 @@ public sealed class PreviewCloudLiveGlSmokeTests
                 ValidateCloudDepthOrdering(gl, upsample);
                 ValidateDirectCloudDepthOrdering(gl, upsample);
                 ValidateLinearCloudRadiance(gl, upsample);
+                ValidateCloudDirectDiscOcclusion(gl, upsample);
                 ValidateCloudTemporalMoments(gl, temporal);
                 ValidateCloudEdgeRepair(gl, repair, stbnTexture);
+                ValidateCloudLightFragmentReference(
+                    gl,
+                    cloudLightSlice,
+                    cloudLightLookup);
             }
 
             return true;
         }, TimeSpan.FromSeconds(30));
+    }
+
+    private static void ValidateCloudLightFragmentReference(
+        GL gl,
+        GlShaderProgram program,
+        GlShaderProgram lookupProgram)
+    {
+        var profile = new PreviewCloudLightingCacheProfile(
+            "CQ3.1 test",
+            PreviewCloudLightingCacheProfiles.StorageFormat,
+            new PreviewCloudLightCascadeProfile(8, 8, 4, 64f, 1),
+            new PreviewCloudLightCascadeProfile(8, 8, 4, 128f, 1),
+            PreviewCloudLightingCacheProfiles.NearOverlapFraction,
+            0);
+        Assert.True(
+            GlCloudLightFroxelCache.TryCreate(
+                gl,
+                profile,
+                out var cache,
+                out var allocationDiagnostic),
+            allocationDiagnostic);
+        Assert.NotNull(cache);
+
+        var vao = CreateFullscreenQuad(gl, out var vbo);
+        try
+        {
+            using (cache)
+            {
+                var basis = PreviewCloudLightBasisBuilder.Build(new Vector3(0f, -1f, 0f));
+                var nearTransform = PreviewCloudLightCascadeTransform.Create(
+                    basis,
+                    profile.Near,
+                    Vector3.Zero,
+                    0f,
+                    40f);
+                var farTransform = PreviewCloudLightCascadeTransform.Create(
+                    basis,
+                    profile.Far,
+                    Vector3.Zero,
+                    0f,
+                    40f);
+                var generator = new GlCloudLightFragmentSliceGenerator(
+                    gl,
+                    program,
+                    vao);
+                var inputs = new GlCloudLightSliceGenerationInputs(
+                    nearTransform,
+                    farTransform,
+                    new PreviewCloudLightAltitudeBounds(1f, 20f, 30f, 32f, 4f),
+                    new Vector3(0f, -60003.2f, 0f),
+                    PreviewStageConstants.CloudPlanetRadius,
+                    Density: 1f,
+                    CoverageScale: 1f,
+                    VolumeSize: 48f,
+                    WindOffset: Vector3.Zero,
+                    CirrusStrength: 0f,
+                    CirrusWindOffset: Vector2.Zero,
+                    CirrusWindDirection: Vector2.UnitX,
+                    Quality: 3,
+                    DensityAssetVersion: 2,
+                    CloudNoiseTexture: 0,
+                    DetailNoiseTexture: 0,
+                    CoverageTexture: 0,
+                    ReferenceDensity: 0.5f);
+                Assert.True(
+                    generator.TryGenerate(
+                        cache!,
+                        inputs,
+                        restoreViewportWidth: 64,
+                        restoreViewportHeight: 64,
+                        out var generationDiagnostic),
+                    generationDiagnostic);
+                Assert.True(cache!.IsReferenceReady);
+
+                var previousOpticalDepth = -1f;
+                var expectedDelta = 0.5f * nearTransform.DepthSliceWorldSize * 0.18f;
+                for (var layer = 0; layer < profile.Near.Depth; layer++)
+                {
+                    var readback = new float[profile.Near.Width * profile.Near.Height * 2];
+                    Assert.True(
+                        cache.Near.TryReadLayer(layer, readback, out var readDiagnostic),
+                        readDiagnostic);
+                    var center = ((profile.Near.Height / 2 * profile.Near.Width) +
+                        profile.Near.Width / 2) * 2;
+                    var opticalDepth = readback[center];
+                    var skyVisibility = readback[center + 1];
+                    Assert.True(float.IsFinite(opticalDepth));
+                    Assert.True(float.IsFinite(skyVisibility));
+                    Assert.True(opticalDepth >= previousOpticalDepth);
+                    Assert.InRange(
+                        opticalDepth,
+                        expectedDelta * (layer + 1) - 0.02f,
+                        expectedDelta * (layer + 1) + 0.02f);
+                    var expectedVisibility = MathF.Exp(
+                        -expectedDelta * 0.35f * (layer + 1));
+                    Assert.InRange(
+                        skyVisibility,
+                        expectedVisibility - 0.01f,
+                        expectedVisibility + 0.01f);
+                    previousOpticalDepth = opticalDepth;
+                }
+
+                ValidateCloudLightLookup(
+                    gl,
+                    lookupProgram,
+                    cache,
+                    nearTransform,
+                    farTransform,
+                    vao,
+                    expectedDelta);
+            }
+        }
+        finally
+        {
+            gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+            gl.DeleteBuffer(vbo);
+            gl.DeleteVertexArray(vao);
+        }
+    }
+
+    private static unsafe void ValidateCloudLightLookup(
+        GL gl,
+        GlShaderProgram program,
+        GlCloudLightFroxelCache cache,
+        in PreviewCloudLightCascadeTransform nearTransform,
+        in PreviewCloudLightCascadeTransform farTransform,
+        uint vao,
+        float expectedDelta)
+    {
+        var framebuffer = gl.GenFramebuffer();
+        var outputTexture = gl.GenTexture();
+        try
+        {
+            gl.BindTexture(TextureTarget.Texture2D, outputTexture);
+            gl.TexImage2D(
+                TextureTarget.Texture2D,
+                0,
+                InternalFormat.Rgba32f,
+                1,
+                1,
+                0,
+                PixelFormat.Rgba,
+                PixelType.Float,
+                (void*)0);
+            gl.TexParameter(
+                TextureTarget.Texture2D,
+                TextureParameterName.TextureMinFilter,
+                (int)GLEnum.Nearest);
+            gl.TexParameter(
+                TextureTarget.Texture2D,
+                TextureParameterName.TextureMagFilter,
+                (int)GLEnum.Nearest);
+            gl.BindFramebuffer(FramebufferTarget.Framebuffer, framebuffer);
+            gl.FramebufferTexture2D(
+                FramebufferTarget.Framebuffer,
+                FramebufferAttachment.ColorAttachment0,
+                TextureTarget.Texture2D,
+                outputTexture,
+                0);
+            gl.DrawBuffer(DrawBufferMode.ColorAttachment0);
+            gl.ReadBuffer(ReadBufferMode.ColorAttachment0);
+            Assert.Equal(
+                GLEnum.FramebufferComplete,
+                gl.CheckFramebufferStatus(FramebufferTarget.Framebuffer));
+
+            program.Use();
+            gl.ActiveTexture(TextureUnit.Texture0);
+            gl.BindTexture(TextureTarget.Texture2DArray, cache.Near.ArrayTextureHandle);
+            gl.ActiveTexture(TextureUnit.Texture1);
+            gl.BindTexture(TextureTarget.Texture2DArray, cache.Far.ArrayTextureHandle);
+            SetUniform1(gl, program, "uNearCache", 0);
+            SetUniform1(gl, program, "uFarCache", 1);
+
+            var world = nearTransform.UnitToWorld(new Vector3(0.5f, 0.5f, 0.5f));
+            SetUniform3(gl, program, "uWorldPosition", world.X, world.Y, world.Z);
+            SetUniform3(
+                gl,
+                program,
+                "uBasisRight",
+                nearTransform.Basis.Right.X,
+                nearTransform.Basis.Right.Y,
+                nearTransform.Basis.Right.Z);
+            SetUniform3(
+                gl,
+                program,
+                "uBasisUp",
+                nearTransform.Basis.Up.X,
+                nearTransform.Basis.Up.Y,
+                nearTransform.Basis.Up.Z);
+            SetUniform3(
+                gl,
+                program,
+                "uBasisForward",
+                nearTransform.Basis.Forward.X,
+                nearTransform.Basis.Forward.Y,
+                nearTransform.Basis.Forward.Z);
+            SetUniform2(
+                gl,
+                program,
+                "uNearPlaneCenter",
+                nearTransform.PlaneCenterX,
+                nearTransform.PlaneCenterY);
+            SetUniform2(
+                gl,
+                program,
+                "uFarPlaneCenter",
+                farTransform.PlaneCenterX,
+                farTransform.PlaneCenterY);
+            SetUniform1(gl, program, "uNearWorldSpan", nearTransform.Profile.WorldSpan);
+            SetUniform1(gl, program, "uFarWorldSpan", farTransform.Profile.WorldSpan);
+            SetUniform1(gl, program, "uNearLightDepthMin", nearTransform.LightDepthMin);
+            SetUniform1(gl, program, "uFarLightDepthMin", farTransform.LightDepthMin);
+            SetUniform1(gl, program, "uNearLightDepthSpan", nearTransform.LightDepthSpan);
+            SetUniform1(gl, program, "uFarLightDepthSpan", farTransform.LightDepthSpan);
+            SetUniform1(gl, program, "uNearDepth", nearTransform.Profile.Depth);
+            SetUniform1(gl, program, "uFarDepth", farTransform.Profile.Depth);
+            SetUniform1(
+                gl,
+                program,
+                "uNearOverlapFraction",
+                PreviewCloudLightingCacheProfiles.NearOverlapFraction);
+
+            gl.Viewport(0, 0, 1, 1);
+            gl.Disable(EnableCap.Blend);
+            gl.Disable(EnableCap.DepthTest);
+            gl.BindVertexArray(vao);
+            gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
+            gl.BindVertexArray(0);
+            var output = new float[4];
+            fixed (float* pointer = output)
+            {
+                gl.ReadPixels(
+                    0,
+                    0,
+                    1,
+                    1,
+                    PixelFormat.Rgba,
+                    PixelType.Float,
+                    pointer);
+            }
+
+            Assert.Equal(GLEnum.NoError, gl.GetError());
+            Assert.InRange(output[0], expectedDelta * 2.5f - 0.03f, expectedDelta * 2.5f + 0.03f);
+            Assert.InRange(output[1], 0f, 1f);
+            Assert.InRange(output[2], 0.999f, 1.001f);
+            Assert.InRange(output[3], 0f, 0.001f);
+        }
+        finally
+        {
+            gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+            gl.DeleteTexture(outputTexture);
+            gl.DeleteFramebuffer(framebuffer);
+        }
+    }
+
+    private static void ValidateCloudDensityTextureMipState(GL gl)
+    {
+        const int size = 8;
+        var rgba = RepeatPixel(size * size, size, 31, 97, 173, 229);
+
+        using var shape = new GlTexture3D(gl);
+        shape.UploadRgba(size, rgba);
+        shape.Bind(0);
+        gl.GetTexParameter(
+            TextureTarget.Texture3D,
+            GetTextureParameter.TextureMinFilter,
+            out int shapeMinFilter);
+        gl.GetTexParameter(
+            TextureTarget.Texture3D,
+            GetTextureParameter.TextureWrapS,
+            out int shapeWrapS);
+        gl.GetTexParameter(
+            TextureTarget.Texture3D,
+            GetTextureParameter.TextureWrapT,
+            out int shapeWrapT);
+        gl.GetTexParameter(
+            TextureTarget.Texture3D,
+            GetTextureParameter.TextureWrapRExt,
+            out int shapeWrapR);
+        gl.GetTexLevelParameter(
+            TextureTarget.Texture3D,
+            3,
+            GetTextureParameter.TextureWidth,
+            out int shapeMipWidth);
+        gl.GetTexLevelParameter(
+            TextureTarget.Texture3D,
+            3,
+            GetTextureParameter.TextureHeight,
+            out int shapeMipHeight);
+        gl.GetTexLevelParameter(
+            TextureTarget.Texture3D,
+            3,
+            GetTextureParameter.TextureDepthExt,
+            out int shapeMipDepth);
+
+        Assert.Equal((int)GLEnum.LinearMipmapLinear, shapeMinFilter);
+        Assert.Equal((int)GLEnum.Repeat, shapeWrapS);
+        Assert.Equal((int)GLEnum.Repeat, shapeWrapT);
+        Assert.Equal((int)GLEnum.Repeat, shapeWrapR);
+        Assert.Equal((1, 1, 1), (shapeMipWidth, shapeMipHeight, shapeMipDepth));
+
+        using var weather = new GlTexture2D(
+            gl,
+            nearestFilter: false,
+            mipmapped: true);
+        weather.UploadRgba(size, size, RepeatPixel(size, size, 43, 109, 181, 239),
+            nearestFilter: false);
+        weather.Bind(1);
+        gl.GetTexParameter(
+            TextureTarget.Texture2D,
+            GetTextureParameter.TextureMinFilter,
+            out int weatherMinFilter);
+        gl.GetTexParameter(
+            TextureTarget.Texture2D,
+            GetTextureParameter.TextureWrapS,
+            out int weatherWrapS);
+        gl.GetTexParameter(
+            TextureTarget.Texture2D,
+            GetTextureParameter.TextureWrapT,
+            out int weatherWrapT);
+        gl.GetTexLevelParameter(
+            TextureTarget.Texture2D,
+            3,
+            GetTextureParameter.TextureWidth,
+            out int weatherMipWidth);
+        gl.GetTexLevelParameter(
+            TextureTarget.Texture2D,
+            3,
+            GetTextureParameter.TextureHeight,
+            out int weatherMipHeight);
+
+        Assert.Equal((int)GLEnum.LinearMipmapLinear, weatherMinFilter);
+        Assert.Equal((int)GLEnum.Repeat, weatherWrapS);
+        Assert.Equal((int)GLEnum.Repeat, weatherWrapT);
+        Assert.Equal((1, 1), (weatherMipWidth, weatherMipHeight));
+        Assert.Equal(GLEnum.NoError, gl.GetError());
     }
 
     private static void ValidateCloudDepthOrdering(GL gl, GlShaderProgram upsample)
@@ -320,6 +682,101 @@ public sealed class PreviewCloudLiveGlSmokeTests
             gl.DeleteBuffer(quadVbo);
             gl.DeleteVertexArray(quadVao);
             gl.DeleteTexture(sceneDepthTexture);
+        }
+    }
+
+    private static void ValidateCloudDirectDiscOcclusion(
+        GL gl,
+        GlShaderProgram upsample)
+    {
+        const int cloudSize = 4;
+        const int outputSize = 8;
+        using var source = new GlCloudTemporalRenderTarget(
+            gl,
+            GlCloudRenderFormatProfile.DesktopFloatingPoint);
+        using var output = new GlCloudTemporalRenderTarget(
+            gl,
+            GlCloudRenderFormatProfile.DesktopFloatingPoint);
+        Assert.True(source.EnsureSize(cloudSize, cloudSize));
+        Assert.True(output.EnsureSize(outputSize, outputSize));
+
+        UploadRgba32f(
+            gl,
+            source.ColorTextureHandle,
+            cloudSize,
+            cloudSize,
+            RepeatRgbaFloat(cloudSize, cloudSize, 0.18f, 0.2f, 0.22f, 0.6f));
+        UploadRg32f(
+            gl,
+            source.DataTextureHandle,
+            cloudSize,
+            cloudSize,
+            RepeatDirectMetadata(cloudSize, cloudSize, 0.05f, 0.5f));
+
+        var sceneDepthTexture = gl.GenTexture();
+        var quadVao = CreateFullscreenQuad(gl, out var quadVbo);
+        try
+        {
+            AllocateRgba8(
+                gl,
+                sceneDepthTexture,
+                outputSize,
+                outputSize,
+                RepeatPixel(outputSize, outputSize, 255, 0, 0, 255));
+            ConfigureUpsampleUniforms(
+                gl,
+                upsample,
+                cloudSize,
+                directMetadata: true,
+                hasSceneDepth: false,
+                hdrPresent: true,
+                applyCloudEncoding: true);
+
+            output.Clear();
+            output.BindDraw(includeMoments: false);
+            gl.Disable(EnableCap.Blend);
+            DrawUpsample(
+                gl,
+                upsample,
+                quadVao,
+                source,
+                sceneDepthTexture);
+            Assert.Equal(GLEnum.NoError, gl.GetError());
+
+            var pixels = ReadTextureRgbaFloat(
+                gl,
+                output.ColorTextureHandle,
+                outputSize,
+                outputSize);
+            var centerAlpha = pixels[((3 * outputSize + 3) * 4) + 3];
+            var cornerAlpha = pixels[3];
+            Assert.InRange(centerAlpha, 0.995f, 1.001f);
+            Assert.InRange(cornerAlpha, 0.58f, 0.62f);
+
+            SetUniform1(gl, upsample, "uSunDiscVisibility", 0f);
+            output.Clear();
+            output.BindDraw(includeMoments: false);
+            DrawUpsample(
+                gl,
+                upsample,
+                quadVao,
+                source,
+                sceneDepthTexture);
+            var disabledPixels = ReadTextureRgbaFloat(
+                gl,
+                output.ColorTextureHandle,
+                outputSize,
+                outputSize);
+            var disabledCenterAlpha =
+                disabledPixels[((3 * outputSize + 3) * 4) + 3];
+            Assert.InRange(disabledCenterAlpha, 0.58f, 0.62f);
+        }
+        finally
+        {
+            gl.DeleteBuffer(quadVbo);
+            gl.DeleteVertexArray(quadVao);
+            gl.DeleteTexture(sceneDepthTexture);
+            gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
         }
     }
 
@@ -515,6 +972,7 @@ public sealed class PreviewCloudLiveGlSmokeTests
         SetUniform1(gl, repair, "uHasSkyLut", 0);
         SetUniform1(gl, repair, "uSourceCloudDataDirect", 1);
         SetUniform1(gl, repair, "uCloudFrameIndex", 7);
+        SetUniform1(gl, repair, "uDensityAssetVersion", 2);
 
         var quadVao = CreateFullscreenQuad(gl, out var quadVbo);
         try
@@ -623,6 +1081,9 @@ public sealed class PreviewCloudLiveGlSmokeTests
         SetUniform3(gl, program, "uCameraPos", 0f, 0f, -1f);
         SetUniform1(gl, program, "uGroundWorldY", -100f);
         SetUniform1(gl, program, "uPlanetRadius", 1f);
+        SetUniform3(gl, program, "uSunDir", 0f, 0f, -1f);
+        SetUniform1(gl, program, "uSunCosDiscEdge", 0.98f);
+        SetUniform1(gl, program, "uSunDiscVisibility", 1f);
         var matrixLoc = program.GetUniformLocation("uInvViewProj");
         if (matrixLoc >= 0)
         {

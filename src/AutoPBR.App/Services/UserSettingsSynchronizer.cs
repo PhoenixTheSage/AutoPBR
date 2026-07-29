@@ -220,7 +220,10 @@ internal static class UserSettingsSynchronizer
         vm.Preview3DCloudWindSpeed = Math.Clamp(settings.Preview3DCloudWindSpeed, 0.0, 12.0);
         vm.Preview3DCloudWindHeadingDegrees = Math.Clamp(settings.Preview3DCloudWindHeadingDegrees, -180.0, 180.0);
         vm.Preview3DCloudCirrusStrength = Math.Clamp(settings.Preview3DCloudCirrusStrength, 0.0, 2.0);
-        vm.Preview3DCloudDebugView = Math.Clamp(settings.Preview3DCloudDebugView, 0, 2);
+        vm.Preview3DCloudDebugView = Math.Clamp(
+            settings.Preview3DCloudDebugView,
+            0,
+            (int)PreviewCloudDebugView.AssetProfile);
         vm.Preview3DCloudDisableTemporal = settings.Preview3DCloudDisableTemporal;
         vm.Preview3DCloudMarchStepOverride = Math.Clamp(settings.Preview3DCloudMarchStepOverride, 0.0, 64.0);
         vm.Preview3DCloudFreezeWind = settings.Preview3DCloudFreezeWind;
@@ -511,7 +514,10 @@ internal static class UserSettingsSynchronizer
         settings.Preview3DCloudWindSpeed = Math.Clamp(vm.Preview3DCloudWindSpeed, 0.0, 12.0);
         settings.Preview3DCloudWindHeadingDegrees = Math.Clamp(vm.Preview3DCloudWindHeadingDegrees, -180.0, 180.0);
         settings.Preview3DCloudCirrusStrength = Math.Clamp(vm.Preview3DCloudCirrusStrength, 0.0, 2.0);
-        settings.Preview3DCloudDebugView = Math.Clamp(vm.Preview3DCloudDebugView, 0, 2);
+        settings.Preview3DCloudDebugView = Math.Clamp(
+            vm.Preview3DCloudDebugView,
+            0,
+            (int)PreviewCloudDebugView.AssetProfile);
         settings.Preview3DCloudDisableTemporal = vm.Preview3DCloudDisableTemporal;
         settings.Preview3DCloudMarchStepOverride = Math.Clamp(vm.Preview3DCloudMarchStepOverride, 0.0, 64.0);
         settings.Preview3DCloudFreezeWind = vm.Preview3DCloudFreezeWind;

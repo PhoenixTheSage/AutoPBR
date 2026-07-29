@@ -1,6 +1,6 @@
 # CQ3 — Light-aligned volumetric cloud lighting cache
 
-**Status:** Proposed  
+**Status:** In progress
 **Roadmap:** [Volumetric cloud quality roadmap](volumetric-cloud-quality-roadmap.md)  
 **Depends on:** [CQ1 precision and reconstruction](volumetric-cloud-cq1-precision-reconstruction.md), [CQ2 density textures](volumetric-cloud-cq2-density-textures.md)  
 **Required by:** [CQ4 sparse volume](volumetric-cloud-cq4-sparse-voxel-sdf.md)
@@ -231,15 +231,34 @@ Diagnostics report:
 
 ## Implementation milestones
 
-- [ ] CQ3.0: Add cache profiles, quality mapping, capabilities, resources, and diagnostics.
-- [ ] CQ3.1: Implement stable light basis, snapped origins, world/cache transforms, and overlap selection.
-- [ ] CQ3.2: Implement fragment-slice generation and fixed-scene reference output.
-- [ ] CQ3.3: Implement compute generation, barriers, and compute/fragment parity tests.
-- [ ] CQ3.4: Replace High/Cinematic long light marches with cache sampling.
-- [ ] CQ3.5: Add two-octave scattering, sky visibility, ground contribution, and Cinematic cone taps.
-- [ ] CQ3.6: Add terrain shadow publication and fog/god-ray cache consumption.
-- [ ] CQ3.7: Add update scheduling, wind reprojection, scrolling, invalidation, and fallback.
-- [ ] CQ3.8: Complete live-GL, visual, stability, and GPU performance acceptance.
+- [x] CQ3.0: Add cache profiles, quality mapping, light-space coordinate convention, stable snapped transforms, capability/resource plan, and diagnostics. Completed 2026-07-29 without allocating cache textures or changing cloud pixels: Low/Medium/GLES remain on the short march; High/Cinematic publish the accepted `RG16F` near/far dimensions and compute-versus-fragment preference while honestly reporting `resources=not-allocated-cq3.0`.
+- [x] CQ3.1: Add the owned `RG16F` array resources, overlap selection, fragment-slice generation, and fixed-scene reference output on desktop GL 3.3. Completed 2026-07-29 with transactional near/far allocation, ping-pong `RG16F` prefix surfaces, CQ2 density injection, conservative curved-shell depth bounds, explicit two-slice lookup interpolation, and monotonic half-float live-GL readback. Production lighting remains on the short march.
+- [ ] CQ3.2: Implement compute generation, barriers, and compute/fragment parity tests.
+- [ ] CQ3.3: Replace High/Cinematic long light marches with cache sampling.
+- [ ] CQ3.4: Add two-octave scattering, sky visibility, ground contribution, and Cinematic cone taps.
+- [ ] CQ3.5: Add terrain shadow publication and fog/god-ray cache consumption.
+- [ ] CQ3.6: Add update scheduling, wind reprojection, scrolling, invalidation, and fallback.
+- [ ] CQ3.7: Complete live-GL, visual, stability, and GPU performance acceptance.
+
+### CQ3.0 implementation record — 2026-07-29
+
+- `PreviewCloudLightingCacheProfiles` is the single quality mapping. High uses near `192×192×16` and far `128×128×12`; Cinematic uses near `256×256×24` and far `192×192×16`. Both retain spans `640/2,560`, far cadence four, and overlap `0.20`; High near cadence is two, Cinematic near cadence is one, and only Cinematic requests two local cone taps.
+- `PreviewCloudLightBasisBuilder` defines forward as sun-to-world and constructs the light-plane right/up axes. World-up/world-right reference selection uses `0.94/0.88` hysteresis and sign alignment to the prior basis so a threshold crossing cannot create a 180-degree flip.
+- `PreviewCloudLightCascadeTransform` freezes light-plane center and light-depth-min snapping, world/unit-cache round trips, containment, texel size, and slice size. It accepts the final depth interval explicitly; CQ3.1 derives that interval from the complete cloud altitude bounds and CQ2 detail padding.
+- Desktop GL 3.3 advertises the fragment-slice path. Desktop compute plus image load/store advertises compute generation. GLES/ANGLE advertises neither and selects the short march.
+- Runtime diagnostics distinguish the preferred future generator from the active runtime. CQ3.0 always reports `activeRuntime=short-march` and `resources=not-allocated-cq3.0`; this prevents the profile contract from being mistaken for a generated cache.
+- The cache plan explicitly reports `cameraFogFroxels=separate`. No camera fog/god-ray resource, CQ2 density placement, CQ1 reconstruction, shell lighting, or cloud pixel output changed in this milestone.
+
+### CQ3.1 implementation record — 2026-07-29
+
+- `GlCloudLightFroxelCache` transactionally allocates the documented High or Cinematic near/far `RG16F` 2D arrays. Every layer is framebuffer-validated and initialized to optical depth zero/sky visibility one before publication. Any near or far allocation failure destroys the entire candidate and leaves the short march active.
+- Each cascade owns two `RG16F` 2D prefix surfaces. `GlCloudLightFragmentSliceGenerator` alternates them while rendering layers in sun-to-world order, so a slice samples the completed previous prefix without sampling any texture subresource currently attached for drawing.
+- The fragment generator uses the CQ2 conservative weather test before full shape/detail density. Cumulus extinction matches the view-march units; thin cirrus uses slice/altitude overlap so a sub-slice sheet is not skipped. The current sky-visibility prefix is a deterministic bounded reference approximation; CQ3.4 owns the final cone/AO model.
+- `PreviewCloudLightAltitudeBounds` includes cumulus, enabled cirrus, and one complete CQ2 detail period at both ends. `PreviewCloudLightDepthInterval` projects a conservative cascade AABB into the light axis and includes curved-surface drop plus a slice guard before the existing snapped transform is constructed.
+- `PreviewCloudLightCascadeBlend` and `common/cloud_light_cache.glsl` implement the same outer-20% near/far weights. The shader include performs explicit interpolation between adjacent logical array layers; it never relies on texture-array layer filtering.
+- High/Cinematic desktop contexts allocate and generate one CQ2-backed reference after cloud startup. Low, Medium, GLES/ANGLE, shader failure, incomplete framebuffer, draw failure, and GL allocation/upload failure retain the short march with a diagnostic. Quality changes rebuild transactionally.
+- The fixed-density hidden-WGL fixture compiles both generator and lookup shaders, checks cumulative optical depth against the analytic value at every slice, verifies nondecreasing half-float output and bounded sky visibility, and validates the interpolated center lookup. The full `862×683` production backend reports `fragmentReference=ready` while DDA terrain remains visible.
+- CQ3.1 deliberately does not bind the cache to production cloud lighting and continues to report `activeRuntime=short-march`. Compute generation begins in CQ3.2; view-shader consumption begins in CQ3.3.
 
 ## Test matrix
 

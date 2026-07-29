@@ -34,6 +34,7 @@ internal ref struct GlRenderFrame
     public float OrbitYaw;
     public float OrbitPitch;
     public float OrbitDistance;
+    public float VerticalFieldOfViewRadians;
     public bool MeshDirty;
     public bool MaterialDirty;
     public bool EntityEmulatedPreview;
