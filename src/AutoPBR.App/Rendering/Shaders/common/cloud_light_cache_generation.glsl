@@ -165,8 +165,8 @@ float cq3CirrusOpticalDepth(
         return 0.0;
     }
 
-    float altitudeStart = length(worldStart - uPlanetCenter) - uPlanetRadius;
-    float altitudeEnd = length(worldEnd - uPlanetCenter) - uPlanetRadius;
+    float altitudeStart = vcFlatAltitude(worldStart, uPlanetCenter, uPlanetRadius);
+    float altitudeEnd = vcFlatAltitude(worldEnd, uPlanetCenter, uPlanetRadius);
     float lowAltitude = min(altitudeStart, altitudeEnd);
     float highAltitude = max(altitudeStart, altitudeEnd);
     float overlapAltitude = max(
@@ -174,7 +174,7 @@ float cq3CirrusOpticalDepth(
         min(highAltitude, uCirrusTopAltitude) -
         max(lowAltitude, uCirrusBaseAltitude));
     float altitudeDelta = highAltitude - lowAltitude;
-    float centerAltitude = length(worldCenter - uPlanetCenter) - uPlanetRadius;
+    float centerAltitude = vcFlatAltitude(worldCenter, uPlanetCenter, uPlanetRadius);
     float overlapFraction = altitudeDelta > 1e-4
         ? overlapAltitude / altitudeDelta
         : (centerAltitude >= uCirrusBaseAltitude &&

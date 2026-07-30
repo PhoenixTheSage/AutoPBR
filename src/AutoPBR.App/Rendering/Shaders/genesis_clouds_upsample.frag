@@ -6,7 +6,6 @@
 //!include "common/cloud_temporal.glsl"
 //!include "common/cloud_present.glsl"
 //!include "common/cloud_direct_disc.glsl"
-//!include "common/cloud_shell.glsl"
 //!include "common/ray_reconstruct.glsl"
 //!include "common/cloud_scene_depth.glsl"
 
@@ -17,8 +16,6 @@ uniform sampler2D uSceneDepth;
 uniform vec2 uCloudTexelSize;
 uniform mat4 uInvViewProj;
 uniform vec3 uCameraPos;
-uniform float uGroundWorldY;
-uniform float uPlanetRadius;
 uniform vec3 uSunDir;
 uniform float uSunCosDiscEdge;
 uniform float uSunDiscVisibility;
@@ -29,8 +26,6 @@ uniform int uHdrPresent;
 uniform int uApplyCloudEncoding;
 uniform int uCloudSourceFullResolution;
 out vec4 FragColor;
-
-const float CLOUD_HORIZON_FEATHER = 0.0025;
 
 float sceneDepthWeight(float centerDepth, vec2 tapUv)
 {
@@ -62,30 +57,6 @@ float cloudTapSceneVisibility(float sceneDistance, vec2 tapUv)
         ctMetadataDistance(cloudData, uCloudDataDirect), sceneDistance);
 }
 
-float cloudPlanetReconstructionMask(vec3 rayDir)
-{
-    float planetRadius = max(uPlanetRadius, 1.0);
-    vec3 planetCenter = vec3(0.0, uGroundWorldY - planetRadius, 0.0);
-    float planetDistance = vcsPlanetOcclusionDistance(
-        uCameraPos, rayDir, planetCenter, planetRadius);
-    vec4 cloudData = texture(uCloudData, vUv);
-
-    if (planetDistance < 1e8 &&
-        (!ctMetadataValid(cloudData, uCloudDataDirect) ||
-            ctMetadataDistance(cloudData, uCloudDataDirect) >= planetDistance -
-            max(0.04, planetDistance * 0.002)))
-    {
-        float horizonVisibility = vcsPlanetHorizonVisibility(
-            uCameraPos, rayDir, planetCenter, planetRadius, CLOUD_HORIZON_FEATHER);
-        // Trace/history already contain the atmospheric horizon fade. Reconstruction only
-        // rejects fully hidden far-side samples; applying the full visibility again creates
-        // a quarter-opacity stripe at the tangent.
-        return horizonVisibility > 1e-4 ? 1.0 : 0.0;
-    }
-
-    return 1.0;
-}
-
 void main()
 {
     vec2 o = uCloudSourceFullResolution > 0
@@ -103,12 +74,6 @@ void main()
     vec3 rayDir = grWorldRayDir(vUv, uInvViewProj, uCameraPos);
     float sceneDistance = csdSceneRayDistanceFromDepth(
         centerDepth, vUv, uInvViewProj, uCameraPos, rayDir, uHasSceneDepth);
-    float planetMask = cloudPlanetReconstructionMask(rayDir);
-    if (planetMask <= 1e-3)
-    {
-        discard;
-    }
-
     // Scene rejection is per cloud tap. A single nearest metadata fetch no longer rejects
     // the entire four-tap reconstruction at terrain and subject silhouettes.
     float w0 = sceneDepthWeight(centerDepth, uv0) * cloudTapSceneVisibility(sceneDistance, uv0);
@@ -129,7 +94,8 @@ void main()
     }
 
     // Cloud RGB is premultiplied integrated radiance, so filter it directly with opacity.
-    vec3 rgb = (c0.rgb * w0 + c1.rgb * w1 + c2.rgb * w2 + c3.rgb * w3) / wSum;
+    vec3 rgb = (c0.rgb * w0 + c1.rgb * w1 + c2.rgb * w2 + c3.rgb * w3) /
+        wSum;
     vec3 presentedRgb = cpEncodeCloudRadiance(
         rgb, coverage, uCloudExposure, uHdrPresent, uApplyCloudEncoding);
     float directDiscCoverage = cdoDirectDiscOcclusionAlpha(
@@ -142,5 +108,5 @@ void main()
             directDiscCoverage,
             clamp(uSunDiscVisibility, 0.0, 1.0))
         : coverage;
-    FragColor = vec4(presentedRgb, compositeCoverage) * planetMask;
+    FragColor = vec4(presentedRgb, compositeCoverage);
 }

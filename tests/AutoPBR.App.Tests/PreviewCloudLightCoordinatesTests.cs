@@ -130,7 +130,7 @@ public sealed class PreviewCloudLightCoordinatesTests
     }
 
     [Fact]
-    public void DepthInterval_ContainsProjectedCloudEnvelopeAndCurvatureGuard()
+    public void DepthInterval_ContainsProjectedFlatCloudEnvelopeAndFilterGuard()
     {
         var profile = PreviewCloudLightingCacheProfiles
             .Resolve(PreviewVolumetricQuality.Cinematic)
@@ -148,8 +148,7 @@ public sealed class PreviewCloudLightCoordinatesTests
             profile,
             new Vector3(20f, -3.2f, -40f),
             bounds,
-            groundWorldY: -3.2f,
-            planetRadius: PreviewStageConstants.CloudPlanetRadius);
+            groundWorldY: -3.2f);
 
         Assert.True(float.IsFinite(interval.Minimum));
         Assert.True(float.IsFinite(interval.Maximum));

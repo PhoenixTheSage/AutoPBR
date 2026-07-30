@@ -1175,7 +1175,8 @@ public sealed partial class PreviewRenderingTests
         Assert.Contains("HandleCloudRuntimeFailure(ref frame, \"trace/temporal\", ex);", post, StringComparison.Ordinal);
         Assert.Contains("HandleCloudRuntimeFailure(ref frame, \"composite\", ex);", post, StringComparison.Ordinal);
         Assert.Contains("!_cloudRuntimeFaulted", clouds, StringComparison.Ordinal);
-        Assert.Contains("Cloud camera region transition", clouds, StringComparison.Ordinal);
+        Assert.Contains("FormatCloudAltitudeDiagnostic", clouds, StringComparison.Ordinal);
+        Assert.Contains("Continuous altitude:", clouds, StringComparison.Ordinal);
     }
 
     [Fact]

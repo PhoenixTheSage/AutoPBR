@@ -197,8 +197,11 @@ public static class PreviewStageConstants
 
     public static float CloudLayerBaseWorldY(float layerHeightOffset) => CloudLayerBaseY + layerHeightOffset;
 
-    /// <summary>Artistic curved-cloud planet radius; see <see cref="PreviewCloudShellGeometry"/>.</summary>
-    public const float CloudPlanetRadius = PreviewCloudShellGeometry.PlanetRadius;
+    /// <summary>
+    /// Legacy shader-ABI radius used only to recover the flat ground altitude from
+    /// <c>center.y + radius</c>. It no longer bends cloud geometry.
+    /// </summary>
+    public const float CloudLegacyAltitudeReferenceRadius = 72_000f;
 
     /// <summary>World-anchored ground mist slab height above <see cref="GroundPlaneWorldY"/>.</summary>
     public const float GroundFogSlabHeight = 4f;

@@ -3,8 +3,8 @@ using System.Numerics;
 namespace AutoPBR.App.Rendering.Scene;
 
 /// <summary>
-/// Conservative radial-altitude envelope used by the CQ3 cloud-light cache. Altitudes are
-/// measured from the preview planet surface at the world origin, matching the cloud shaders.
+/// Conservative world-space altitude envelope used by the CQ3 cloud-light cache.
+/// Altitudes are measured vertically from the continuous world's ground datum.
 /// </summary>
 public readonly record struct PreviewCloudLightAltitudeBounds(
     float CumulusBaseAltitude,
@@ -44,8 +44,7 @@ public readonly record struct PreviewCloudLightAltitudeBounds(
 
 /// <summary>
 /// Conservative light-axis interval covering a cascade's world footprint and complete cloud
-/// altitude envelope. The projected AABB also includes spherical-surface drop at the footprint
-/// corners so the curved shell cannot fall below the first logical slice.
+/// altitude envelope. Flat layers have no footprint-dependent curvature allowance.
 /// </summary>
 public readonly record struct PreviewCloudLightDepthInterval(float Minimum, float Maximum)
 {
@@ -56,28 +55,17 @@ public readonly record struct PreviewCloudLightDepthInterval(float Minimum, floa
         in PreviewCloudLightCascadeProfile profile,
         Vector3 cameraGroundProjection,
         in PreviewCloudLightAltitudeBounds altitudeBounds,
-        float groundWorldY,
-        float planetRadius)
+        float groundWorldY)
     {
         if (!profile.IsEnabled)
         {
             throw new ArgumentException("Cloud-light cascade profile is disabled.", nameof(profile));
         }
 
-        if (!float.IsFinite(planetRadius) || planetRadius <= 0f)
-        {
-            throw new ArgumentOutOfRangeException(nameof(planetRadius));
-        }
-
         // A light-plane square can project to a world-XZ radius up to halfSpan*sqrt(2).
         var horizontalHalfExtent =
             profile.WorldSpan * 0.5f * MathF.Sqrt(2f) + altitudeBounds.DetailPadding;
-        var radialExtent = MathF.Min(
-            horizontalHalfExtent * MathF.Sqrt(2f),
-            planetRadius * 0.95f);
-        var curvatureDrop = planetRadius -
-            MathF.Sqrt(MathF.Max(planetRadius * planetRadius - radialExtent * radialExtent, 0f));
-        var worldMinY = groundWorldY + altitudeBounds.MinimumAltitude - curvatureDrop;
+        var worldMinY = groundWorldY + altitudeBounds.MinimumAltitude;
         var worldMaxY = groundWorldY + altitudeBounds.MaximumAltitude;
         var lightForward = basis.Forward;
 

@@ -24,6 +24,7 @@ public sealed class PreviewCloudCq3AcceptanceTests
     private const string EnableAcceptanceEnv = "AUTOPBR_RUN_CQ3_ACCEPTANCE";
     private const string ArtifactDirectoryEnv = "AUTOPBR_CQ3_ACCEPTANCE_ARTIFACT_DIR";
     private const string AcceptanceCaseEnv = "AUTOPBR_CQ3_ACCEPTANCE_CASE";
+    private const string EnableCq39AcceptanceEnv = "AUTOPBR_RUN_CQ39_ACCEPTANCE";
     private const int Width = 1920;
     private const int Height = 1080;
     private const int WarmupFrames = 32;
@@ -34,6 +35,163 @@ public sealed class PreviewCloudCq3AcceptanceTests
         AcceptedCq2HighLightingP50Ms * HighLightingRegressionLimit;
     private static readonly TimeSpan FrameElapsed = TimeSpan.FromSeconds(1.0 / 60.0);
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+
+    [Fact]
+    public void HiddenWglContext_Cq39FlatLayerAltitudeSweepsHaveNoBoundaryDeltaSpike()
+    {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable(EnableCq39AcceptanceEnv),
+                "1",
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        const int width = 640;
+        const int height = 360;
+        var diagnostics = new List<string>();
+        using var context = PreviewDesktopWglContext.TryCreate(
+            [
+                new GlVersion(GlProfileType.OpenGL, 4, 6),
+                new GlVersion(GlProfileType.OpenGL, 3, 3),
+            ],
+            IntPtr.Zero,
+            diagnostics.Add,
+            probePresentationAdapter: false);
+        Assert.NotNull(context);
+
+        context!.Invoke(
+            () =>
+            {
+                using (context.BindOnOwnerThread())
+                {
+                    context.EnsureRenderTargetCore(width, height);
+                    using var backend = new OpenGlPreviewBackend();
+                    backend.SetDiagnosticLog(diagnostics.Add);
+                    backend.Initialize(new RenderPreviewInitializationOptions());
+                    backend.SetGroundMaterials(
+                        CreateGroundMaterials(),
+                        overlayIsCutout: false);
+                    var fixture = new Fixture(
+                        "cq3.9-flat-sweep",
+                        FixtureCategory.HeightTransition,
+                        PreviewVolumetricQuality.Cinematic,
+                        Vector3.Zero,
+                        Vector3.UnitZ,
+                        0.78f,
+                        1.52f,
+                        1f,
+                        12f,
+                        true);
+                    var initialSettings = CreateSettings(fixture);
+                    backend.SetRenderSettings(initialSettings);
+                    backend.SetScene(BlockPreviewSceneFactory.Create(initialSettings));
+                    backend.GlInitNativeWglPresenter(context.GlInterface);
+                    try
+                    {
+                        var groundY = PreviewStageConstants.GroundPlaneWorldY;
+                        var layerBase =
+                            PreviewStageConstants.CloudLayerBaseWorldY(
+                                initialSettings.CloudLayerHeight) -
+                            groundY;
+                        var layerTop =
+                            layerBase + initialSettings.CloudVolumeHeight;
+                        var cirrusBase =
+                            layerTop +
+                            Math.Max(initialSettings.CloudVolumeHeight * 1.5f, 18f);
+                        var cirrusTop =
+                            cirrusBase +
+                            Math.Max(initialSettings.CloudVolumeHeight * 0.035f, 0.75f);
+                        WaitForRenderedScene(
+                            context,
+                            backend,
+                            width,
+                            height,
+                            groundY + layerBase - 4f);
+                        var boundaries = new[]
+                        {
+                            ("cumulus-base", layerBase),
+                            ("cumulus-top", layerTop),
+                            ("cirrus-base", cirrusBase),
+                            ("cirrus-top", cirrusTop),
+                        };
+
+                        for (var qualityIndex = 0; qualityIndex < 2; qualityIndex++)
+                        {
+                            var quality = qualityIndex == 0
+                                ? PreviewVolumetricQuality.High
+                                : PreviewVolumetricQuality.Cinematic;
+                            for (var temporalMode = 0; temporalMode < 2; temporalMode++)
+                            {
+                                var disableTemporal = temporalMode != 0;
+                                var qualityFixture = fixture with { Quality = quality };
+                                var settings =
+                                    CreateSettings(qualityFixture, disableTemporal);
+                                backend.SetRenderSettings(settings);
+                                SettleAltitudeSweepState(
+                                    context,
+                                    backend,
+                                    width,
+                                    height,
+                                    groundY + layerBase - 4f);
+                                foreach (var boundary in boundaries)
+                                {
+                                    var deltas = CaptureAltitudeSweepDeltas(
+                                        context,
+                                        backend,
+                                        width,
+                                        height,
+                                        groundY,
+                                        boundary.Item2,
+                                        $"{PreviewVolumetricQuality.GetName(quality).ToLowerInvariant()}-" +
+                                        $"{(disableTemporal ? "no-temporal" : "temporal")}-" +
+                                        boundary.Item1);
+                                    var baseline = deltas
+                                        .Where((_, index) => index < 7 || index > 12)
+                                        .Order()
+                                        .ToArray();
+                                    var baselineMedian =
+                                        baseline[baseline.Length / 2];
+                                    var transitionPeak = deltas
+                                        .Skip(7)
+                                        .Take(6)
+                                        .Max();
+                                    var limit = Math.Max(
+                                        0.025,
+                                        baselineMedian * 4.0 + 0.005);
+                                    Assert.True(
+                                        transitionPeak <= limit,
+                                        string.Create(
+                                            CultureInfo.InvariantCulture,
+                                            $"CQ3.9 {PreviewVolumetricQuality.GetName(quality)} " +
+                                            $"{(disableTemporal ? "no-temporal" : "temporal")} " +
+                                            $"{boundary.Item1} transition delta {transitionPeak:0.00000} " +
+                                            $"exceeds {limit:0.00000}; baseline median " +
+                                            $"{baselineMedian:0.00000}."));
+                                }
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        backend.GlDeinit(context.GlInterface);
+                    }
+                }
+            },
+            TimeSpan.FromMinutes(5));
+
+        Assert.DoesNotContain(
+            diagnostics,
+            line => line.Contains(
+                        "Detailed clouds are disabled",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains(
+                        "Cloud render-state recovery failure",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains(
+                        "shader: link failed",
+                        StringComparison.OrdinalIgnoreCase));
+    }
 
     [Fact]
     public void HiddenWglContext_CapturesCq3LightingVisualAndPerformanceMatrix()
@@ -593,7 +751,9 @@ public sealed class PreviewCloudCq3AcceptanceTests
                 $"{MaximumHighAmortizedLightingMs:0.###} ms)."));
     }
 
-    private static PreviewRenderSettings CreateSettings(Fixture fixture) =>
+    private static PreviewRenderSettings CreateSettings(
+        Fixture fixture,
+        bool cloudDisableTemporal = false) =>
         new()
         {
             AutoRotate = false,
@@ -616,6 +776,7 @@ public sealed class PreviewCloudCq3AcceptanceTests
             CloudWindHeadingDegrees = 35f,
             CloudCirrusStrength = fixture.Cirrus,
             CloudDebugView = PreviewCloudDebugView.Off,
+            CloudDisableTemporal = cloudDisableTemporal,
             CloudFreezeWind = fixture.FreezeWind,
             EnablePreviewTaa = true,
             PreviewTaaMode = 1,
@@ -623,6 +784,147 @@ public sealed class PreviewCloudCq3AcceptanceTests
             EnableShadowCascades = false,
             ShowExpandedGpuTimingHud = false,
         };
+
+    private static double[] CaptureAltitudeSweepDeltas(
+        PreviewDesktopWglContext context,
+        OpenGlPreviewBackend backend,
+        int width,
+        int height,
+        float groundWorldY,
+        float boundaryAltitude,
+        string sweepName)
+    {
+        var captures = new List<GlPixelSnapshot>(21);
+        var artifactDirectory = ResolveArtifactDirectory();
+        for (var index = 0; index < 21; index++)
+        {
+            var offset = -2f + index * 0.2f;
+            var eye = new Vector3(
+                0f,
+                groundWorldY + boundaryAltitude + offset,
+                0f);
+            backend.SetCameraDebugPose(
+                eye,
+                eye + Vector3.UnitZ * 80f);
+            GlPixelSnapshot? snapshot = null;
+            for (var readinessAttempt = 0; readinessAttempt < 8; readinessAttempt++)
+            {
+                DrawFrame(context, backend, width, height);
+                context.Gl.Finish();
+                snapshot = ReadFramebufferSnapshot(
+                    context.Gl,
+                    context.RenderFbo,
+                    width,
+                    height,
+                    $"cq3.9-{sweepName}-{index:00}");
+                // A horizontal ray below a flat slab can legitimately produce only clear
+                // sky. Keep that frame in the transition sequence; rejecting it as
+                // "uniform" hides the exact clear-to-cloud discontinuity this sweep owns.
+                // Startup/uninitialized captures are near-black, so mean radiance is the
+                // appropriate readiness signal for CQ3.9.
+                if (ComputeMeanRgb(snapshot) > 0.01)
+                {
+                    break;
+                }
+            }
+
+            Assert.NotNull(snapshot);
+            Assert.True(
+                ComputeMeanRgb(snapshot!) > 0.01,
+                $"CQ3.9 {sweepName} frame {index} remained near-black after render-readiness retries.");
+            captures.Add(snapshot);
+            if (artifactDirectory is not null && index is >= 7 and <= 13)
+            {
+                Directory.CreateDirectory(artifactDirectory);
+                using var image = Image.LoadPixelData<Rgba32>(
+                    snapshot.Rgba.Span,
+                    snapshot.Width,
+                    snapshot.Height);
+                image.Save(Path.Combine(
+                    artifactDirectory,
+                    snapshot.Name + ".png"));
+            }
+        }
+
+        var deltas = new double[captures.Count - 1];
+        for (var index = 1; index < captures.Count; index++)
+        {
+            deltas[index - 1] = ComputeMeanAbsoluteRgbDelta(
+                captures[index - 1],
+                captures[index]);
+        }
+
+        return deltas;
+    }
+
+    private static void WaitForRenderedScene(
+        PreviewDesktopWglContext context,
+        OpenGlPreviewBackend backend,
+        int width,
+        int height,
+        float eyeWorldY)
+    {
+        var eye = new Vector3(0f, eyeWorldY, 0f);
+        backend.SetCameraDebugPose(eye, eye + Vector3.UnitZ * 80f);
+        for (var attempt = 0; attempt < 240; attempt++)
+        {
+            DrawFrame(context, backend, width, height);
+            context.Gl.Finish();
+            if (attempt >= 3)
+            {
+                var snapshot = ReadFramebufferSnapshot(
+                    context.Gl,
+                    context.RenderFbo,
+                    width,
+                    height,
+                    $"cq3.9-readiness-{attempt:000}");
+                if (ComputeMeanRgb(snapshot) > 0.01)
+                {
+                    SettleAltitudeSweepState(
+                        context,
+                        backend,
+                        width,
+                        height,
+                        eyeWorldY);
+                    return;
+                }
+            }
+
+            Thread.Sleep(2);
+        }
+
+        throw new InvalidOperationException(
+            "CQ3.9 acceptance framebuffer did not become render-ready within 240 frames.");
+    }
+
+    private static void SettleAltitudeSweepState(
+        PreviewDesktopWglContext context,
+        OpenGlPreviewBackend backend,
+        int width,
+        int height,
+        float eyeWorldY)
+    {
+        var eye = new Vector3(0f, eyeWorldY, 0f);
+        backend.SetCameraDebugPose(eye, eye + Vector3.UnitZ * 80f);
+        for (var frame = 0; frame < 12; frame++)
+        {
+            DrawFrame(context, backend, width, height);
+        }
+
+        context.Gl.Finish();
+    }
+
+    private static double ComputeMeanRgb(GlPixelSnapshot snapshot)
+    {
+        var rgba = snapshot.Rgba.Span;
+        double sum = 0;
+        for (var index = 0; index < rgba.Length; index += 4)
+        {
+            sum += rgba[index] + rgba[index + 1] + rgba[index + 2];
+        }
+
+        return sum / (snapshot.Width * snapshot.Height * 3.0 * byte.MaxValue);
+    }
 
     private static PreviewMaterial[] CreateGroundMaterials()
     {

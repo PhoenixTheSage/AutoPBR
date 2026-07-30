@@ -1,5 +1,5 @@
 #version 330 core
-// Curved-shell volumetric clouds with conservative empty-space marching.
+// Flat continuous-world volumetric clouds with conservative empty-space marching.
 
 //!include "common/common.glsl"
 //!include "common/atmosphere.glsl"
@@ -86,7 +86,8 @@ layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 FragCloudData;
 
 const int CLOUD_MAX_STEPS = 64;
-const float CLOUD_HORIZON_FEATHER = 0.0025;
+const float CLOUD_MAX_TRACE_DISTANCE = 4096.0;
+const float CLOUD_DISTANCE_FADE_FRACTION = 0.20;
 const float CLOUD_STBN_WIDTH = 128.0;
 const float CLOUD_STBN_HEIGHT = 128.0;
 const float CLOUD_STBN_FRAMES = 64.0;
@@ -161,7 +162,11 @@ vec3 sampleSkyAmbient(vec3 rd, sampler2D skyLut, int hasSkyLut, float dayAmt)
 
     vec3 ambientDir = normalize(vec3(rd.x * 0.35, max(rd.y, 0.45), rd.z * 0.35));
     vec3 lut = srgbToLinear(cloudSampleSkyViewLutSrgb(skyLut, ambientDir));
-    return mix(night, lut, dayAmt);
+    // Flat layers can sustain much longer horizontal optical paths than the former curved
+    // shell. Retain a conservative diffuse-sky floor so dense camera-inside views do not
+    // collapse to unlit black after direct sunlight is fully extinguished.
+    vec3 dayFloor = vec3(0.060, 0.080, 0.120);
+    return mix(night, max(lut, dayFloor), dayAmt);
 }
 
 vec3 cloudResolveCachedLighting(
@@ -317,7 +322,7 @@ vec4 cloudDebugShapeCoordinates(
     float layerTop,
     vec4 weather)
 {
-    float altitude = length(worldPos - planetCenter) - planetRadius;
+    float altitude = vcsAltitude(worldPos, planetCenter.y + planetRadius);
     float h = saturate1(
         (altitude - layerBase) / max(layerTop - layerBase, 0.001));
     float sizeScale = max(uVolumeSize, 8.0) * 2.0;
@@ -391,32 +396,42 @@ void main()
     vec3 planetCenter = vec3(0.0, uGroundWorldY - planetRadius, 0.0);
     float layerBaseAltitude = max(uLayerHeight - uGroundWorldY, 0.01);
     float layerTopAltitude = layerBaseAltitude + max(uVolumeHeight, 0.01);
-    float innerRadius = planetRadius + layerBaseAltitude;
-    float outerRadius = planetRadius + layerTopAltitude;
+    // The support slab changes topology only inside a zero-density guard band. The
+    // physical density profile continues to use the unpadded base/top altitudes.
+    float layerSupportGuard = clamp(uVolumeHeight * 0.015, 0.50, 1.50);
+    float layerSupportBase = max(layerBaseAltitude - layerSupportGuard, 0.001);
+    float layerSupportTop = layerTopAltitude + layerSupportGuard;
 
-    vec2 slabSeg = vcsIntersectShell(uCameraPos, rd, planetCenter, innerRadius, outerRadius);
-    // Opaque scene depth remains hard. The planet receives a very narrow angular feather:
-    // far-side clouds may contribute only inside that transition band, avoiding a cutout edge.
-    float planetT = vcsPlanetOcclusionDistance(uCameraPos, rd, planetCenter, planetRadius);
-    float horizonVisibility = vcsPlanetHorizonVisibility(
-        uCameraPos, rd, planetCenter, planetRadius, CLOUD_HORIZON_FEATHER);
+    vec2 slabSeg = vcsIntersectAltitudeSlab(
+        uCameraPos,
+        rd,
+        uGroundWorldY,
+        layerSupportBase,
+        layerSupportTop,
+        CLOUD_MAX_TRACE_DISTANCE);
+    // Opaque scene depth remains hard. A distance fade affects only slabs whose entry
+    // approaches the finite continuous-world trace boundary.
     float sceneT = cloudSceneDistance(rd);
     float tEnter = slabSeg.x;
     float tExit = min(slabSeg.y, sceneT);
-    float slabHorizonVisibility = planetT < 1e8 && tEnter >= planetT
-        ? horizonVisibility
-        : 1.0;
-    bool slabHit = tExit > tEnter && slabHorizonVisibility > 1e-3;
+    float slabDistanceVisibility = vcsDistanceVisibility(
+        tEnter, CLOUD_MAX_TRACE_DISTANCE, CLOUD_DISTANCE_FADE_FRACTION);
+    bool slabHit = tExit > tEnter && slabDistanceVisibility > 1e-3;
 
     float cirrusAltitude = layerTopAltitude + max(uVolumeHeight * 1.5, 18.0);
     float cirrusThickness = max(uVolumeHeight * 0.035, 0.75);
-    vec2 cirrusSeg = vcsIntersectShell(uCameraPos, rd, planetCenter,
-        planetRadius + cirrusAltitude, planetRadius + cirrusAltitude + cirrusThickness);
+    float cirrusSupportGuard = clamp(cirrusThickness * 0.20, 0.25, 0.75);
+    vec2 cirrusSeg = vcsIntersectAltitudeSlab(
+        uCameraPos,
+        rd,
+        uGroundWorldY,
+        cirrusAltitude - cirrusSupportGuard,
+        cirrusAltitude + cirrusThickness + cirrusSupportGuard,
+        CLOUD_MAX_TRACE_DISTANCE);
     cirrusSeg.y = min(cirrusSeg.y, sceneT);
-    float cirrusHorizonVisibility = planetT < 1e8 && cirrusSeg.x >= planetT
-        ? horizonVisibility
-        : 1.0;
-    bool cirrusHit = cirrusSeg.y > cirrusSeg.x && cirrusHorizonVisibility > 1e-3;
+    float cirrusDistanceVisibility = vcsDistanceVisibility(
+        cirrusSeg.x, CLOUD_MAX_TRACE_DISTANCE, CLOUD_DISTANCE_FADE_FRACTION);
+    bool cirrusHit = cirrusSeg.y > cirrusSeg.x && cirrusDistanceVisibility > 1e-3;
 
     if (!slabHit && (!cirrusHit || uCirrusStrength <= 0.0))
     {
@@ -518,7 +533,12 @@ void main()
                     : (CLOUD_QUALITY >= 3
                         ? 48
                         : (CLOUD_QUALITY >= 2 ? 32 : 24)));
-            float marchStep = max((tExit - tEnter) / float(steps), 0.01);
+            float marchStep = vcsMarchStepLength(
+                tEnter,
+                tExit,
+                steps,
+                uVolumeSize,
+                uVolumeHeight);
             float sampleFootprint = max(
                 marchStep,
                 tSample * uPixelAngularSize);
@@ -624,8 +644,8 @@ void main()
         }
 
         alpha = 0.95;
-        cloudCol *= slabHorizonVisibility;
-        alpha *= slabHorizonVisibility;
+        cloudCol *= slabDistanceVisibility;
+        alpha *= slabDistanceVisibility;
         debugViewActive = true;
     }
 
@@ -651,13 +671,21 @@ void main()
         if (slabHit)
         {
             // A few weather-map taps reject wholly clear rays before any 3D texture access.
+            // Near taps keep local banks visible across eye-height; full-interval taps keep
+            // distant inside-layer formations from being early-out'd by the march-span cap.
             float covMax = 0.0;
+            float interval = max(tExit - tEnter, 0.0);
+            float nearSpan = min(
+                interval,
+                vcsMarchSpanLimit(uVolumeSize, uVolumeHeight));
             for (int i = 0; i < 4; ++i)
             {
-                float tCov = mix(tEnter, tExit, (float(i) + 0.5) / 4.0);
+                float tCov = i < 2
+                    ? tEnter + nearSpan * ((float(i) + 0.5) / 2.0)
+                    : mix(tEnter, tExit, (float(i - 2) + 0.5) / 2.0);
                 vec3 covPos = uCameraPos + rd * tCov;
                 float coverageFootprint = max(
-                    (tExit - tEnter) / 4.0,
+                    (i < 2 ? nearSpan : interval) / 2.0,
                     tCov * uPixelAngularSize);
                 covMax = max(covMax,
                     vcSampleWeather(
@@ -680,32 +708,60 @@ void main()
                         : (CLOUD_QUALITY >= 3
                             ? 48
                             : (CLOUD_QUALITY >= 2 ? 32 : 24)));
-                float fineStep = max((tExit - tEnter) / float(steps), 0.01);
-                float coarseStep = fineStep * (CLOUD_QUALITY <= 0 ? 4.0 : 3.0);
+                // Short and long intervals share one camera-region-independent policy. Long
+                // grazing rays keep a bounded near step, then grow across their actual interval
+                // so crossing into the slab cannot select a different integrator.
+                float marchInterval = max(tExit - tEnter, 0.0);
+                float marchSpanLimit =
+                    vcsMarchSpanLimit(uVolumeSize, uVolumeHeight);
+                float baseStep = vcsMarchStepLength(
+                    tEnter,
+                    tExit,
+                    steps,
+                    uVolumeSize,
+                    uVolumeHeight);
+                float maxStep = max(
+                    marchInterval / float(steps),
+                    baseStep);
+                bool longSlabMarch = marchInterval > marchSpanLimit + 1e-3;
                 int lightSteps = CLOUD_QUALITY >= 2 ? 4 : (CLOUD_QUALITY <= 0 ? 2 : 3);
                 float detailLodBias = CLOUD_QUALITY >= 3 ? -0.35 : 0.0;
                 float jitter01 = cacheDepthJitter;
-                float t = tEnter + jitter01 * fineStep;
+                // Anchor the first cell to ray distance instead of shell entry. A grazing
+                // entry can move tens of units while the camera crosses only centimeters.
+                float phaseDistance = jitter01 * baseStep;
+                float t = tEnter + mod(phaseDistance - tEnter, baseStep);
+                int densitySteps = 0;
 
                 for (int i = 0; i < CLOUD_MAX_STEPS; ++i)
                 {
-                    if (i >= steps || t >= tExit)
+                    if (densitySteps >= steps || t >= tExit)
                     {
                         break;
                     }
 
-                    float sampleT = min(t + fineStep * 0.5, tExit);
+                    float localMarchDistance = max(t - tEnter, 0.0);
+                    float stepLen = longSlabMarch
+                        ? mix(
+                            baseStep,
+                            maxStep,
+                            saturate1(localMarchDistance / max(marchInterval, 0.01)))
+                        : baseStep;
+                    float emptyLen = max(
+                        stepLen * (CLOUD_QUALITY <= 0 ? 4.0 : 3.0),
+                        CLOUD_MAX_TRACE_DISTANCE / float(CLOUD_MAX_STEPS));
+                    float sampleT = min(t + stepLen * 0.5, tExit);
                     vec3 worldPos = uCameraPos + rd * sampleT;
                     float pixelFootprint = sampleT * uPixelAngularSize;
-                    float sampleFootprint = max(fineStep, pixelFootprint);
-                    float conservativeFootprint = max(coarseStep, pixelFootprint);
+                    float sampleFootprint = max(stepLen, pixelFootprint);
+                    float conservativeFootprint = max(emptyLen, pixelFootprint);
                     float conservative = vcCloudConservativeDensity(worldPos, planetCenter, planetRadius,
                         layerBaseAltitude, layerTopAltitude, uCoverageScale, uVolumeSize,
                         uCoverageMap, uHasCoverageMap, uWindOffset, conservativeFootprint,
                         uDensityAssetVersion);
                     if (conservative <= 1e-4)
                     {
-                        t += coarseStep;
+                        t += emptyLen;
                         continue;
                     }
 
@@ -733,7 +789,7 @@ void main()
                         uDensityAssetVersion);
                     if (baseShape <= 1e-5)
                     {
-                        t += fineStep;
+                        t += stepLen;
                         continue;
                     }
 
@@ -744,7 +800,8 @@ void main()
                         weather.z, weather.w, uDensityAssetVersion);
                     if (density > 1e-5)
                     {
-                        float segmentLength = min(fineStep, tExit - t);
+                        densitySteps += 1;
+                        float segmentLength = min(stepLen, tExit - t);
                         vec3 cloudLightWeights;
                         vec3 cachedLighting = CLOUD_QUALITY >= 2
                             ? cloudResolveCachedLighting(
@@ -791,7 +848,7 @@ void main()
                                 boundaryWeight *
                                 uCloudLocalConeOpticalDepthScale;
                         }
-                        float altitude = vcsAltitude(worldPos, planetCenter, planetRadius);
+                        float altitude = vcsAltitude(worldPos, uGroundWorldY);
                         float hSample = saturate1(
                             (altitude - layerBaseAltitude) /
                             max(uVolumeHeight, 0.001));
@@ -830,11 +887,11 @@ void main()
                             ambientVisibility;
                         if (useCachedLighting)
                         {
-                            vec3 radialUp = normalize(worldPos - planetCenter);
+                            vec3 localUp = vec3(0.0, 1.0, 0.0);
                             float upwardHemisphereWeight = smoothstep(
                                 -0.15,
                                 0.65,
-                                dot(rd, radialUp));
+                                dot(rd, localUp));
                             float lowerAltitudeProfile =
                                 1.0 - smoothstep(0.28, 0.67, hSample);
                             radiance +=
@@ -859,27 +916,31 @@ void main()
                         }
                     }
 
-                    t += fineStep;
+                    t += stepLen;
                 }
             }
 
             // Fade the integrated premultiplied layer, not its input density. Scaling density
             // before Beer-Lambert integration leaves thick clouds opaque through most of the
             // transition and then collapses them into a visible horizontal cutoff.
-            if (slabHorizonVisibility < 1.0)
+            if (slabDistanceVisibility < 1.0)
             {
                 float cumulusAlpha = saturate1(1.0 - transmittance);
-                accum *= slabHorizonVisibility;
-                transmittance = 1.0 - cumulusAlpha * slabHorizonVisibility;
+                accum *= slabDistanceVisibility;
+                transmittance = 1.0 - cumulusAlpha * slabDistanceVisibility;
             }
         }
 
         if (uCirrusStrength > 0.0 && cirrusHit)
         {
-            int cirrusSamples = CLOUD_QUALITY >= 2 ? 2 : 1;
+            int cirrusSamples = CLOUD_QUALITY >= 3 ? 4 : 2;
             float cirrusDensity = 0.0;
+            float cirrusColumnDensity = 0.0;
+            float cirrusProfileWeight = 0.0;
             float tCirrus = (cirrusSeg.x + cirrusSeg.y) * 0.5;
-            for (int i = 0; i < 2; ++i)
+            float cirrusSampleLength =
+                (cirrusSeg.y - cirrusSeg.x) / float(cirrusSamples);
+            for (int i = 0; i < 4; ++i)
             {
                 if (i >= cirrusSamples)
                 {
@@ -905,17 +966,39 @@ void main()
                     CLOUD_QUALITY >= 3 ? -0.35 : 0.0,
                     CLOUD_QUALITY,
                     uDensityAssetVersion);
-                cirrusDensity += sampleDensity / float(cirrusSamples);
-                if (sampleDensity > 1e-3)
+                float cirrusSampleAltitude =
+                    vcsAltitude(cirrusPos, uGroundWorldY);
+                float cirrusHeight = saturate1(
+                    (cirrusSampleAltitude - cirrusAltitude) /
+                    max(cirrusThickness, 0.01));
+                float cirrusVerticalProfile =
+                    smoothstep(0.0, 0.18, cirrusHeight) *
+                    (1.0 - smoothstep(0.72, 1.0, cirrusHeight));
+                float pathWeight =
+                    cirrusVerticalProfile *
+                    cirrusSampleLength /
+                    max(cirrusThickness, 0.01);
+                cirrusColumnDensity += sampleDensity * pathWeight;
+                cirrusProfileWeight += pathWeight;
+                if (sampleDensity * cirrusVerticalProfile > 1e-3)
                 {
                     tCirrus = min(tCirrus, sampleT);
                 }
             }
-            if (cirrusDensity > 1e-3)
+            if (cirrusProfileWeight > 1e-4)
             {
-                float slant = clamp((cirrusSeg.y - cirrusSeg.x) / cirrusThickness, 1.0, 3.0);
-                float cirrusOd = cirrusDensity * uCirrusStrength * 0.27 * slant;
-                float cirrusAlpha = (1.0 - exp(-cirrusOd)) * cirrusHorizonVisibility;
+                cirrusDensity =
+                    cirrusColumnDensity / cirrusProfileWeight;
+            }
+            if (cirrusColumnDensity > 1e-3)
+            {
+                // Actual profiled path length makes opacity converge to zero at both
+                // boundaries; the previous minimum-one slant clamp caused a hard pop.
+                float cirrusOd =
+                    min(cirrusColumnDensity, 3.0) *
+                    uCirrusStrength *
+                    0.27;
+                float cirrusAlpha = (1.0 - exp(-cirrusOd)) * cirrusDistanceVisibility;
                 vec3 cirrusLightWeights;
                 vec3 cirrusCachedLighting = CLOUD_QUALITY >= 2
                     ? cloudResolveCachedLighting(
@@ -972,5 +1055,11 @@ void main()
     }
 
     FragColor = vec4(cloudCol, alpha);
-    FragCloudData = ctEncodeMetadata(representativeT, representativeKind, true, uCloudDataDirect);
+    // Clear shell rays must not publish the altitude-plane exit as nearest-cloud depth;
+    // that floor/ceiling value fights itself across eye-height when the camera is inside.
+    FragCloudData = ctEncodeMetadata(
+        representativeT,
+        representativeKind,
+        representativeFound || alpha > 1e-3,
+        uCloudDataDirect);
 }

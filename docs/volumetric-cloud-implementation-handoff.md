@@ -1,16 +1,16 @@
 # Volumetric cloud implementation handoff
 
 **Status:** Active  
-**Last updated:** 2026-07-29
-**Branch/base:** `main` at checkpoint `1377876c` before the working-tree changes
+**Last updated:** 2026-07-30
+**Branch/base:** `main` at `434a3627` before the CQ3.8 working-tree changes
 **Roadmap:** [Volumetric cloud quality roadmap](volumetric-cloud-quality-roadmap.md)  
 **Active specification:** [CQ4 sparse voxel/SDF backend](volumetric-cloud-cq4-sparse-voxel-sdf.md)
 
 ## Current checkpoint
 
-CQ1 and CQ2 are complete and accepted as of 2026-07-28. CQ2.0 froze the v2 density-asset ABI, CQ2.1 implemented deterministic generators, detailed CQ2.2 bundled the pinned payloads, CQ2.3 added strict transactional profile selection, CQ2.4 added explicit ray-footprint LOD, CQ2.5 implemented versioned weather/material shaping, CQ2.6 added expanded weather addressing plus edge-only rotated detail, CQ2.7 completed debug inspection and automated asset/shader coverage, and CQ2.8 completed fixed-scene visual and GPU performance acceptance. Validated desktop contexts select v2; GLES/ANGLE and any v2 load/upload failure retain one coherent v1 profile. CQ3.0 through CQ3.7 are complete and accepted as of 2026-07-29: the light-cache ABI/generation/consumption path now includes controlled multiple scattering, local hemispherical sky visibility, restrained terrain-material ground bounce, cached cirrus/cumulus lighting, Cinematic two-tap boundary refinement, transactional terrain/fog transmittance, bounded scheduling and exact-static reuse. The final 13-case matrix passes the High `1.25×` gate at `1.215×`; live GL 3.3, compute/fragment/short-march failure paths, and long-lived DDA/resident-terrain pixels are green. Low/Medium/GLES and invalid or out-of-range cloud-body cache samples retain the accepted short march; ground-transmittance consumers use full sunlight when their publication is unavailable or invalid.
+CQ1 and CQ2 are complete and accepted as of 2026-07-28. CQ2.0 froze the v2 density-asset ABI, CQ2.1 implemented deterministic generators, detailed CQ2.2 bundled the pinned payloads, CQ2.3 added strict transactional profile selection, CQ2.4 added explicit ray-footprint LOD, CQ2.5 implemented versioned weather/material shaping, CQ2.6 added expanded weather addressing plus edge-only rotated detail, CQ2.7 completed debug inspection and automated asset/shader coverage, and CQ2.8 completed fixed-scene visual and GPU performance acceptance. Validated desktop contexts select v2; GLES/ANGLE and any v2 load/upload failure retain one coherent v1 profile. CQ3.0 through CQ3.9 are complete and accepted as of 2026-07-30: the light-cache ABI/generation/consumption path includes controlled multiple scattering, local hemispherical sky visibility, restrained terrain-material ground bounce, cached cirrus/cumulus lighting, Cinematic two-tap boundary refinement, transactional terrain/fog transmittance, bounded scheduling, exact-static reuse, flat continuous-world layers, and camera-region-independent level-view marching. Live GL 3.3, compute/fragment/short-march failure paths, DDA/resident terrain, opaque depth ordering, and all 16 High/Cinematic temporal boundary combinations remain green. Low/Medium/GLES and invalid or out-of-range cloud-body cache samples retain the accepted short march; ground-transmittance consumers use full sunlight when their publication is unavailable or invalid.
 
-Checkpoint `1377876c` contains CQ1.1–CQ1.8 plus the intentional 16-chunk distant-terrain LOD work. The current uncommitted working tree contains the subsequent CQ1.8/CQ1.9 acceptance corrections, complete CQ2.0–CQ2.8 and CQ3.0–CQ3.7 implementation, tests, assets, evidence harnesses, tracking updates, and the DDA initialization correction described below.
+Commit `434a3627` contains the accepted CQ1–CQ3.7 implementation. The current working tree contains the accepted CQ3.8 continuous-altitude stabilization and CQ3.9 flat continuous-world conversion. CQ4.0 capability/backend selection is the next roadmap task; the CQ3.9 procedural flat-layer path is its mandatory High and unsupported-Cinematic fallback.
 
 ## Completed
 
@@ -36,7 +36,7 @@ Checkpoint `1377876c` contains CQ1.1–CQ1.8 plus the intentional 16-chunk dista
 
 - `GlCloudLightFroxelCache` owns transactional High/Cinematic near/far `RG16F` texture arrays and two prefix scratch textures per cascade. CQ3.2 upgraded the internal prefix scratch to `RG32F` so both generators preserve a full-precision recurrence and round only when publishing each `RG16F` layer. Allocation, clear, per-layer framebuffer completeness, generation, and teardown are independent of camera fog/god-ray froxels.
 - `GlCloudLightFragmentSliceGenerator` processes slices in sun-to-world order and alternates scratch textures, avoiding framebuffer feedback. It injects accepted CQ2 density, retains thin cirrus through slice-overlap integration, and stores cumulative optical depth plus bounded reference sky visibility.
-- Conservative depth bounds include the full configured cumulus/cirrus envelope, one CQ2 detail period at both ends, projected light-space footprint, curved-shell drop, and a snapping guard.
+- Conservative depth bounds include the full configured cumulus/cirrus envelope, one CQ2 detail period at both ends, projected light-space footprint, and a snapping guard. CQ3.9 removed the former footprint-dependent curvature drop.
 - CPU and GLSL near/far selection use the outer 20% of the near cascade; GLSL lookup explicitly interpolates adjacent array layers.
 - Hidden-WGL fixed-density readback verifies analytic cumulative optical depth, monotonic half-float slices, bounded visibility, and the interpolated center lookup. The production `862×683` harness reports the reference ready while terrain and P5.4 DDA remain intact.
 - Cache allocation/generation failure is optional and diagnostic. Low/Medium/GLES allocate nothing, and every CQ3.1 path still reports `activeRuntime=short-march`.
@@ -100,6 +100,29 @@ Checkpoint `1377876c` contains CQ1.1–CQ1.8 plus the intentional 16-chunk dista
 - The final High dense-overcast result is `0.671/0.705 ms` trace p50/p95, `0.889/2.001 ms` cloud-total p50/p95, and `1.215×` the accepted CQ2 baseline against the `1.25×` gate. Three independent confirmation runs remain between `0.671` and `0.674 ms`.
 - The moving Cinematic fixture records 180 near and 60 far refresh samples, proving the required `1/4` cadence. Since frozen High has zero generation cost and passes, physical overlap copies are deferred; due moving cascades keep permitted full regeneration.
 - Live tests cover compute→fragment→short-march demotion, stale ground-publication rejection, real GL 3.3 fragment generation, generic and specialized shader compilation, acceleration-lane pixel parity, and the long-lived resident-terrain/DDA lifecycle.
+
+### CQ3.8 — continuous-altitude stabilization
+
+- Removes the diagnostic-only Below/Inside/Above camera state; no renderer path depended on it.
+- Replaces cancellation-prone radius subtraction and quadratic roots with stable signed-altitude shell math shared by CPU references, view trace, repair, and CQ2/CQ3 density queries.
+- Adds zero-density cumulus/cirrus support guards and ray-distance-anchored primary sampling so a shell entry crossing cannot relocate the complete sample pattern at visible density.
+- Replaces the cirrus minimum-one slant clamp with smooth vertical profiling and actual path-length optical depth in trace and repair.
+- Passes a live render-readiness-aware boundary matrix covering High/Cinematic, temporal enabled/disabled, and cumulus/cirrus base/top crossings. The frozen 1080p High dense-overcast rerun retained 240 samples at `0.617/0.718 ms` trace p50/p95, below the `0.690 ms` gate.
+- Keeps exact rationalized altitude for intersections and diagnostics. The repeated density hot path uses a stable third-order radius expansion, while High retains two profiled cirrus taps and Cinematic uses four.
+- Keeps failure telemetry through continuous radial altitude and signed cumulus/cirrus boundary distances.
+- CPU/source tests and explicit hidden-WGL shader compilation pass. Do not start CQ4.0 until animated High/Cinematic sweeps accept all four boundaries with temporal on/off.
+
+### CQ3.9 — flat continuous-world layers
+
+- Replaces the preview planet's spherical cloud intersections with horizontal world-altitude slabs. Cumulus and cirrus now remain at exactly the same `worldY - groundY` altitude across arbitrarily large XZ positions.
+- Uses a 4,096-unit bounded trace interval and fades only slab entries in its final 20 percent. This keeps far-distance cost finite without a spherical horizon, visible deck curvature, or a hard terminal cutoff.
+- The first flat-layer build applied a symmetric camera-boundary opacity crossfade in trace, repair, and final reconstruction. User screenshots on 2026-07-30 showed three repeatable sky-color extinction bands while ascending: the factor reached zero at cumulus base/top and cirrus base/top, recreating the visual signature of the removed camera-region transitions. The helper, trace/repair multipliers, reconstruction multiplier, and reconstruction layer-height uniforms are now removed. Camera altitude may alter slab intersections and sampled density but cannot directly attenuate cloud opacity or radiance.
+- Mid-layer level views then showed a horizontal cut-through of the nearest bank and a later range cliff when no near cloud was present: coverage/steps inherited the floor/ceiling exit, soft near weather exhausted the density budget inside the near span, and clear slabs published that exit as nearest depth. The handoff correction correctly made metadata density-only, counted only real density samples, and added near plus full-interval coverage probes; retain all three. Its `tEnter <= 0.001` inside-slab branch, however, switched to a different step lattice at the boundary and made mid-layer views snap away from the otherwise seamless altitude sweep. The current reconciliation removes that classification: short intervals use their actual length, every long/grazing interval uses the same bounded near span, and step growth is based on local distance through the interval. Equal intervals therefore render with the same policy below, inside, or above the layer while the depth-fighting fix remains intact.
+- Keeps a restrained daytime diffuse-sky floor for dense camera-inside paths so removing the curvature does not turn long horizontal optical paths into unlit black.
+- Removes radial density altitude from CQ2 shape/detail evaluation, short light marches, and CQ3 light-cache generation. The legacy center/radius uniforms remain temporarily for compatibility ABI only; their sum reconstructs the flat ground datum.
+- Removes cache curvature padding, solid-planet cloud rejection, and the full-resolution upsample planet mask. Opaque scene depth remains authoritative in trace, repair, and per-tap reconstruction.
+- Replaces the CPU curved-shell reference with `PreviewCloudLayerGeometry`, covering large-XZ altitude invariance, centimeter-scale crossings, horizontal inside/outside rays, distance fade, and scene occlusion.
+- `AUTOPBR_RUN_CQ39_ACCEPTANCE=1` runs the High/Cinematic, temporal-on/off boundary matrix. CQ4.0 remains gated on that live matrix plus the frozen High performance rerun.
 
 ### CQ2.0 — density asset ABI
 
@@ -393,7 +416,7 @@ The live run initially exposed an STBN asset-loader dependency on Avalonia appli
 - Exposure, soft-knee shaping, and SDR display encoding occur once during final cloud composition for both the primary upsample and fallback composite.
 - High and Cinematic use the bundled STBN march-placement volume on desktop; Low, Medium, GLES/ANGLE, and asset/upload failures use the existing lightweight jitter.
 - Desktop Cinematic uses the bounded full-resolution repair target when its shader and FP16/direct-metadata framebuffer are available. Optional failure retains the two-thirds CQ1.7 source.
-- The Phase 6 height safety and opaque-scene depth contracts are unchanged. The planet-horizon fade now operates on integrated premultiplied layer output while preserving full far-side occlusion.
+- The Phase 6 height safety and opaque-scene depth contracts are unchanged. CQ3.9 supersedes the historical planet-horizon fade with a bounded flat-layer distance fade only; there is no camera-altitude opacity fade.
 
 ## Validation record
 
@@ -401,7 +424,11 @@ The live run initially exposed an STBN asset-loader dependency on Avalonia appli
 |-------|--------|
 | App solution build | Pass |
 | CQ1.8 terrain/rendering/repair focused tests | Pass |
-| Complete app test assembly | 604/604 pass after CQ3.7 |
+| Complete app test assembly | 604/604 pass in Release with the CQ3.9 interval-policy reconciliation |
+| Hidden-WGL CQ3.9 shader/target/depth smoke | 19/19 pass; generic/High/temporal/repair/upsample/cache programs compile and opaque-depth ordering remains green |
+| Hidden-WGL CQ3.9 altitude matrix | Pass: all 16 High/Cinematic × temporal on/off × cumulus/cirrus base/top combinations pass; valid uniform clear-sky frames remain in the delta sequence while near-black startup captures are rejected |
+| Hidden-WGL CQ3.9 full-HD visual/depth matrix | Pass: 13 captures and 3,120 retained GPU samples cover below/inside/above layers, grazing distance, cirrus, terrain/depth ordering, moving shadows, and sun transitions |
+| Hidden-WGL CQ3.9 frozen High performance | Pass: `0.514/0.547 ms` trace p50/p95, `0.701/1.511 ms` cloud-total p50/p95, `0.514 ms` amortized lighting, and `0.931×` CQ2 versus the `1.25×` ceiling |
 | Hidden-WGL full-backend terrain capture, bundled palette | Pass at `862x683` |
 | Hidden-WGL full-backend terrain capture, Minecraft 26.1.2 terrain/vegetation palette | Pass at `862x683`; DDA active; `2,401/2,401` chunks before recenter; 685 MiB pool; no rejection; visible-terrain capture after a 100-frame recenter tail |
 | Hidden-WGL production-profile DDA/CQ3.7 transition | 2/2 pixel harnesses pass; P5.4 and acceleration lanes remain active, and resident terrain stays visible after late cache/DDA initialization |
@@ -420,9 +447,9 @@ The broader solution run completed the app and preview suites but is not green: 
 
 ## Next implementation task
 
-Start CQ4.0 capability and backend selection without changing accepted shell output:
+Start CQ4.0 capability/backend selection while preserving the accepted flat CQ3.9 procedural layer as the mandatory fallback:
 
-1. Add `CanUseSparseCloudVolumes` for desktop compute, image load/store, and SSBO support.
-2. Add an internal shell-versus-sparse backend profile and diagnostics; keep the CQ3 shell selected initially.
-3. Prove unsupported, allocation-failure, shader-failure, and GPU-fault cases remain on the accepted CQ3 shell rather than disabling clouds.
-4. Keep CQ1 reconstruction, CQ2 density semantics, CQ3 lighting, GLES/ANGLE behavior, and the final CQ3.7 DDA/performance gates unchanged.
+1. Add the planned `CanUseSparseCloudVolumes` desktop capability contract.
+2. Add an internal backend-selection profile without allocating sparse resources or changing cloud pixels.
+3. Select sparse volumes only for Cinematic on compute/image-store/SSBO-capable desktop GL.
+4. Keep High, GLES/ANGLE, and unsupported Cinematic systems on the accepted CQ3.9 procedural flat layer with explicit diagnostics.

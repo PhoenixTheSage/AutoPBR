@@ -151,15 +151,15 @@ backend as CQ1 → CQ2 → CQ3 → CQ4 while preserving the current GLES/ANGLE s
 
 1. **Sky-view LUT** (`atmo_skyview.frag`) — precomputed in-scatter from sun direction, turbidity, and exposure.
 2. **Sky composite** (`atmo_sky.frag`) — full-screen LUT sample + optional sun-disc bloom.
-3. **Detailed clouds** — curved cumulus shell plus a separate wind-sheared cirrus ice layer. Cloud rays are clipped by opaque scene depth and the solid preview planet; the half-resolution upsample repeats the packed cloud-distance test at full resolution.
+3. **Detailed clouds** — flat world-altitude cumulus volume plus a separate wind-sheared cirrus ice layer. Cloud rays are clipped by opaque scene depth; the half-resolution upsample repeats cloud-distance rejection per tap at full resolution.
 4. **God rays** — froxel fog inject + Mie integrate consuming resolved detailed-cloud opacity/depth → half-res history → bilateral/temporal upsample. Detailed clouds composite first, then cloud-aware shaft radiance is added so foreground shafts remain visible while samples behind clouds are attenuated.
 
 ### Phase 6 visual-correctness contract
 
 - Cumulus follows the WMO morphology target: detached dense masses, a shared nearly horizontal condensation base, and vertically organized domes/towers. Weather type now controls horizontal footprint, vertical lobe frequency, and upper-level drift; detail erosion remains concentrated at the silhouette so the interior does not break into foam islands.
 - Cirrus follows the WMO morphology target: detached delicate patches with a fibrous or silky character. A broad warped moisture field gates two differently oriented filament families, producing forks, hooks, and feathered edges instead of uniform parallel streaks. High quality samples twice through the thin ice shell; Beer-Lambert opacity remains intentionally lower than cumulus.
-- The artistic planet radius is 72,000 world units. Surface drop is about 1.74 units at 500 units and 6.94 units at 1,000 units, while the default cloud base still rolls over at a roughly 1,610-unit geometric horizon. Curvature is therefore a far-distance cue rather than a visible near-scene arc.
-- The planet sphere is an occluder. A very narrow angular visibility feather lets clouds recede a few pixels behind the geometric horizon before disappearing, leaving the sky pass's below-horizon atmospheric fog visible without a hard cutout.
+- CQ3.9 removes the former 72,000-unit artistic planet curvature. Cloud altitude is exactly `worldY - groundY`, matching the continuous terrain world at every XZ position.
+- Flat layer traversal is bounded to 4,096 world units. A smooth fade affects only layers first reached in the last 20 percent of that range; opaque scene depth remains a hard bound.
 - Opaque scene depth remains authoritative during both tracing and full-resolution reconstruction. The half-resolution trace conservatively keeps the farthest sample in each reconstruction footprint, while the full-resolution pass compares every cloud tap against the destination pixel's reconstructed scene distance. This prevents terrain from erasing adjacent sky clouds without allowing cloud bleed over the ground mesh or nearby subjects.
 
 ## Sky LUT bloom (tuning)
@@ -232,12 +232,12 @@ Legacy screen-space radial blur (`genesis_godrays.frag`) removed; volume path is
 
 ## Screen-space volumetric clouds (preview)
 
-Froxels own fog and god rays only; clouds are ray-marched through a curved spherical shell in `genesis_clouds.frag` and clipped to reconstructed opaque-scene depth.
+Froxels own fog and god rays only; clouds are ray-marched through flat continuous-world altitude slabs in `genesis_clouds.frag` and clipped to reconstructed opaque-scene depth.
 
 | Layer | Model |
 |-------|--------|
 | Cumulus shell | Weather-map coverage → altitude-local, weather-type-shaped Perlin-Worley lobes → coherent vapor body → edge-focused detail erosion |
-| Cirrus | Thin curved shell above cumulus; warped detached moisture patches plus branching primary/secondary ice filaments; two shell samples on High |
+| Cirrus | Thin flat altitude layer above cumulus; warped detached moisture patches plus branching primary/secondary ice filaments; two layer samples on High |
 | Lighting | Multi-scatter sun + sky-LUT ambient; exposure matched to `atmo_sky.frag` |
 | Integration | Always half-res march → cloud-specific temporal resolve → depth-aware upsample; scene-depth-clipped shell segment; optional final preview TAA |
 | Compositing | Detailed clouds publish opacity/depth to froxel integration; clouds composite first, followed by cloud-aware additive shafts |

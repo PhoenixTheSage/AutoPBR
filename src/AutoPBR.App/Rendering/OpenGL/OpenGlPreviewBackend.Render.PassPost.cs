@@ -9,11 +9,6 @@ public sealed partial class OpenGlPreviewBackend
     {
         EnsurePostPassPerSettingsUniforms(ref frame);
 
-        if (frame.Settings.EnableVolumetricClouds)
-        {
-            ObserveCloudCameraRegion(ref frame);
-        }
-
         var cloudsActive = frame.Settings.EnableVolumetricClouds && CanDrawVolumetricClouds(frame.Settings);
         var godRaysActive = frame.Settings.EnableGodRays && frame.GodRayCaptureActive && _sceneCapture is { IsValid: true };
         var cloudShaderTemporal = ShouldUseCloudShaderTemporal(frame.Settings);

@@ -121,7 +121,7 @@ internal static class GlOverlayTextLayout
     {
         var (lines, maxCols) = CountLines(text);
         var width = maxCols * atlas.CellWidth + padX * 2;
-        var height = lines * (int)atlas.LineHeight + padY * 2;
+        var height = lines * atlas.CellHeight + padY * 2;
         return (Math.Max(1, width), Math.Max(1, height));
     }
 
@@ -205,7 +205,7 @@ internal static class GlOverlayTextLayout
 
             if (ch == '\n')
             {
-                penY += (int)atlas.LineHeight;
+                penY += atlas.CellHeight;
                 lineX = penX;
                 continue;
             }
@@ -217,7 +217,7 @@ internal static class GlOverlayTextLayout
                 lineX,
                 penY,
                 atlas.CellWidth,
-                (int)atlas.LineHeight,
+                atlas.CellHeight,
                 glyph.U0,
                 glyph.V0,
                 glyph.U1,

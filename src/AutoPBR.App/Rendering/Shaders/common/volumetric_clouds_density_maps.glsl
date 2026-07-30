@@ -6,6 +6,14 @@
 
 //!include "volumetric_clouds_density.glsl"
 
+// The center/radius parameters remain in the density ABI for the GLES compatibility path
+// and existing uniform plumbing. Their sum is now only the flat ground datum.
+float vcFlatAltitude(vec3 worldPos, vec3 planetCenter, float planetRadius)
+{
+    float groundWorldY = planetCenter.y + planetRadius;
+    return worldPos.y - groundWorldY;
+}
+
 float vcRemap01(float x, float a, float b)
 {
     return saturate1((x - a) / max(b - a, 1e-5));
@@ -227,7 +235,7 @@ float vcCloudConservativeDensity(vec3 worldPos, vec3 planetCenter, float planetR
     sampler2D coverageMap, int hasCoverageMap, vec3 windOffset, float sampleFootprint,
     int densityAssetVersion)
 {
-    float altitude = length(worldPos - planetCenter) - planetRadius;
+    float altitude = vcFlatAltitude(worldPos, planetCenter, planetRadius);
     if (altitude < layerBase || altitude > layerTop)
     {
         return 0.0;
@@ -265,7 +273,7 @@ float vcCloudBaseDensityFromWeather(vec3 worldPos, vec3 planetCenter, float plan
     sampler3D cloudNoise, int hasCloudNoise, vec3 windOffset,
     float sampleFootprint, vec4 weather, int densityAssetVersion)
 {
-    float altitude = length(worldPos - planetCenter) - planetRadius;
+    float altitude = vcFlatAltitude(worldPos, planetCenter, planetRadius);
     if (altitude < layerBase || altitude > layerTop)
     {
         return 0.0;
@@ -437,7 +445,7 @@ float vcCloudDensityFromBase(float base, vec3 worldPos, vec3 planetCenter, float
     if (hasDetailNoise > 0)
     {
         float layerH = max(layerTop - layerBase, 0.001);
-        float altitude = length(worldPos - planetCenter) - planetRadius;
+        float altitude = vcFlatAltitude(worldPos, planetCenter, planetRadius);
         float h = (altitude - layerBase) / layerH;
         float detailScale = max(volumeSize, 8.0) * 0.5;
         vec3 detailWorld = worldPos + windOffset * 0.5;
@@ -507,7 +515,7 @@ float vcCloudDensityFromBase(float base, vec3 worldPos, vec3 planetCenter, float
 
     float density = vcRemap01(base, erode, 1.0);
     float layerH = max(layerTop - layerBase, 0.001);
-    float altitude = length(worldPos - planetCenter) - planetRadius;
+    float altitude = vcFlatAltitude(worldPos, planetCenter, planetRadius);
     float h = saturate1((altitude - layerBase) / layerH);
     density *= vcCloudDensityPotentialScale(
         h,

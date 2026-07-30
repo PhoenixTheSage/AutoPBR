@@ -7,34 +7,36 @@
 
 ## Purpose
 
-This roadmap moves the Genesis preview clouds from a compact procedural shell toward a production-style cloud renderer while preserving the Phase 6 correctness work. The work is intentionally split into four sequential contracts:
+This roadmap moves the Genesis preview clouds from a compact procedural layer toward a production-style cloud renderer while preserving the Phase 6 correctness work. The work is intentionally split into four sequential contracts:
 
 1. [CQ1 — Precision and reconstruction](volumetric-cloud-cq1-precision-reconstruction.md)
 2. [CQ2 — Density textures and weather data](volumetric-cloud-cq2-density-textures.md)
 3. [CQ3 — Cloud-light froxel cache](volumetric-cloud-cq3-lighting-cache.md)
-4. [CQ4 — Sparse voxel/SDF backend](volumetric-cloud-cq4-sparse-voxel-sdf.md)
+4. [CQ3.8 — Continuous-altitude shell stabilization](volumetric-cloud-cq3-lighting-cache.md#cq38-continuous-altitude-stabilization)
+5. [CQ3.9 — Flat continuous-world layers](volumetric-cloud-cq3-lighting-cache.md#cq39-flat-continuous-world-layers)
+6. [CQ4 — Sparse voxel/SDF backend](volumetric-cloud-cq4-sparse-voxel-sdf.md)
 
-The dependency chain is strict: **CQ1 → CQ2 → CQ3 → CQ4**. A later phase may be prototyped in isolation, but it must not become the production path until the preceding phase meets its exit criteria.
+The dependency chain is strict: **CQ1 → CQ2 → CQ3 → CQ3.8 → CQ3.9 → CQ4**. A later phase may be prototyped in isolation, but it must not become the production path until the preceding phase meets its exit criteria.
 
 ## Pipeline ownership
 
 Cloud-body rendering and camera fog use different volume representations:
 
-- `genesis_clouds.frag` ray-marches the cumulus and cirrus cloud shells into a cloud-specific offscreen target.
+- `genesis_clouds.frag` ray-marches flat, world-altitude cumulus and cirrus layers into a cloud-specific offscreen target.
 - The cloud temporal and upsample passes reconstruct that target and composite it against opaque scene depth.
 - The existing camera-aligned froxel volume injects and integrates fog and god rays. It consumes resolved cloud transmittance/depth, but it does not represent the detailed cloud body.
 - CQ3 introduces a second froxel concept: a **light-aligned cloud-light cache**. It stores cloud lighting information and must not be conflated with the existing camera fog/god-ray froxels.
-- CQ4 optionally replaces shell density queries with sparse cloud density queries. It continues to use CQ1 reconstruction and CQ3 lighting.
+- CQ4 optionally replaces procedural-layer density queries with sparse cloud density queries. It continues to use CQ1 reconstruction and CQ3 lighting.
 
 Increasing the existing fog-froxel resolution is therefore not a substitute for this roadmap.
 
 ## Compatibility policy
 
-- GLES/ANGLE remains a functional compatibility path using the shell renderer, packed RGBA8 metadata, and the current short cloud light march.
+- GLES/ANGLE remains a functional compatibility path using the procedural flat-layer renderer, packed RGBA8 metadata, and the current short cloud light march.
 - Desktop GL 3.3 may use CQ1 floating-point targets and CQ3 fragment-slice cache generation when required formats are framebuffer-renderable.
 - Desktop GL 4.3+ may use compute/image-store cache generation and the CQ4 sparse backend when capability checks pass.
 - Add a persisted `Cinematic = 3` volumetric quality value. Existing Low/Medium/High values `0..2` retain their meanings and deserialize unchanged.
-- Cinematic on unsupported hardware falls back to the best CQ3 shell configuration. It must never disable clouds merely because CQ4 is unavailable.
+- Cinematic on unsupported hardware falls back to the best CQ3 procedural-layer configuration. It must never disable clouds merely because CQ4 is unavailable.
 - Every capability-selected path reports its selected cloud backend, render formats, trace scale, lighting-cache mode, and fallback reason through existing preview diagnostics.
 
 ## Prerequisites
@@ -42,7 +44,7 @@ Increasing the existing fog-froxel resolution is therefore not a substitute for 
 - [x] Restore a green solution/test build. Verified 2026-07-25 with a successful app solution build and all 475 app tests passing.
 - [x] Capture an initial fixed-scene screenshot and GPU timer sample before CQ1 changes existing render formats. The accepted 2026-07-25 user capture is recorded in the implementation handoff.
 - [x] Expand the acceptance matrix with Low/Medium/High captures, GL vendor/renderer/context, sun pose, and a controlled warm-up/sample window before CQ1.9 phase acceptance. Completed 2026-07-28 with twelve 1080p cases, 32 warm-up frames, and 240 GPU samples per case on desktop GL 4.6.
-- [x] Preserve the Phase 6 contracts: safe below/inside/above height transitions, subtle 72,000-unit curvature, atmospheric horizon feather, opaque scene depth ordering, terrain occlusion, and no cloud rendering over nearby subjects. Covered by the accepted production screenshot, long-lived terrain/depth fixtures, and the CQ1.9 height/camera matrix.
+- [x] Preserve the Phase 6 depth contracts with continuous camera-altitude traversal, far-distance atmospheric fade, opaque scene ordering, terrain occlusion, and no cloud rendering over nearby subjects. CQ3.9 removes the obsolete preview-planet curvature for the continuous world; CQ3.8's endpoint and live High/Cinematic boundary behavior remains the regression baseline.
 - [x] Keep the live hidden-WGL cloud compile/depth-ordering smoke test green before each phase begins. Verified through the CQ1.8 regression correction on 2026-07-27 for packed/direct metadata, linear HDR presentation, R8 STBN upload, the RG16F temporal-moment path, odd-viewport Cinematic/High target resizing, full-resolution FP16/direct-metadata edge-repair compilation/allocation/draw/readback, and opaque scene-depth rejection in the repair pass.
 
 ## Phase tracker
@@ -52,7 +54,9 @@ Increasing the existing fog-froxel resolution is therefore not a substitute for 
 | CQ1 | Linear HDR targets, precise metadata, STBN temporal reconstruction, Cinematic trace/edge repair | Baseline and green build | Current RGBA8 shell target/history | Complete | Accepted 2026-07-28 with stable HDR reconstruction, depth ordering, deterministic STBN, and 1080p timing evidence |
 | CQ2 | Versioned shape/detail/weather assets and explicit ray-footprint LOD | CQ1 | Existing v1 128³/32³/256² assets | Complete | Accepted 2026-07-28 with deterministic v2 assets, coherent fallback, explicit LOD, weather/material shaping, fixed-scene visual evidence, and a passing High trace-performance gate |
 | CQ3 | Snapped light-aligned cloud-light cascades, long-range shadowing, cloud AO and ground contribution | CQ2 | Current per-sample short light march | Complete | Accepted 2026-07-29 with compute and GL 3.3 generation, transactional terrain/fog transmittance, bounded scheduling, live fallback coverage, 13-case visual evidence, and a passing High lighting gate |
-| CQ4 | Desktop sparse brick/SDF density backend and deterministic cloud envelope library | CQ3 | CQ3 shell renderer | Proposed | Stable fly-through density with bounded residency, memory, and traversal cost |
+| CQ3.8 | Numerically stable shell traversal and continuous cumulus/cirrus altitude boundaries | CQ3 | Accepted CQ3.7 shell renderer | Complete | Accepted 2026-07-29 with stable shell/density math, live High/Cinematic boundary sweeps, temporal-on/off coverage, preserved terrain/depth behavior, and a passing frozen High trace gate |
+| CQ3.9 | Flat world-altitude slabs for an unbounded continuous world | CQ3.8 | CQ3.8 curved shell (historical rollback only) | Complete | Accepted 2026-07-30 with flat XZ-invariant layers, continuous interval-driven marching, 16 boundary sweeps, preserved depth ordering, a 13-case full-HD matrix, and a passing `0.931×` High lighting gate |
+| CQ4 | Desktop sparse brick/SDF density backend and deterministic cloud envelope library | CQ3.9 | CQ3 flat procedural-layer renderer | Proposed | Stable fly-through density with bounded residency, memory, and traversal cost |
 
 ## Roadmap milestones
 
@@ -88,6 +92,10 @@ Increasing the existing fog-froxel resolution is therefore not a substitute for 
 - [x] CQ3.5: Feed cloud ground transmittance to terrain, fog, and god-ray consumers. Completed 2026-07-29 with a transactional `R16F` far-footprint publication, Beer-Lambert conversion, High far-native and Cinematic near/far-overlap profiles, direct-only terrain and camera-froxel consumers, a two-texel full-sun footprint feather, and full-sun fallback for missing, stale, out-of-range, or non-finite samples. Ambient/IBL, froxel density/occupancy, and view-ray cloud depth remain unchanged. Fixed-density live readback, all `588/588` app tests, and the production DDA/terrain lifecycle pass.
 - [x] CQ3.6: Add cache scheduling, invalidation, wind reprojection, scrolling, diagnostics, and GPU timings. Completed 2026-07-29 with independent High `2/4` and Cinematic `1/4` near/far cadence, a four-frame reuse ceiling, immediate material/camera/sun/basis invalidation, cascade-local generation/fallback, wind-reprojected cloud and ground consumers, snapped scroll-overlap planning, generation-age diagnostics, and separate near/far GPU timing scopes. Due cascades retain the specification's valid full-regeneration first implementation; CQ3.7 captured timings subsequently confirmed that physical overlap-copy scrolling is not required for the final performance gate.
 - [x] CQ3.7: Complete lighting, shadow, fallback, visual, and performance coverage. Completed 2026-07-29 with a 13-case `1920×1080` matrix and 3,120 retained GPU-query samples. The exact-HG High specialization measured `0.671/0.705 ms` trace p50/p95, with zero scheduled cache-generation cost in the frozen fixture; its `1.215×` CQ2 ratio passes the `1.25×` gate. Moving Cinematic evidence recorded 180 near and 60 far refresh samples, matching the `1/4` cadence. Compute→fragment→short-march failure demotion, real GL 3.3 fragment generation, live shader compilation, and the long-lived DDA/resident-terrain pixel harness all pass. Exact-static generation reuse makes physical overlap-copy scrolling unnecessary for CQ3 acceptance; due moving cascades retain bounded full regeneration.
+- [x] CQ3.8a: Replace discrete region telemetry and cancellation-prone shell math with continuous signed-altitude diagnostics, rationalized altitude evaluation, stable quadratic roots, zero-density support guards, ray-distance-anchored primary samples, and path-length-integrated cirrus opacity. Implemented 2026-07-29; focused CPU/source tests and explicitly enabled hidden-WGL generic/High/repair shader compilation pass.
+- [x] CQ3.8b: Capture animated High/Cinematic sweeps across cumulus base/top and cirrus base/top with temporal enabled and disabled. Completed 2026-07-29: the hidden-WGL matrix passes all 16 boundary/quality/temporal combinations after render-readiness and history settling, with no isolated frame-delta spike or cloud runtime fault. The frozen 1080p High dense-overcast case retained 240 GPU samples and measured `0.617/0.718 ms` trace p50/p95, below both CQ3.7's `0.671 ms` p50 and the `0.690 ms` gate. Exact intersection math remains in place; repeated density altitude uses a stable third-order expansion, and High/Cinematic use two/four profiled cirrus taps respectively.
+- [x] CQ3.9a: Replace spherical intersections, radial density altitude, cache curvature padding, planet occlusion, reconstruction planet masks, and camera-altitude opacity multipliers with a shared flat `worldY - groundY` contract. Implemented 2026-07-30 across trace, repair, density, CQ3 cache generation, CPU reference math, and upsample. User runtime evidence exposed and removed the first implementation's zero-opacity bands at all four physical cloud boundaries.
+- [x] CQ3.9b: Accept live High/Cinematic altitude sweeps with temporal enabled/disabled, verify long-distance fade and scene-depth ordering, and rerun the frozen High performance gate. Completed 2026-07-30: the production sweep confirmed removal of zero-opacity bands; the corrected hidden-WGL harness retains valid uniform clear-sky frames and passes all 16 quality/temporal/boundary combinations; density-only metadata and the interval-driven level-view marcher preserve depth ordering; the 13-case `1920×1080` matrix retained 3,120 GPU samples; and frozen High dense-overcast measured `0.514/0.547 ms` trace p50/p95, `0.514 ms` amortized lighting, and `0.931×` CQ2 against the `1.25×` gate.
 
 ### CQ4 — Sparse voxel/SDF backend
 
@@ -103,16 +111,18 @@ Increasing the existing fog-froxel resolution is therefore not a substitute for 
 
 | Preset | Cloud trace | View steps | Reconstruction | Density assets | Lighting | Density backend |
 |--------|-------------|------------|----------------|----------------|----------|-----------------|
-| Low | 1/2 resolution | 16 | Compatibility history/no moments | v1 allowed | Current short march | Shell |
-| Medium | 1/2 resolution | 24 | FP16 where supported; temporal history | v2 on desktop | Current short march | Shell |
-| High | 1/2 resolution | 32 | FP16 + STBN + moments | v2 + rotated boundary detail | CQ3 High cache | Shell |
-| Cinematic | 2/3 resolution | 48 | FP16 + moments + edge repair | v2 maximum quality | CQ3 Cinematic cache | CQ4 sparse when supported; otherwise shell |
+| Low | 1/2 resolution | 16 | Compatibility history/no moments | v1 allowed | Current short march | Procedural flat layer |
+| Medium | 1/2 resolution | 24 | FP16 where supported; temporal history | v2 on desktop | Current short march | Procedural flat layer |
+| High | 1/2 resolution | 32 | FP16 + STBN + moments | v2 + rotated boundary detail | CQ3 High cache | Procedural flat layer |
+| Cinematic | 2/3 resolution | 48 | FP16 + moments + edge repair | v2 maximum quality | CQ3 Cinematic cache | CQ4 sparse when supported; otherwise procedural flat layer |
 
 Debug march-step override remains authoritative for view-step count. It does not alter target format, trace scale, cache profile, or backend selection.
 
 ## Cross-phase invariants
 
-- Scene depth and planet depth remain authoritative at trace and full-resolution reconstruction.
+- Opaque scene depth remains authoritative at trace, repair, and full-resolution reconstruction.
+- Camera altitude may change the ray/slab interval and sampled density, but must never directly multiply cloud opacity or radiance.
+- Camera altitude or `tEnter == 0` must not select a different march integrator; sampling policy is derived continuously from the visible interval length.
 - Cloud radiance is premultiplied by cloud opacity at every intermediate stage.
 - Temporal history is rejected on invalid metadata, camera cuts, layer changes, wind mismatch, viewport/format changes, backend changes, or material cloud-setting changes.
 - Resource creation failure is recoverable. Fall back one feature level, invalidate dependent histories, log once, and keep rendering.

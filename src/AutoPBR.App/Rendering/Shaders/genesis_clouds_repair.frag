@@ -58,7 +58,8 @@ const float CLOUD_REPAIR_DISTANCE_MIN = 0.75;
 const float CLOUD_REPAIR_DISTANCE_SCALE = 0.01;
 const float CLOUD_REPAIR_VALID_WEIGHT_MIN = 0.75;
 const float CLOUD_REPAIR_KIND_THRESHOLD = 0.24;
-const float CLOUD_HORIZON_FEATHER = 0.0025;
+const float CLOUD_MAX_TRACE_DISTANCE = 4096.0;
+const float CLOUD_DISTANCE_FADE_FRACTION = 0.20;
 const float CLOUD_STBN_WIDTH = 128.0;
 const float CLOUD_STBN_HEIGHT = 128.0;
 const float CLOUD_STBN_FRAMES = 64.0;
@@ -152,7 +153,9 @@ vec3 repairSkyAmbient(vec3 viewDir, float dayAmount)
         viewDir.x * 0.35,
         max(viewDir.y, 0.45),
         viewDir.z * 0.35));
-    return mix(night, srgbToLinear(repairSampleSkyViewLutSrgb(ambientDir)), dayAmount);
+    vec3 lut = srgbToLinear(repairSampleSkyViewLutSrgb(ambientDir));
+    vec3 dayFloor = vec3(0.060, 0.080, 0.120);
+    return mix(night, max(lut, dayFloor), dayAmount);
 }
 
 void writeEmpty()
@@ -249,34 +252,36 @@ void main()
     vec3 planetCenter = vec3(0.0, uGroundWorldY - planetRadius, 0.0);
     float layerBaseAltitude = max(uLayerHeight - uGroundWorldY, 0.01);
     float layerTopAltitude = layerBaseAltitude + max(uVolumeHeight, 0.01);
-    vec2 slabSegment = vcsIntersectShell(
+    float layerSupportGuard = clamp(uVolumeHeight * 0.015, 0.50, 1.50);
+    vec2 slabSegment = vcsIntersectAltitudeSlab(
         uCameraPos,
         rayDir,
-        planetCenter,
-        planetRadius + layerBaseAltitude,
-        planetRadius + layerTopAltitude);
+        uGroundWorldY,
+        max(layerBaseAltitude - layerSupportGuard, 0.001),
+        layerTopAltitude + layerSupportGuard,
+        CLOUD_MAX_TRACE_DISTANCE);
     slabSegment.y = min(slabSegment.y, sceneDistance);
 
     float cirrusAltitude = layerTopAltitude + max(uVolumeHeight * 1.5, 18.0);
     float cirrusThickness = max(uVolumeHeight * 0.035, 0.75);
-    vec2 cirrusSegment = vcsIntersectShell(
+    float cirrusSupportGuard = clamp(cirrusThickness * 0.20, 0.25, 0.75);
+    vec2 cirrusSegment = vcsIntersectAltitudeSlab(
         uCameraPos,
         rayDir,
-        planetCenter,
-        planetRadius + cirrusAltitude,
-        planetRadius + cirrusAltitude + cirrusThickness);
+        uGroundWorldY,
+        cirrusAltitude - cirrusSupportGuard,
+        cirrusAltitude + cirrusThickness + cirrusSupportGuard,
+        CLOUD_MAX_TRACE_DISTANCE);
     cirrusSegment.y = min(cirrusSegment.y, sceneDistance);
 
-    float planetDistance = vcsPlanetOcclusionDistance(
-        uCameraPos, rayDir, planetCenter, planetRadius);
-    float horizonVisibility = vcsPlanetHorizonVisibility(
-        uCameraPos, rayDir, planetCenter, planetRadius, CLOUD_HORIZON_FEATHER);
-    bool slabVisible = slabSegment.y > slabSegment.x &&
-        !(planetDistance < 1e8 && slabSegment.x >= planetDistance &&
-            horizonVisibility <= 1e-4);
-    bool cirrusVisible = cirrusSegment.y > cirrusSegment.x &&
-        !(planetDistance < 1e8 && cirrusSegment.x >= planetDistance &&
-            horizonVisibility <= 1e-4);
+    float slabDistanceVisibility = vcsDistanceVisibility(
+        slabSegment.x, CLOUD_MAX_TRACE_DISTANCE, CLOUD_DISTANCE_FADE_FRACTION);
+    float cirrusDistanceVisibility = vcsDistanceVisibility(
+        cirrusSegment.x, CLOUD_MAX_TRACE_DISTANCE, CLOUD_DISTANCE_FADE_FRACTION);
+    bool slabVisible =
+        slabSegment.y > slabSegment.x && slabDistanceVisibility > 1e-4;
+    bool cirrusVisible =
+        cirrusSegment.y > cirrusSegment.x && cirrusDistanceVisibility > 1e-4;
     bool shellIntersects = slabVisible || (uCirrusStrength > 0.0 && cirrusVisible);
 
     if (!shellIntersects)
@@ -336,9 +341,12 @@ void main()
     int primarySteps = repairCirrus
         ? 2
         : (uMarchSteps > 0 ? clamp(uMarchSteps, 1, 64) : 48);
-    float primaryFineStep = max(
-        (repairSegment.y - repairSegment.x) / float(primarySteps),
-        0.01);
+    float primaryFineStep = vcsMarchStepLength(
+        repairSegment.x,
+        repairSegment.y,
+        primarySteps,
+        uVolumeSize,
+        uVolumeHeight);
     float boundaryCenter = nearestCloudDistance < 1e8
         ? nearestCloudDistance
         : (nearestDistance < 1e8
@@ -394,7 +402,19 @@ void main()
                 -0.35,
                 3,
                 uDensityAssetVersion);
-            density = cirrusDensity * uCirrusStrength * 0.27 /
+            float cirrusSampleAltitude =
+                vcsAltitude(worldPos, uGroundWorldY);
+            float cirrusHeight = saturate1(
+                (cirrusSampleAltitude - cirrusAltitude) /
+                max(cirrusThickness, 0.01));
+            float cirrusVerticalProfile =
+                smoothstep(0.0, 0.18, cirrusHeight) *
+                (1.0 - smoothstep(0.72, 1.0, cirrusHeight));
+            density =
+                cirrusDensity *
+                cirrusVerticalProfile *
+                uCirrusStrength *
+                0.27 /
                 max(cirrusThickness, 0.01);
             radiance = vcSunScatter(
                 sunColor,
@@ -462,7 +482,7 @@ void main()
                 uWindOffset,
                 sampleFootprint,
                 uDensityAssetVersion);
-            float altitude = vcsAltitude(worldPos, planetCenter, planetRadius);
+            float altitude = vcsAltitude(worldPos, uGroundWorldY);
             float heightSample = saturate1(
                 (altitude - layerBaseAltitude) / max(uVolumeHeight, 0.001));
             radiance = vcSunScatter(sunColor, cosTheta, lightOd);
@@ -485,12 +505,11 @@ void main()
 
     float repairAlpha = saturate1(1.0 - transmittance);
     repairRadiance += skyAmbient * repairAlpha * mix(0.35, 0.55, dayAmount);
-    float repairHorizonVisibility =
-        planetDistance < 1e8 && repairStart >= planetDistance
-            ? horizonVisibility
-            : 1.0;
-    repairRadiance *= repairHorizonVisibility;
-    repairAlpha *= repairHorizonVisibility;
+    float repairDistanceVisibility = repairCirrus
+        ? cirrusDistanceVisibility
+        : slabDistanceVisibility;
+    repairRadiance *= repairDistanceVisibility;
+    repairAlpha *= repairDistanceVisibility;
 
     float alphaSeverity = clamp(
         (alphaMax - alphaMin - CLOUD_REPAIR_ALPHA_THRESHOLD) / 0.32,

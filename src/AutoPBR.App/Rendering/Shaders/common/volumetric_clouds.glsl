@@ -172,7 +172,7 @@ float vcLightOpticalDepthFromBase(float baseAtOrigin, vec3 worldPos, vec3 sunTow
         float dt = t - tPrev;
         vec3 samplePos = worldPos + sunToward * (tPrev + dt * 0.5);
         tPrev = t;
-        float sampleAltitude = length(samplePos - planetCenter) - planetRadius;
+        float sampleAltitude = vcFlatAltitude(samplePos, planetCenter, planetRadius);
         if (sampleAltitude < layerBase || sampleAltitude > layerTop)
         {
             break;
@@ -216,7 +216,7 @@ float vcLightOpticalDepthFromBase(float baseAtOrigin, vec3 worldPos, vec3 sunTow
     }
 
     vec3 farPos = worldPos + sunToward * (range * 2.2);
-    float farAltitude = length(farPos - planetCenter) - planetRadius;
+    float farAltitude = vcFlatAltitude(farPos, planetCenter, planetRadius);
     if (farAltitude >= layerBase && farAltitude <= layerTop)
     {
         float farFootprint = max(viewSampleFootprint, range * 0.5);

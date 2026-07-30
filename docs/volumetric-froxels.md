@@ -74,7 +74,7 @@ Current half-res radial blur + upsample ≈ 0.8–1.2 ms; froxels should match b
 - [x] Height fog slab in `vmMediumDensity` (world-anchored ground mist)
 - [x] Temporal accumulation on froxel integrate (half-res history + reprojection in `genesis_volume_integrate.frag`)
 - [x] Detailed cloud opacity/depth integration with cloud-first, foreground-safe shaft composition
-- [x] Phase 6 cloud/scene occlusion contract: planet horizon clipping, conservative half-resolution depth footprints, and per-tap full-resolution scene/cloud distance rejection
-- [x] Phase 6 morphology pass: subtle 72k-radius far-horizon curvature, altitude-local cumulus domes/flat bases, and detached branching cirrus fibers
+- [x] Phase 6 cloud/scene occlusion contract: historical planet-horizon clipping, conservative half-resolution depth footprints, and per-tap full-resolution scene/cloud distance rejection. CQ3.9 supersedes planet clipping with a flat finite-distance layer while preserving scene depth.
+- [x] Phase 6 morphology pass: historical 72k-radius far-horizon curvature, altitude-local cumulus domes/flat bases, and detached branching cirrus fibers. CQ3.9 removes curvature for the continuous world.
 - [ ] Cascaded shadow sampling in inject pass
 - [ ] Cutover flag: `EnableFroxelGodRays` vs screen-space fallback

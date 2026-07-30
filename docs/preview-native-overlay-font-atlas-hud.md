@@ -23,8 +23,8 @@ renderScale → BakeConsolas atlas (once) ──► atlas TexImage once
                                    draw panel + glyph quads
 ```
 
-- [`GlOverlayFontAtlas`](../src/AutoPBR.App/Rendering/OpenGL/GlOverlayFontAtlas.cs) — Consolas ASCII bake on UI; procedural atlas for tests
-- [`GlOverlayTextLayout`](../src/AutoPBR.App/Rendering/OpenGL/GlOverlayTextLayout.cs) — strings → `{x,y,u,v,rgba}` quads
+- [`GlOverlayFontAtlas`](../src/AutoPBR.App/Rendering/OpenGL/GlOverlayFontAtlas.cs) — Cascadia/Consolas ASCII bake on UI at 2× oversample in pixel-space (96 DPI); procedural atlas for tests
+- [`GlOverlayTextLayout`](../src/AutoPBR.App/Rendering/OpenGL/GlOverlayTextLayout.cs) — strings → `{x,y,u,v,rgba}` quads (display-space cell metrics)
 - [`GlNativeOverlayRenderer`](../src/AutoPBR.App/Rendering/OpenGL/GlNativeOverlayRenderer.cs) — atlas + mesh draw, HDR `uHdrScRgbScale`
 - [`OpenGlPreviewBackend.NativeOverlay.cs`](../src/AutoPBR.App/Rendering/OpenGL/OpenGlPreviewBackend.NativeOverlay.cs) — `SetNativeWglOverlayTexts`
 - Publish throttle: [`GlTimingHudPublishGate`](../src/AutoPBR.App/Rendering/OpenGL/GlTimingHudPublishGate.cs) (~5 Hz)
@@ -40,5 +40,5 @@ renderScale → BakeConsolas atlas (once) ──► atlas TexImage once
 - Expanded GPU+CPU HUD: steady-state **CPU Overlay ≲ 0.2 ms**
 - No Avalonia `RenderTargetBitmap` per HUD refresh on native WGL
 - Layout/VBO only when strings or scale change
-- Readable at common DPI scales; HDR paper-white preserved
+- Readable at common DPI scales (2× oversampled atlas, gutters, pixel-space bake); HDR paper-white preserved
 - FPS overlay off ⇒ no overlay draw work

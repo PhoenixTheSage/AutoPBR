@@ -425,7 +425,9 @@ public sealed partial class OpenGlPreviewBackend
         if (!string.Equals(_lastRenderFaultSignature, signature, StringComparison.Ordinal))
         {
             _lastRenderFaultSignature = signature;
-            var detail = FormattableString.Invariant($"Framebuffer: {framebuffer}; viewport: {pixelWidth}x{pixelHeight}\nFly camera: ({flyPosition.X:R}, {flyPosition.Y:R}, {flyPosition.Z:R}); yaw={flyYaw:R}; pitch={flyPitch:R}\nClouds: enabled={settings.EnableVolumetricClouds}; runtimeFaulted={_cloudRuntimeFaulted}; region={_cloudCameraRegion?.ToString() ?? "Unknown"}; cloudQuality={settings.CloudQuality}; volumetricQuality={settings.VolumetricQuality}\nContext: {_glCapabilities?.FormatContextSuffix() ?? "unavailable"}\n{exception}");
+            var cloudAltitude =
+                FormatCloudAltitudeDiagnostic(flyPosition, settings);
+            var detail = FormattableString.Invariant($"Framebuffer: {framebuffer}; viewport: {pixelWidth}x{pixelHeight}\nFly camera: ({flyPosition.X:R}, {flyPosition.Y:R}, {flyPosition.Z:R}); yaw={flyYaw:R}; pitch={flyPitch:R}\nClouds: enabled={settings.EnableVolumetricClouds}; runtimeFaulted={_cloudRuntimeFaulted}; altitude={cloudAltitude}; cloudQuality={settings.CloudQuality}; volumetricQuality={settings.VolumetricQuality}\nContext: {_glCapabilities?.FormatContextSuffix() ?? "unavailable"}\n{exception}");
             LogService.AppendEmergencyDiagnostic("3D preview render exception", detail);
             EmitDiagnostic(
                 $"[3D preview] Render exception contained ({exception.GetType().Name}: {exception.Message}). " +

@@ -15,7 +15,7 @@ namespace AutoPBR.App.Tests;
 public sealed class PreviewCloudLiveGlSmokeTests
 {
     [Fact]
-    public void HiddenWglContext_CompilesCurvedCloudShaders()
+    public void HiddenWglContext_CompilesFlatContinuousWorldCloudShaders()
     {
         if (!string.Equals(Environment.GetEnvironmentVariable("AUTOPBR_RUN_LIVE_GL_SMOKE"), "1",
                 StringComparison.OrdinalIgnoreCase))
@@ -42,13 +42,13 @@ public sealed class PreviewCloudLiveGlSmokeTests
                     "genesis_godrays.vert",
                     "genesis_clouds.frag",
                     out var cloudError,
-                    "cloud-shell-live-smoke");
-                Assert.True(clouds.IsValid, "Curved cloud shader failed to compile: " + cloudError);
+                    "cloud-flat-layer-live-smoke");
+                Assert.True(clouds.IsValid, "Flat cloud-layer shader failed to compile: " + cloudError);
                 using var highClouds = compile.CreateProgram(
                     "genesis_godrays.vert",
                     "genesis_clouds.frag",
                     out var highCloudError,
-                    "cloud-shell-high-cq3.7-live-smoke",
+                    "cloud-flat-layer-high-cq3.7-live-smoke",
                     new Dictionary<string, int>
                     {
                         ["GENESIS_CLOUD_QUALITY"] = PreviewVolumetricQuality.High,
@@ -285,8 +285,12 @@ public sealed class PreviewCloudLiveGlSmokeTests
                     nearTransform,
                     farTransform,
                     new PreviewCloudLightAltitudeBounds(1f, 20f, 30f, 32f, 4f),
-                    new Vector3(0f, -60003.2f, 0f),
-                    PreviewStageConstants.CloudPlanetRadius,
+                    new Vector3(
+                        0f,
+                        -3.2f -
+                            PreviewStageConstants.CloudLegacyAltitudeReferenceRadius,
+                        0f),
+                    PreviewStageConstants.CloudLegacyAltitudeReferenceRadius,
                     Density: 1f,
                     CoverageScale: 1f,
                     VolumeSize: 48f,
@@ -1369,8 +1373,6 @@ public sealed class PreviewCloudLiveGlSmokeTests
         SetUniform1(gl, program, "uCloudSourceFullResolution", 0);
         SetUniform2(gl, program, "uCloudTexelSize", 1f / cloudSize, 1f / cloudSize);
         SetUniform3(gl, program, "uCameraPos", 0f, 0f, -1f);
-        SetUniform1(gl, program, "uGroundWorldY", -100f);
-        SetUniform1(gl, program, "uPlanetRadius", 1f);
         SetUniform3(gl, program, "uSunDir", 0f, 0f, -1f);
         SetUniform1(gl, program, "uSunCosDiscEdge", 0.98f);
         SetUniform1(gl, program, "uSunDiscVisibility", 1f);

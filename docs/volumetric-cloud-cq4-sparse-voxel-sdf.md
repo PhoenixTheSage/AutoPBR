@@ -3,7 +3,7 @@
 **Status:** Proposed  
 **Roadmap:** [Volumetric cloud quality roadmap](volumetric-cloud-quality-roadmap.md)  
 **Depends on:** [CQ1 precision and reconstruction](volumetric-cloud-cq1-precision-reconstruction.md), [CQ2 density textures](volumetric-cloud-cq2-density-textures.md), [CQ3 lighting cache](volumetric-cloud-cq3-lighting-cache.md)  
-**Fallback:** Accepted CQ3 shell renderer
+**Fallback:** Accepted CQ3.9 procedural flat-layer renderer
 
 ## Goal
 
@@ -25,18 +25,18 @@ Success means:
 - Do not stream internet weather or external cloud assets.
 - Do not replace CQ2 weather control, CQ2 fine detail, CQ3 lighting, or CQ1 reconstruction.
 - Do not enable the sparse backend for Low, Medium, or High during CQ4.
-- Do not remove the shell backend after CQ4 acceptance.
+- Do not remove the procedural flat-layer backend after CQ4 acceptance.
 - Do not add precipitation particles, lightning, aerodynamic forces, or local point-light injection.
 
 ## Baseline
 
-The accepted CQ3 backend evaluates curved-shell cloud density procedurally for every view and cloud-light query. It preserves Phase 6 height, horizon, and opaque-scene depth behavior and remains the required fallback, but it has no persistent three-dimensional occupancy, no bounded residency model, and no conservative empty-space representation for long camera-inside fly-throughs. CQ4 begins only after that shell path, CQ1 reconstruction, CQ2 assets, and CQ3 lighting have passed their exit gates.
+The accepted CQ3.9 backend evaluates flat world-altitude cloud density procedurally for every view and cloud-light query. It preserves continuous height traversal, far-distance fade, and opaque-scene depth behavior and remains the required fallback, but it has no persistent three-dimensional occupancy, no bounded residency model, and no conservative empty-space representation for long camera-inside fly-throughs. CQ4 begins only after that procedural-layer path, CQ1 reconstruction, CQ2 assets, and CQ3 lighting have passed their exit gates.
 
 ## Capability fallback and backend selection
 
 Introduce an internal cloud-density backend selection:
 
-- `Shell`: accepted CQ3 curved-shell density path.
+- `ProceduralLayer`: accepted CQ3.9 flat world-altitude density path.
 - `SparseVoxel`: CQ4 brick/page/SDF density path.
 
 `SparseVoxel` is eligible only when:
@@ -220,7 +220,7 @@ The `0.8` safety factor plus downward-biased distance prevents skipping density 
 
 ## Integration with CQ1 and CQ3
 
-CQ4 replaces only density/conservative-density queries. Shell intersection remains a broad altitude and planet/horizon bound, and opaque scene depth still clips the view ray.
+CQ4 replaces only density/conservative-density queries. The flat altitude slab and finite far-distance fade remain broad traversal bounds, and opaque scene depth still clips the view ray.
 
 - CQ1 owns trace resolution, STBN, temporal metadata, edge repair, and final reconstruction.
 - CQ2 owns boundary detail and weather channel semantics.
@@ -259,7 +259,7 @@ Log bounded per-frame counters and pass-scoped GPU timings without synchronous r
 
 ## Implementation milestones
 
-- [ ] CQ4.0: Add backend enum/policy, `CanUseSparseCloudVolumes`, diagnostics, and force-shell debug path.
+- [ ] CQ4.0: Add backend enum/policy, `CanUseSparseCloudVolumes`, diagnostics, and force-procedural-layer debug path.
 - [ ] CQ4.1: Add template asset ABI/generator, twelve deterministic assets, loader, and tests.
 - [ ] CQ4.2: Add physical brick atlas, page tables, allocator, residency records, and memory accounting.
 - [ ] CQ4.3: Add snapped clipmap origins, request prioritization, bounded update queue, and table publication.

@@ -57,7 +57,6 @@ public sealed partial class OpenGlPreviewBackend
     private bool _cloudEdgeRepairFaulted;
     private bool _loggedCloudEdgeRepairFallback;
     private int _cloudHistoryConfidenceFrames;
-    private PreviewCloudCameraRegion? _cloudCameraRegion;
     private string _cloudStbnDiagnostic = "not-initialized";
     private string _cloudMomentsDiagnostic = "not-initialized";
     private string _cloudEdgeRepairDiagnostic = "not-initialized";
@@ -592,15 +591,13 @@ public sealed partial class OpenGlPreviewBackend
                 cache.Profile.Near,
                 cameraGround,
                 altitudeBounds,
-                groundWorldY,
-                PreviewStageConstants.CloudPlanetRadius);
+                groundWorldY);
             var farInterval = PreviewCloudLightDepthInterval.Create(
                 basis,
                 cache.Profile.Far,
                 cameraGround,
                 altitudeBounds,
-                groundWorldY,
-                PreviewStageConstants.CloudPlanetRadius);
+                groundWorldY);
             var nearTransform = PreviewCloudLightCascadeTransform.Create(
                 basis,
                 cache.Profile.Near,
@@ -617,8 +614,12 @@ public sealed partial class OpenGlPreviewBackend
                 nearTransform,
                 farTransform,
                 altitudeBounds,
-                PreviewCloudShellGeometry.PlanetCenter(groundWorldY),
-                PreviewStageConstants.CloudPlanetRadius,
+                new Vector3(
+                    0f,
+                    groundWorldY -
+                        PreviewStageConstants.CloudLegacyAltitudeReferenceRadius,
+                    0f),
+                PreviewStageConstants.CloudLegacyAltitudeReferenceRadius,
                 frame.Settings.CloudDensity,
                 frame.Settings.CloudCoverageScale,
                 frame.Settings.CloudVolumeSize,
@@ -1573,7 +1574,6 @@ public sealed partial class OpenGlPreviewBackend
         _cloudHistoryH = 0;
         _cloudHistoryViewportW = 0;
         _cloudHistoryViewportH = 0;
-        _cloudCameraRegion = null;
         _cloudStbnDiagnostic = "not-initialized";
         _cloudMomentsDiagnostic = "not-initialized";
         _cloudEdgeRepairDiagnostic = "not-initialized";
@@ -1756,7 +1756,10 @@ public sealed partial class OpenGlPreviewBackend
             SetVec3OnProgramLoc(program, ru.SunDir, frame.LightDir);
             SetFloatOnProgramLoc(program, ru.SunIntensity, frame.Settings.AtmosphereSunIntensity);
             SetFloatOnProgramLoc(program, ru.GroundWorldY, PreviewStageConstants.GroundPlaneWorldY);
-            SetFloatOnProgramLoc(program, ru.PlanetRadius, PreviewStageConstants.CloudPlanetRadius);
+            SetFloatOnProgramLoc(
+                program,
+                ru.PlanetRadius,
+                PreviewStageConstants.CloudLegacyAltitudeReferenceRadius);
             SetFloatOnProgramLoc(program, ru.LayerHeight, layerWorldY);
             SetFloatOnProgramLoc(program, ru.VolumeHeight, frame.Settings.CloudVolumeHeight);
             SetFloatOnProgramLoc(program, ru.Density, frame.Settings.CloudDensity);
@@ -1882,26 +1885,21 @@ public sealed partial class OpenGlPreviewBackend
         BindDefaultFramebuffer(ref frame);
     }
 
-    private void ObserveCloudCameraRegion(ref GlRenderFrame frame)
+    private static string FormatCloudAltitudeDiagnostic(
+        Vector3 eye,
+        in PreviewRenderSettingsSnapshot settings)
     {
         var groundY = PreviewStageConstants.GroundPlaneWorldY;
-        var center = PreviewCloudShellGeometry.PlanetCenter(groundY);
-        var layerBase = PreviewStageConstants.CloudLayerBaseWorldY(frame.Settings.CloudLayerHeight) - groundY;
-        var layerTop = layerBase + Math.Max(frame.Settings.CloudVolumeHeight, 0.01f);
-        var region = PreviewCloudShellGeometry.ClassifyCamera(frame.Eye, center, layerBase, layerTop);
-        if (_cloudCameraRegion == region)
-        {
-            return;
-        }
-
-        var previous = _cloudCameraRegion?.ToString() ?? "Unknown";
-        _cloudCameraRegion = region;
-        var radialAltitude = (frame.Eye - center).Length() - PreviewCloudShellGeometry.PlanetRadius;
-        var transition = FormattableString.Invariant($"[3D preview] Cloud camera region transition: {previous} -> {region} (radialAltitude={radialAltitude:F3}, layer={layerBase:F3}..{layerTop:F3}, eye=({frame.Eye.X:F3},{frame.Eye.Y:F3},{frame.Eye.Z:F3})).");
-        EmitDiagnostic(transition);
-        // Persist before issuing the cloud draw. A native driver fault can bypass every managed catch,
-        // so this marker records the last shell boundary crossed even in that failure mode.
-        LogService.AppendEmergencyDiagnostic("Cloud camera transition", transition);
+        var layerBase =
+            PreviewStageConstants.CloudLayerBaseWorldY(settings.CloudLayerHeight) -
+            groundY;
+        var volumeHeight = Math.Max(settings.CloudVolumeHeight, 0.01f);
+        var layerTop = layerBase + volumeHeight;
+        var cirrusBase = layerTop + Math.Max(volumeHeight * 1.5f, 18f);
+        var cirrusTop = cirrusBase + Math.Max(volumeHeight * 0.035f, 0.75f);
+        var altitude = PreviewCloudLayerGeometry.Altitude(eye, groundY);
+        return FormattableString.Invariant(
+            $"worldAltitude={altitude:F5}; cumulusSigned={altitude - layerBase:F5}/{altitude - layerTop:F5}; cirrusSigned={altitude - cirrusBase:F5}/{altitude - cirrusTop:F5}");
     }
 
     private void HandleCloudRuntimeFailure(ref GlRenderFrame frame, string stage, Exception exception)
@@ -1928,12 +1926,9 @@ public sealed partial class OpenGlPreviewBackend
                 recoveryException.ToString());
         }
 
-        var groundY = PreviewStageConstants.GroundPlaneWorldY;
-        var center = PreviewCloudShellGeometry.PlanetCenter(groundY);
-        var layerBase = PreviewStageConstants.CloudLayerBaseWorldY(frame.Settings.CloudLayerHeight) - groundY;
-        var layerTop = layerBase + Math.Max(frame.Settings.CloudVolumeHeight, 0.01f);
-        var radialAltitude = (frame.Eye - center).Length() - PreviewCloudShellGeometry.PlanetRadius;
-        var detail = FormattableString.Invariant($"Cloud stage: {stage}\nCamera region: {_cloudCameraRegion?.ToString() ?? "Unknown"}\nEye: ({frame.Eye.X:R}, {frame.Eye.Y:R}, {frame.Eye.Z:R})\nRadial altitude: {radialAltitude:R}; layer: {layerBase:R}..{layerTop:R}\nViewport: {frame.Vw}x{frame.Vh}; cloud quality: {frame.Settings.CloudQuality}; volumetric quality: {frame.Settings.VolumetricQuality}; temporal: {ShouldUseCloudShaderTemporal(frame.Settings)}\nContext: {_glCapabilities?.FormatContextSuffix() ?? "unavailable"}\n{exception}");
+        var altitudeDiagnostic =
+            FormatCloudAltitudeDiagnostic(frame.Eye, frame.Settings);
+        var detail = FormattableString.Invariant($"Cloud stage: {stage}\nEye: ({frame.Eye.X:R}, {frame.Eye.Y:R}, {frame.Eye.Z:R})\nContinuous altitude: {altitudeDiagnostic}\nViewport: {frame.Vw}x{frame.Vh}; cloud quality: {frame.Settings.CloudQuality}; volumetric quality: {frame.Settings.VolumetricQuality}; temporal: {ShouldUseCloudShaderTemporal(frame.Settings)}\nContext: {_glCapabilities?.FormatContextSuffix() ?? "unavailable"}\n{exception}");
         LogService.AppendEmergencyDiagnostic("Volumetric cloud render exception", detail);
         EmitDiagnostic(
             $"[3D preview] Volumetric cloud {stage} failed ({exception.GetType().Name}: {exception.Message}). " +
@@ -2223,7 +2218,7 @@ public sealed partial class OpenGlPreviewBackend
         {
             _loggedCloudDraw = true;
             var godRays = frame.GodRayCaptureActive && _sceneCapture is { IsValid: true };
-            EmitDiagnostic($"[3D preview] Curved-shell volumetric clouds active (sceneDepth={useSceneDepth}, " +
+            EmitDiagnostic($"[3D preview] Flat continuous-world volumetric clouds active (sceneDepth={useSceneDepth}, " +
                 $"temporalResolve={useTemporalReproject}, cloudDepthHistory={useTemporalReproject}, godRays={godRays}, " +
                 $"volumetricPreset={PreviewVolumetricQuality.GetName(frame.Settings.VolumetricQuality)}, " +
                 $"cloudQuality={PreviewVolumetricQuality.Resolve(frame.Settings.VolumetricQuality).CloudQuality}, " +
@@ -2307,7 +2302,10 @@ public sealed partial class OpenGlPreviewBackend
         SetMatrixOnProgramLoc(program, cu.InvViewProj, invViewProj);
         SetVec3OnProgramLoc(program, cu.CameraPos, frame.Eye);
         SetFloatOnProgramLoc(program, cu.GroundWorldY, PreviewStageConstants.GroundPlaneWorldY);
-        SetFloatOnProgramLoc(program, cu.PlanetRadius, PreviewStageConstants.CloudPlanetRadius);
+        SetFloatOnProgramLoc(
+            program,
+            cu.PlanetRadius,
+            PreviewStageConstants.CloudLegacyAltitudeReferenceRadius);
         SetVec3OnProgramLoc(program, cu.SunDir, frame.LightDir);
         SetVec3OnProgramLoc(program, cu.WindOffset, windOffset);
         SetFloatOnProgramLoc(program, cu.CirrusStrength, settings.CloudCirrusStrength);
@@ -2855,8 +2853,6 @@ public sealed partial class OpenGlPreviewBackend
                 SetMatrixOnProgramLoc(program, upu.InvViewProj, invViewProj);
             }
             SetVec3OnProgramLoc(program, upu.CameraPos, frame.Eye);
-            SetFloatOnProgramLoc(program, upu.GroundWorldY, PreviewStageConstants.GroundPlaneWorldY);
-            SetFloatOnProgramLoc(program, upu.PlanetRadius, PreviewStageConstants.CloudPlanetRadius);
             SetVec3OnProgramLoc(program, upu.SunDir, frame.WorldLightDir);
             SetFloatOnProgramLoc(
                 program,

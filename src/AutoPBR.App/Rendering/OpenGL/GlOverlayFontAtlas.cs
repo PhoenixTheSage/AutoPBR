@@ -31,6 +31,15 @@ internal sealed class GlOverlayFontAtlas
     /// <summary>Debug panel font size in DIPs.</summary>
     public const double DebugFontSizeLogical = 11.0;
 
+    /// <summary>
+    /// Bake resolution multiplier over display scale. Glyphs are rasterized at this factor and
+    /// drawn at 1× display size so LINEAR filtering yields clean HUD text.
+    /// </summary>
+    public const int BakeOversample = 2;
+
+    private static readonly FontFamily OverlayFontFamily =
+        new("Cascadia Mono, Consolas, Courier New, monospace");
+
     private readonly GlOverlayGlyphInfo[] _glyphs;
 
     private GlOverlayFontAtlas(
@@ -65,8 +74,13 @@ internal sealed class GlOverlayFontAtlas
 
     public int Width { get; }
     public int Height { get; }
+
+    /// <summary>Display-space glyph advance / quad width in viewport pixels.</summary>
     public int CellWidth { get; }
+
+    /// <summary>Display-space glyph quad height in viewport pixels.</summary>
     public int CellHeight { get; }
+
     public float LineHeight { get; }
     public double FontSizeLogical { get; }
     public double RenderScale { get; }
@@ -108,7 +122,9 @@ internal sealed class GlOverlayFontAtlas
     }
 
     /// <summary>
-    /// Bake Consolas into an RGBA atlas. Must run on the Avalonia UI thread.
+    /// Bake monospace HUD glyphs into an RGBA atlas. Must run on the Avalonia UI thread.
+    /// Rasterizes in pixel space at 96 DPI (avoids RenderTargetBitmap DIP/DPI footguns) at
+    /// <see cref="BakeOversample"/>× display resolution for clean downsampled text.
     /// </summary>
     public static GlOverlayFontAtlas BakeConsolas(double fontSizeLogical, double renderScale)
     {
@@ -118,72 +134,91 @@ internal sealed class GlOverlayFontAtlas
             renderScale = 1.0;
         }
 
-        var typeface = new Typeface(new FontFamily("Consolas"));
+        var bakeScale = renderScale * BakeOversample;
+        var fontPx = fontSizeLogical * bakeScale;
+        var typeface = new Typeface(OverlayFontFamily);
         var measure = new FormattedText(
             "M",
             CultureInfo.InvariantCulture,
             FlowDirection.LeftToRight,
             typeface,
-            fontSizeLogical,
+            fontPx,
             Brushes.White);
-        var cellW = Math.Max(1, (int)Math.Ceiling(Math.Max(measure.Width, measure.LineHeight * 0.55) * renderScale) + 2);
-        var cellH = Math.Max(1, (int)Math.Ceiling(measure.Height * renderScale) + 2);
-        var lineHeight = (float)(cellH);
 
-        // Glyphs + one solid white cell for panel fills.
+        // Pixel-space cell (1 DIP = 1 px at 96 DPI). Small inset keeps LINEAR samples inside ink.
+        var glyphW = Math.Max(1, (int)Math.Ceiling(Math.Max(measure.Width, measure.LineHeight * 0.55)));
+        var glyphH = Math.Max(1, (int)Math.Ceiling(Math.Max(measure.Height, measure.LineHeight)));
+        const int inset = 1;
+        var cellW = glyphW + inset * 2;
+        var cellH = glyphH + inset * 2;
+        // Empty gutter between packed cells so LINEAR filtering does not bleed neighbors.
+        const int gutter = 2;
+        var strideW = cellW + gutter;
+        var strideH = cellH + gutter;
+
+        var displayAdvance = Math.Max(1, (int)Math.Round(glyphW / (double)BakeOversample));
+        var displayLineH = Math.Max(1, (int)Math.Round(glyphH / (double)BakeOversample));
+
         const int cols = 16;
         var rows = (GlyphCount + 1 + cols - 1) / cols;
-        var atlasW = cols * cellW;
-        var atlasH = rows * cellH;
+        var atlasW = cols * strideW;
+        var atlasH = rows * strideH;
         var bgra = new byte[atlasW * atlasH * 4];
         var glyphs = new GlOverlayGlyphInfo[GlyphCount];
 
-        var dpi = 96.0 * renderScale;
         for (var i = 0; i < GlyphCount; i++)
         {
             var ch = (char)(FirstChar + i);
             var col = i % cols;
             var row = i / cols;
-            var px = col * cellW;
-            var py = row * cellH;
-            BlitControlToAtlas(
-                CreateGlyphVisual(ch.ToString(), fontSizeLogical),
-                dpi,
+            var px = col * strideW;
+            var py = row * strideH;
+            BlitGlyphToAtlas(
+                ch,
+                fontPx,
                 cellW,
                 cellH,
+                inset,
                 bgra,
                 atlasW,
                 px,
                 py);
 
-            var u0 = px / (float)atlasW;
-            var v0 = py / (float)atlasH;
-            var u1 = (px + cellW) / (float)atlasW;
-            var v1 = (py + cellH) / (float)atlasH;
-            glyphs[i] = new GlOverlayGlyphInfo(u0, v0, u1, v1, cellW);
+            // Half-texel inset keeps LINEAR taps inside this glyph's cell.
+            var u0 = (px + 0.5f) / atlasW;
+            var v0 = (py + 0.5f) / atlasH;
+            var u1 = (px + cellW - 0.5f) / atlasW;
+            var v1 = (py + cellH - 0.5f) / atlasH;
+            glyphs[i] = new GlOverlayGlyphInfo(u0, v0, u1, v1, displayAdvance);
         }
 
         var whiteIndex = GlyphCount;
         var whiteCol = whiteIndex % cols;
         var whiteRow = whiteIndex / cols;
-        var whitePx = whiteCol * cellW;
-        var whitePy = whiteRow * cellH;
+        var whitePx = whiteCol * strideW;
+        var whitePy = whiteRow * strideH;
         FillWhiteCell(bgra, atlasW, whitePx, whitePy, cellW, cellH);
+
+        // Sample the solid interior of the white cell (avoid gutter / edge).
+        var whiteU0 = (whitePx + inset + 0.5f) / atlasW;
+        var whiteV0 = (whitePy + inset + 0.5f) / atlasH;
+        var whiteU1 = (whitePx + cellW - inset - 0.5f) / atlasW;
+        var whiteV1 = (whitePy + cellH - inset - 0.5f) / atlasH;
 
         return new GlOverlayFontAtlas(
             atlasW,
             atlasH,
-            cellW,
-            cellH,
-            lineHeight,
+            displayAdvance,
+            displayLineH,
+            displayLineH,
             fontSizeLogical,
             renderScale,
             bgra,
             glyphs,
-            whitePx / (float)atlasW,
-            whitePy / (float)atlasH,
-            (whitePx + cellW) / (float)atlasW,
-            (whitePy + cellH) / (float)atlasH);
+            whiteU0,
+            whiteV0,
+            whiteU1,
+            whiteV1);
     }
 
     /// <summary>Filled-cell atlas for unit/smoke tests (no Avalonia text stack required).</summary>
@@ -242,30 +277,34 @@ internal sealed class GlOverlayFontAtlas
             (whitePy + cellHeight) / (float)atlasH);
     }
 
-    private static TextBlock CreateGlyphVisual(string text, double fontSizeLogical) =>
-        new()
-        {
-            Text = text,
-            FontFamily = new FontFamily("Consolas"),
-            FontSize = fontSizeLogical,
-            Foreground = Brushes.White,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top
-        };
-
-    private static void BlitControlToAtlas(
-        Control visual,
-        double dpi,
+    private static void BlitGlyphToAtlas(
+        char ch,
+        double fontPx,
         int cellW,
         int cellH,
+        int inset,
         byte[] atlas,
         int atlasW,
         int destX,
         int destY)
     {
+        var visual = new TextBlock
+        {
+            Text = ch.ToString(),
+            FontFamily = OverlayFontFamily,
+            FontSize = fontPx,
+            Foreground = Brushes.White,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top
+        };
+        RenderOptions.SetTextRenderingMode(visual, TextRenderingMode.Antialias);
+        RenderOptions.SetEdgeMode(visual, EdgeMode.Antialias);
+
         visual.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        visual.Arrange(new Rect(visual.DesiredSize));
-        using var bitmap = new RenderTargetBitmap(new PixelSize(cellW, cellH), new Vector(dpi, dpi));
+        var desired = visual.DesiredSize;
+        // Pixel-space RTB: DPI 96 so FontSize maps 1:1 to texels (no DIP rescale ambiguity).
+        visual.Arrange(new Rect(inset, inset, Math.Max(desired.Width, 1), Math.Max(desired.Height, 1)));
+        using var bitmap = new RenderTargetBitmap(new PixelSize(cellW, cellH), new Vector(96.0, 96.0));
         bitmap.Render(visual);
         var pixels = new byte[cellW * cellH * 4];
         var handle = GCHandle.Alloc(pixels, GCHandleType.Pinned);

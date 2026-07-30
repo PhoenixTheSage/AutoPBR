@@ -1,120 +1,80 @@
-// Curved cloud-layer intersection shared by cumulus and cirrus rendering.
+// Flat continuous-world cloud-layer intersection shared by cumulus and cirrus rendering.
 
 #ifndef GENESIS_CLOUD_SHELL_GLSL
 #define GENESIS_CLOUD_SHELL_GLSL
 
-bool vcsRaySphere(vec3 roFromCenter, vec3 rd, float radius, out vec2 roots)
+float vcsAltitude(vec3 worldPosition, float groundWorldY)
 {
-    float b = dot(roFromCenter, rd);
-    float c = dot(roFromCenter, roFromCenter) - radius * radius;
-    float discriminant = b * b - c;
-    if (discriminant < 0.0)
-    {
-        roots = vec2(0.0, -1.0);
-        return false;
-    }
-
-    float root = sqrt(discriminant);
-    roots = vec2(-b - root, -b + root);
-    return true;
+    return worldPosition.y - groundWorldY;
 }
 
-// First visible forward interval through the shell. Works below, inside, and above the layer.
-vec2 vcsIntersectShell(vec3 ro, vec3 rd, vec3 center, float innerRadius, float outerRadius)
+// First visible forward interval through a horizontal altitude slab. Horizontal rays are
+// valid only while the camera is inside the slab. Every interval is distance bounded so a
+// continuous flat world never depends on a fictitious planet horizon for termination.
+vec2 vcsIntersectAltitudeSlab(
+    vec3 ro,
+    vec3 rd,
+    float groundWorldY,
+    float innerAltitude,
+    float outerAltitude,
+    float maxTraceDistance)
 {
-    vec3 oc = ro - center;
-    vec2 outerRoots;
-    if (outerRadius <= innerRadius || innerRadius <= 0.0 ||
-        !vcsRaySphere(oc, rd, outerRadius, outerRoots) || outerRoots.y <= 0.0)
+    if (outerAltitude <= innerAltitude || maxTraceDistance <= 0.0)
     {
         return vec2(0.0, -1.0);
     }
 
-    float cameraRadius = length(oc);
-    float tEnter;
-    float tExit;
-    vec2 innerRoots;
-    bool hitsInner = vcsRaySphere(oc, rd, innerRadius, innerRoots);
-    if (cameraRadius < innerRadius)
+    float lowerWorldY = groundWorldY + innerAltitude;
+    float upperWorldY = groundWorldY + outerAltitude;
+    if (abs(rd.y) <= 1e-6)
     {
-        if (!hitsInner || innerRoots.y <= 0.0)
-        {
-            return vec2(0.0, -1.0);
-        }
-
-        tEnter = innerRoots.y;
-        tExit = outerRoots.y;
-    }
-    else
-    {
-        tEnter = max(outerRoots.x, 0.0);
-        tExit = outerRoots.y;
-        if (hitsInner && innerRoots.x > tEnter)
-        {
-            tExit = min(tExit, innerRoots.x);
-        }
+        return ro.y >= lowerWorldY && ro.y <= upperWorldY
+            ? vec2(0.0, maxTraceDistance)
+            : vec2(0.0, -1.0);
     }
 
+    vec2 roots = (vec2(lowerWorldY, upperWorldY) - ro.y) / rd.y;
+    float tEnter = max(min(roots.x, roots.y), 0.0);
+    float tExit = min(max(roots.x, roots.y), maxTraceDistance);
     return tExit > tEnter ? vec2(tEnter, tExit) : vec2(0.0, -1.0);
 }
 
-float vcsAltitude(vec3 worldPos, vec3 center, float planetRadius)
+// Softly removes layers that first become reachable near the finite trace boundary. This
+// replaces the former planet-tangent mask without bending the deck or drawing a hard rim.
+float vcsDistanceVisibility(
+    float entryDistance,
+    float maxTraceDistance,
+    float fadeFraction)
 {
-    return length(worldPos - center) - planetRadius;
+    float safeFade = clamp(fadeFraction, 0.01, 0.95);
+    float fadeStart = maxTraceDistance * (1.0 - safeFade);
+    return 1.0 - smoothstep(
+        fadeStart,
+        maxTraceDistance,
+        max(entryDistance, 0.0));
 }
 
-// Distance to the first solid-planet intersection.  The cloud shell surrounds the
-// planet, so a downward ray from below the layer must stop at the ground-facing sphere
-// instead of continuing through the planet and entering the shell on the far side.
-float vcsPlanetOcclusionDistance(vec3 ro, vec3 rd, vec3 center, float planetRadius)
+// Near-field step sizing span. Long near-horizontal rays must not inherit the complete
+// altitude-plane exit for their finest sample lattice.
+float vcsMarchSpanLimit(float volumeSize, float volumeHeight)
 {
-    vec3 oc = ro - center;
-    float cameraRadius = length(oc);
-    if (cameraRadius < planetRadius - 1e-3)
-    {
-        return 0.0;
-    }
-
-    vec2 roots;
-    if (!vcsRaySphere(oc, rd, planetRadius, roots))
-    {
-        return 1e9;
-    }
-
-    // At the surface, an inward ray has a zero near root and must be considered
-    // immediately occluded; choosing the far root would expose far-side clouds.
-    if (cameraRadius <= planetRadius + 1e-3 && dot(oc, rd) < 0.0)
-    {
-        return 0.0;
-    }
-
-    if (roots.x > 1e-3)
-    {
-        return roots.x;
-    }
-
-    return 1e9;
+    return max(max(volumeSize * 4.0, volumeHeight * 8.0), 256.0);
 }
 
-// Soft visibility at the geometric planet horizon. Most of the transition is biased behind
-// the tangent: a cloud reaching the visible horizon stays nearly opaque, then fades over a
-// few pixels on the far side. Centering the fade at 50% on the tangent creates a dark stripe
-// when the same reconstructed cloud spans both sides of the horizon.
-float vcsPlanetHorizonVisibility(vec3 ro, vec3 rd, vec3 center, float planetRadius, float feather)
+// Primary step length. The interval itself selects the policy: short rays divide their
+// complete interval, while every long/grazing ray uses the same bounded near-field span.
+// There is deliberately no inside/outside camera classification here.
+float vcsMarchStepLength(
+    float tEnter,
+    float tExit,
+    int steps,
+    float volumeSize,
+    float volumeHeight)
 {
-    vec3 oc = ro - center;
-    float cameraRadius = length(oc);
-    if (cameraRadius <= planetRadius - 1e-3)
-    {
-        return 0.0;
-    }
-
-    vec3 localUp = oc / max(cameraRadius, 1e-4);
-    float radiusRatio = clamp(planetRadius / max(cameraRadius, planetRadius), 0.0, 1.0);
-    float horizonMu = -sqrt(max(1.0 - radiusRatio * radiusRatio, 0.0));
-    float viewMu = dot(normalize(rd), localUp);
-    float width = max(feather, 1e-5);
-    return smoothstep(horizonMu - width * 2.0, horizonMu + width * 0.25, viewMu);
+    float safeSteps = float(max(steps, 1));
+    float interval = max(tExit - tEnter, 0.0);
+    float sizedSpan = min(interval, vcsMarchSpanLimit(volumeSize, volumeHeight));
+    return max(sizedSpan / safeSteps, 0.01);
 }
 
 #endif // GENESIS_CLOUD_SHELL_GLSL
