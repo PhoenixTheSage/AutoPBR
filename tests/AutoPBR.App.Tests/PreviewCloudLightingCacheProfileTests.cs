@@ -168,9 +168,11 @@ public sealed class PreviewCloudLightingCacheProfileTests
         Assert.Equal(new System.Numerics.Vector3(0.25f, 0.25f, 0.30f),
             profile.Octave2);
         Assert.Equal(2.25f, profile.ScatteredEnergyClamp);
-        Assert.Equal(0.18f, profile.CachedSkyVisibilityFloor);
-        Assert.Equal(0.11f, profile.GroundBounceStrength);
-        Assert.Equal(0.45f, profile.LocalConeOpticalDepthScale);
+        Assert.Equal(0.08f, profile.CachedSkyVisibilityFloor);
+        Assert.Equal(0.13f, profile.GroundBounceStrength);
+        Assert.Equal(0.38f, profile.LocalConeOpticalDepthScale);
+        Assert.Contains("ca3.3-shading(skyFloor=0.08", PreviewCloudLightingShadingProfiles.FormatDiagnostic(),
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -336,6 +338,65 @@ public sealed class PreviewCloudLightingCacheProfileTests
                     decision.Cascades);
                 Assert.True(decision.InvalidateBeforeGeneration);
             });
+    }
+
+    [Fact]
+    public void Cq36Scheduler_SpreadsCinematicLargeCameraInvalidationAcrossFrames()
+    {
+        var profile = PreviewCloudLightingCacheProfiles.Resolve(
+            PreviewVolumetricQuality.Cinematic);
+        var decision = PreviewCloudLightUpdateScheduler.Evaluate(
+            new PreviewCloudLightUpdateRequest(
+                profile,
+                FrameIndex: 1,
+                NearGenerated: true,
+                FarGenerated: true,
+                NearLastUpdateFrame: 0,
+                FarLastUpdateFrame: 0,
+                MaterialSettingsChanged: false,
+                LargeCameraMovement: true,
+                MaterialSunDirectionChanged: false,
+                LightBasisChanged: false,
+                SpreadHeavyInvalidation: true));
+
+        Assert.Equal(
+            PreviewCloudLightInvalidationReason.LargeCameraMovement,
+            decision.InvalidationReason);
+        Assert.True(decision.InvalidateBeforeGeneration);
+        Assert.Equal(PreviewCloudLightCascadeSelection.Near, decision.Cascades);
+        Assert.True(decision.UpdatesNear);
+        Assert.False(decision.UpdatesFar);
+    }
+
+    [Fact]
+    public void BackendSource_InvalidatesOnlyCascadesSelectedForRegeneration()
+    {
+        var backendSource = File.ReadAllText(Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..", "..", "..", "..", "..",
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.VolumetricClouds.cs")));
+
+        var invalidateBlockStart = backendSource.IndexOf(
+            "if (decision.InvalidateBeforeGeneration)",
+            StringComparison.Ordinal);
+        Assert.True(invalidateBlockStart >= 0);
+        var invalidateBlock = backendSource.Substring(
+            invalidateBlockStart,
+            Math.Min(900, backendSource.Length - invalidateBlockStart));
+        Assert.Contains("if (decision.UpdatesNear)", invalidateBlock, StringComparison.Ordinal);
+        Assert.Contains("if (decision.UpdatesFar)", invalidateBlock, StringComparison.Ordinal);
+        Assert.Contains(
+            "cache.Near.InvalidateGeneration();",
+            invalidateBlock,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "cache.Far.InvalidateGeneration();",
+            invalidateBlock,
+            StringComparison.Ordinal);
     }
 
     [Fact]

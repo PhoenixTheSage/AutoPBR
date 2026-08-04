@@ -67,6 +67,15 @@ public sealed class PreviewCloudDensityProfileTests
         Assert.Contains("ru.DensityAssetVersion,", backendSource, StringComparison.Ordinal);
         Assert.Contains("cu.DensityAssetVersion,", backendSource, StringComparison.Ordinal);
         Assert.Contains("densitySemantics=v{_cloudDensityAssetVersion}", backendSource, StringComparison.Ordinal);
+        Assert.Contains("ca1-broad-boundary-high-cinematic", backendSource, StringComparison.Ordinal);
+        Assert.Contains("ca2-dual-scale-asymmetric-v2-templates", backendSource, StringComparison.Ordinal);
+        Assert.Contains("thinFeaturePreservation=", backendSource, StringComparison.Ordinal);
+        Assert.Contains("PreviewCloudTemporalLowAlphaWeight.FormatDiagnostic()", backendSource,
+            StringComparison.Ordinal);
+        Assert.Contains("PreviewCloudEdgeRepairClassifier.FormatDiagnostic()", backendSource,
+            StringComparison.Ordinal);
+        Assert.Contains("PreviewCloudLightingShadingProfiles.FormatDiagnostic()", backendSource,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -83,14 +92,52 @@ public sealed class PreviewCloudDensityProfileTests
             "if (quality >= 2 && edgeWeight > 1e-3)",
             densitySource,
             StringComparison.Ordinal);
-        Assert.Contains("const mat2 detailRotation", densitySource, StringComparison.Ordinal);
-        Assert.Contains("vec4 rotatedDn = textureLod(", densitySource, StringComparison.Ordinal);
         Assert.Contains(
-            "float rotatedBlend = quality >= 3 ? 0.50 : 0.35;",
+            "coverage * mix(0.055, 1.22, population)",
+            densitySource,
+            StringComparison.Ordinal);
+        Assert.Contains("vec4 boundaryDn = textureLod(", densitySource, StringComparison.Ordinal);
+        Assert.Contains(
+            "float boundaryScale = detailScale * (quality >= 3 ? 0.68 : 0.82);",
             densitySource,
             StringComparison.Ordinal);
         Assert.Contains("float curl = dn.a * 2.0 - 1.0;", densitySource, StringComparison.Ordinal);
         Assert.DoesNotContain("texture(detailNoise", densitySource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Ca1BoundaryMaterial_IsDirectionalHeightAwareAndCoreProtected()
+    {
+        var shaderRoot = RepositoryPath(
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "Shaders");
+        var densitySource = File.ReadAllText(Path.Combine(
+            shaderRoot,
+            "common",
+            "volumetric_clouds_density_maps.glsl"));
+        var traceSource = File.ReadAllText(Path.Combine(
+            shaderRoot,
+            "genesis_clouds.frag"));
+        var repairSource = File.ReadAllText(Path.Combine(
+            shaderRoot,
+            "genesis_clouds_repair.frag"));
+        var lightSource = File.ReadAllText(Path.Combine(
+            shaderRoot,
+            "common",
+            "cloud_light_cache_generation.glsl"));
+
+        Assert.Contains("vec2 flowDirection", densitySource, StringComparison.Ordinal);
+        Assert.Contains("vec2 along = length(flowDirection)", densitySource, StringComparison.Ordinal);
+        Assert.Contains("float heightShear = (h - 0.42)", densitySource, StringComparison.Ordinal);
+        Assert.Contains("edgeWeight = 1.0 - smoothstep(0.12, 0.70, base);", densitySource, StringComparison.Ordinal);
+        Assert.Contains("float boundaryRepeat = boundaryScale / 0.72;", densitySource, StringComparison.Ordinal);
+        Assert.Contains("float lowerEvaporation = 1.0 - smoothstep", densitySource, StringComparison.Ordinal);
+        Assert.Contains("erosionStrength = mix(0.055, materialStrength, edgeWeight);", densitySource, StringComparison.Ordinal);
+        Assert.Contains("uWindOffset, uCirrusWindDir,", traceSource, StringComparison.Ordinal);
+        Assert.Contains("uCirrusWindDir,", repairSource, StringComparison.Ordinal);
+        Assert.Contains("uCirrusWindDir,", lightSource, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -208,6 +255,10 @@ public sealed class PreviewCloudDensityProfileTests
             StringComparison.Ordinal);
         Assert.Contains(
             "float compositeCoverage = uApplyCloudEncoding > 0",
+            upsampleSource,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "compositeRgb = presentedRgb * (compositeCoverage / max(coverage, 1e-5))",
             upsampleSource,
             StringComparison.Ordinal);
         Assert.Contains(

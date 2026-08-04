@@ -51,8 +51,9 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private byte[]? _rgbaUploadScratch;
     private GlMeshBuffer? _mesh;
     private GlMeshBuffer? _groundMesh;
-    private readonly Dictionary<TerrainChunkKey, TerrainGpuChunk> _terrainGpuChunks = new();
+    private readonly Dictionary<TerrainResidencyKey, TerrainGpuChunk> _terrainGpuChunks = new();
     private TerrainChunkStreamer? _terrainStreamer;
+    private bool _pendingTerrainLodCacheClear;
     /// <summary>
     /// When true, <see cref="NeedsContinuousRendering"/> keeps requesting frames so chunk uploads can catch up.
     /// Starts true so selecting a subject before the first idle catch-up does not freeze an empty terrain.
@@ -292,6 +293,8 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private float _camOrbitRadPerPx = 0.006f;
     private float _camPanPerPx = 0.0022f;
     private float _camZoomPerWheelStep = 0.12f;
+    private bool _holdFovZoomActive;
+    private float _holdFovZoomLevel = 2f;
     /// <summary>Pivot-to-eye distance used when seeding orbit and when applying boom from settings (wheel zoom changes <see cref="_orbitDistance"/> temporarily).</summary>
     private float _orbitBoomArmDistance = DefaultOrbitBoomArmDistance;
     private bool _userCameraDragging;
@@ -1185,7 +1188,8 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
 
     /// <summary>Orbit (rad/pixel), pan (world scale per pixel, scaled by distance in <see cref="ApplyCameraPanPixels"/>), zoom (step strength per wheel notch).</summary>
     public void SetCameraSensitivities(float orbitRadPerPx, float panPerPixel, float zoomPerWheelStep,
-        float flyLookRadPerPx, bool invertLookY, float flyMoveSpeed, bool flySmoothAcceleration)
+        float flyLookRadPerPx, bool invertLookY, float flyMoveSpeed, bool flySmoothAcceleration,
+        float holdFovZoomLevel = 2f)
     {
         lock (_sync)
         {
@@ -1196,6 +1200,16 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
             _invertLookY = invertLookY;
             _flyMoveSpeed = Math.Clamp(flyMoveSpeed, 0.25f, 4f);
             _flySmoothAcceleration = flySmoothAcceleration;
+            _holdFovZoomLevel = Math.Clamp(holdFovZoomLevel, 1.25f, 4f);
+        }
+    }
+
+    /// <summary>Hold-to-zoom FOV magnifier (keyboard C). Active until released or input focus is lost.</summary>
+    public void SetHoldFovZoomActive(bool active)
+    {
+        lock (_sync)
+        {
+            _holdFovZoomActive = active;
         }
     }
 

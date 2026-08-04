@@ -92,11 +92,13 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
             chunkViewDistance,
             PreviewStageConstants.TerrainMinChunkViewDistance,
             PreviewStageConstants.TerrainMaxChunkViewDistance);
-        lodRingChunks = Math.Clamp(
+        // Extreme LOD rings (256–1024) are far larger than a practical height atlas. DDA stays
+        // near-field: Full view distance + a modest LOD margin only.
+        var atlasLodRing = Math.Clamp(
             lodRingChunks,
             PreviewStageConstants.TerrainMinLodRingChunks,
-            PreviewStageConstants.TerrainMaxLodRingChunks);
-        var radiusChunks = chunkViewDistance + lodRingChunks;
+            PreviewStageConstants.TerrainOccluderAtlasMaxLodRingChunks);
+        var radiusChunks = chunkViewDistance + atlasLodRing;
         var sizeChunks = radiusChunks * 2 + 1;
         var sizeColumns = sizeChunks * PreviewStageConstants.TerrainChunkSize;
         var settingsVersion = HashCode.Combine(
@@ -110,7 +112,7 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
 
         // Keep the resident atlas while the camera stays inside with a chunk-margin buffer.
         // Flying across the interior must not trigger a full rebuild every chunk.
-        var edgeMarginChunks = Math.Max(2, lodRingChunks);
+        var edgeMarginChunks = Math.Max(2, atlasLodRing);
         if (IsValid &&
             _width == sizeColumns &&
             _height == sizeColumns &&

@@ -44,6 +44,7 @@ uniform sampler2DShadow uShadowMapNear;
 uniform sampler2DShadow uShadowMapMid;
 uniform sampler2D uCloudGroundTransmittance;
 
+uniform mat4  uView;
 uniform vec3  uCameraPos;
 uniform vec3  uLightDir;
 uniform vec3  uLightColor;
@@ -88,6 +89,9 @@ uniform float uAtmosphereSunIntensity;
 uniform float uAerialFogStrength;
 uniform float uTerrainFogStart;
 uniform float uTerrainFogEnd;
+uniform int   uTerrainLodFadeEnable;
+uniform float uTerrainLodFadeStart;
+uniform float uTerrainLodFadeEnd;
 uniform float uTurbidity;
 uniform float uHorizonFalloff;
 uniform float uGroundWorldY;
@@ -106,6 +110,7 @@ uniform float uShadowDistance;
 uniform float uShadowFadeStart;
 uniform float uShadowMinBias;
 uniform float uShadowMaxBias;
+uniform float uShadowStrength;
 uniform vec2  uShadowTexelSize;
 uniform vec2  uShadowTexelSizeNear;
 uniform vec2  uShadowTexelSizeMid;
@@ -119,6 +124,7 @@ uniform vec2  uCloudGroundTexelSize;
 
 layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 TaaSignal;
+layout(location = 2) out vec4 ViewNormal;
 
 vec3 genesisMaterialTextureCoord(vec2 uv)
 {
@@ -286,6 +292,28 @@ void main()
         discard;
     }
 
+    // Distant LOD detail fade: dither the *finer* level out at its outer edge over solid
+    // coarser underlay. Never fade-in the only coverage — that punches sky holes.
+    if (uIsGroundPass > 0 && uTerrainLodFadeEnable > 0)
+    {
+        float lodDist = length(vWorldPos.xz - uCameraPos.xz);
+        float lodKeep = 1.0 - smoothstep(
+            uTerrainLodFadeStart,
+            max(uTerrainLodFadeEnd, uTerrainLodFadeStart + 1e-3),
+            lodDist);
+        if (lodKeep < 0.001)
+        {
+            discard;
+        }
+
+        // Interleaved gradient noise — stable under TAA, softens the morph band.
+        float lodDither = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+        if (lodKeep < lodDither)
+        {
+            discard;
+        }
+    }
+
     // Build TBN in world space.
     vec3 Nw = normalize(vWorldNormal);
     vec3 Tw = normalize(vWorldTangent.xyz);
@@ -382,6 +410,9 @@ void main()
 
     // Directional shadow map visibility (Phase 2 + cascade split).
     float shadowVis = 1.0;
+    // Strength >1 deepens umbra by attenuating ambient inside the sampled mask (not by
+    // expanding soft penumbra — multiplying occlusion past 1 crushed PCF edges into area growth).
+    float shadowAmbientAtten = 1.0;
 #if defined(GENESIS_ENABLE_SHADOW)
     shadowVis = sampleSceneShadowCascaded(
         vWorldPos, uCameraPos, vLightClip,
@@ -392,6 +423,13 @@ void main()
         uEnableShadowMap, uEnableShadowCascades,
         uCascadeSplitDistance, uCascadeMidSplitDistance, uCascadeBlendWidth,
         uShadowDistance, uShadowFadeStart);
+    // Tone only: preserve sampled footprint. 0..1 fades direct occlusion; 1..3 deepens
+    // ambient fill inside that same mask (umbra is already fully dark on direct at 1).
+    float shadowStrength = max(uShadowStrength, 0.0);
+    float shadowOcclusion = 1.0 - shadowVis;
+    shadowVis = 1.0 - shadowOcclusion * min(shadowStrength, 1.0);
+    // 1..3 deepens ambient; rate matches the old 1..2 curve, with headroom to full umbra fill kill.
+    shadowAmbientAtten = 1.0 - shadowOcclusion * min(max(shadowStrength - 1.0, 0.0) * 0.9, 1.0);
 #endif
 
     // CQ3.5 attenuates terrain/simple-ground direct sun only. Subjects remain out of
@@ -454,7 +492,8 @@ void main()
 #endif
 
     // Parallax contact AO mostly darkens indirect/cavity light while keeping direct lobe readable.
-    indirect *= pomAo;
+    // Shadow strength >1 deepens tone via ambient attenuation (same footprint as the shadow map).
+    indirect *= pomAo * shadowAmbientAtten;
     direct *= mix(1.0, pomAo, 0.22);
 
     // Emission (LabPBR _s.a additive).
@@ -501,5 +540,9 @@ void main()
         motion = clamp(length(currUv - prevUv) * 64.0, 0.0, 1.0);
     }
 
-    TaaSignal = vec4(clamp(reactivity, 0.0, 1.0), 1.0, motion, 1.0);
+    // A = foliage/cutout occupancy for shaft attenuation (surviving cutout texels only).
+    float foliageMask = genesisEntityAlphaMode(uEntityAlphaMode) == 1 ? 1.0 : 0.0;
+    TaaSignal = vec4(clamp(reactivity, 0.0, 1.0), 1.0, motion, foliageMask);
+    vec3 viewN = normalize((uView * vec4(N, 0.0)).xyz);
+    ViewNormal = vec4(viewN * 0.5 + 0.5, 1.0);
 }

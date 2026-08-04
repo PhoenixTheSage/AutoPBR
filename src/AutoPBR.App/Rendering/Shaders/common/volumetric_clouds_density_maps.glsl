@@ -5,6 +5,8 @@
 #define GENESIS_VOLUMETRIC_CLOUDS_DENSITY_MAPS_GLSL
 
 //!include "volumetric_clouds_density.glsl"
+//!include "cloud_population.glsl"
+//!include "cloud_layer_envelope.glsl"
 
 // The center/radius parameters remain in the density ABI for the GLES compatibility path
 // and existing uniform plumbing. Their sum is now only the flat ground datum.
@@ -236,24 +238,33 @@ float vcCloudConservativeDensity(vec3 worldPos, vec3 planetCenter, float planetR
     int densityAssetVersion)
 {
     float altitude = vcFlatAltitude(worldPos, planetCenter, planetRadius);
-    if (altitude < layerBase || altitude > layerTop)
+    VcCumulusDeck deck;
+    if (!vcTryGetCumulusDeck(
+            altitude,
+            worldPos.xz,
+            volumeSize,
+            layerBase,
+            max(layerTop - layerBase, 0.01),
+            coverageScale,
+            deck))
     {
         return 0.0;
     }
 
-    float layerH = max(layerTop - layerBase, 0.001);
-    float h = (altitude - layerBase) / layerH;
+    float layerH = max(deck.topAltitude - deck.baseAltitude, 0.001);
+    float h = vcDeckNormalizedHeight(altitude, deck);
+    vec3 sampleWind = deck.index > 0 ? uUpperWindOffset : windOffset;
     float coverage = vcSampleWeather(
         coverageMap,
         hasCoverageMap,
         worldPos,
         volumeSize,
-        windOffset.xz,
+        sampleWind.xz,
         sampleFootprint * 2.0,
         densityAssetVersion).r;
 
     // Slight dilation keeps the conservative test from skipping thin cloud boundaries.
-    coverage = saturate1(coverage * coverageScale + 0.08);
+    coverage = saturate1(coverage * deck.coverageScale + 0.08);
     float heightUpper = vcHeightGradient(h, 0.5, 0.0, densityAssetVersion);
     if (densityAssetVersion >= 2)
     {
@@ -262,7 +273,7 @@ float vcCloudConservativeDensity(vec3 worldPos, vec3 planetCenter, float planetR
             vcHeightGradient(h, 1.0, 1.0, densityAssetVersion));
     }
 
-    return coverage * heightUpper;
+    return coverage * heightUpper * deck.densityScale;
 }
 
 // Base shape without detail erosion from one already-filtered weather sample.
@@ -274,15 +285,39 @@ float vcCloudBaseDensityFromWeather(vec3 worldPos, vec3 planetCenter, float plan
     float sampleFootprint, vec4 weather, int densityAssetVersion)
 {
     float altitude = vcFlatAltitude(worldPos, planetCenter, planetRadius);
-    if (altitude < layerBase || altitude > layerTop)
+    VcCumulusDeck deck;
+    if (!vcTryGetCumulusDeck(
+            altitude,
+            worldPos.xz,
+            volumeSize,
+            layerBase,
+            max(layerTop - layerBase, 0.01),
+            coverageScale,
+            deck))
     {
         return 0.0;
     }
 
-    float layerH = max(layerTop - layerBase, 0.001);
-    float h = (altitude - layerBase) / layerH;
+    float layerH = max(deck.topAltitude - deck.baseAltitude, 0.001);
+    float h = vcDeckNormalizedHeight(altitude, deck);
+    vec3 sampleWind = deck.index > 0 ? uUpperWindOffset : windOffset;
+    weather = vcApplyWeatherStyleBias(weather, uStyleBias);
 
-    float coverage = saturate1(weather.x * coverageScale);
+    float coverage = saturate1(weather.x * deck.coverageScale);
+    if (densityAssetVersion >= 2)
+    {
+        float population = cpPopulationMask(
+            worldPos.xz + sampleWind.xz,
+            volumeSize,
+            coverage,
+            weather.y,
+            weather.w);
+        // CA2 calibration 2: the former 28% residual was still enough to reconnect
+        // neighboring systems after shape erosion, producing a continuous white slab.
+        // Keep only a faint humidity floor while the smooth population field supplies
+        // the transition instead of a binary cell cutout.
+        coverage = saturate1(coverage * mix(0.055, 1.22, population));
+    }
     if (coverage <= 1e-3)
     {
         return 0.0;
@@ -315,8 +350,8 @@ float vcCloudBaseDensityFromWeather(vec3 worldPos, vec3 planetCenter, float plan
     vec2 upperDrift = vec2(0.19, -0.13) *
         (h * h * type * horizontalScale) *
         mix(1.0, 1.42, convection);
-    vec2 shapeXz = (worldPos.xz + windOffset.xz + upperDrift) / horizontalScale;
-    float shapeY = h * mix(0.34, 0.86, type) + windOffset.y / sizeScale;
+    vec2 shapeXz = (worldPos.xz + sampleWind.xz + upperDrift) / horizontalScale;
+    float shapeY = h * mix(0.34, 0.86, type) + sampleWind.y / sizeScale;
     if (densityAssetVersion >= 2)
     {
         shapeY += h * h * convectionLift * 0.08;
@@ -374,14 +409,14 @@ float vcCloudBaseDensityFromWeather(vec3 worldPos, vec3 planetCenter, float plan
     }
     else
     {
-        base = vcFbm((worldPos + windOffset) / max(volumeSize, 8.0) * 2.0);
+        base = vcFbm((worldPos + sampleWind) / max(volumeSize, 8.0) * 2.0);
     }
 
     base *= heightGrad;
     // Coverage erosion: low coverage eats the shape from the outside in, then scales it,
     // so sparse skies hold a few full clouds instead of many faint ones.
     float baseShaped = vcRemap01(base, 1.0 - coverage, 1.0) * coverage;
-    return baseShaped;
+    return baseShaped * deck.densityScale;
 }
 
 // Convenience wrapper for callers which do not otherwise need the weather material.
@@ -432,7 +467,7 @@ float vcCloudDensityPotentialScale(
 // Full density from a precomputed base shape (avoids duplicate base-density work in the march loop).
 float vcCloudDensityFromBase(float base, vec3 worldPos, vec3 planetCenter, float planetRadius,
     float layerBase, float layerTop, float densityMul, float volumeSize,
-    sampler3D detailNoise, int hasDetailNoise, vec3 windOffset,
+    sampler3D detailNoise, int hasDetailNoise, vec3 windOffset, vec2 flowDirection,
     float sampleFootprint, float detailLodBias, int quality,
     float densityPotential, float convection, int densityAssetVersion)
 {
@@ -441,14 +476,29 @@ float vcCloudDensityFromBase(float base, vec3 worldPos, vec3 planetCenter, float
         return 0.0;
     }
 
+    float altitude = vcFlatAltitude(worldPos, planetCenter, planetRadius);
+    VcCumulusDeck deck;
+    bool hasDeck = vcTryGetCumulusDeck(
+        altitude,
+        worldPos.xz,
+        volumeSize,
+        layerBase,
+        max(layerTop - layerBase, 0.01),
+        1.0,
+        deck);
+    float localBase = hasDeck ? deck.baseAltitude : layerBase;
+    float localTop = hasDeck ? deck.topAltitude : layerTop;
+    vec3 sampleWind = hasDeck && deck.index > 0 ? uUpperWindOffset : windOffset;
+
     float erode = 0.0;
     if (hasDetailNoise > 0)
     {
-        float layerH = max(layerTop - layerBase, 0.001);
-        float altitude = vcFlatAltitude(worldPos, planetCenter, planetRadius);
-        float h = (altitude - layerBase) / layerH;
+        float layerH = max(localTop - localBase, 0.001);
+        float h = hasDeck
+            ? vcDeckNormalizedHeight(altitude, deck)
+            : ((altitude - localBase) / layerH);
         float detailScale = max(volumeSize, 8.0) * 0.5;
-        vec3 detailWorld = worldPos + windOffset * 0.5;
+        vec3 detailWorld = worldPos + sampleWind * 0.5;
         vec3 detailUvw = fract(detailWorld / detailScale);
         ivec3 detailSize = textureSize(detailNoise, 0);
         float detailDimension = float(max(detailSize.x, max(detailSize.y, detailSize.z)));
@@ -459,6 +509,7 @@ float vcCloudDensityFromBase(float base, vec3 worldPos, vec3 planetCenter, float
             detailLodBias);
         vec4 dn = textureLod(detailNoise, detailUvw, detailLod);
         float detailFbm;
+        float erosionStrength;
         if (densityAssetVersion >= 2)
         {
             float upperBoundary = smoothstep(0.24, 0.72, h);
@@ -466,59 +517,101 @@ float vcCloudDensityFromBase(float base, vec3 worldPos, vec3 planetCenter, float
             float billow = mix(dn.r, dn.g, billowMix);
             float wispy = dn.b;
             detailFbm = mix(wispy, billow, upperBoundary);
-
-            // High/Cinematic pay for the decorrelating lookup only at a cloud boundary.
-            // Rotating the complete advected world coordinate preserves a shared wind
-            // velocity, while the fixed offset and curl channel break short-period tiling.
             float edgeWeight = 1.0 - smoothstep(0.18, 0.62, base);
+            erosionStrength = mix(0.10, 0.24, edgeWeight);
+
+            // CA1 boundary material: High/Cinematic retain a protected coherent core, but
+            // describe the evaporating side/lower boundary in a wind-aligned material and
+            // the growing upper boundary in a finer billowy material. The second lookup
+            // replaces CQ2's same-scale decorrelation, so CA1 does not add a texture fetch.
             if (quality >= 2 && edgeWeight > 1e-3)
             {
-                const mat2 detailRotation = mat2(
-                    0.838671, -0.544639,
-                    0.544639, 0.838671);
-                vec2 rotatedXz = detailRotation * detailWorld.xz;
+                // The first CA1 calibration used a six-to-seven-world-unit cross-flow
+                // period on typical settings. At distance that became stipple around an
+                // otherwise unchanged envelope. Widen the material band and make the
+                // secondary field genuinely mesoscale before increasing its contrast.
+                edgeWeight = 1.0 - smoothstep(0.12, 0.70, base);
+                vec2 along = length(flowDirection) > 1e-4
+                    ? normalize(flowDirection)
+                    : normalize(vec2(0.82, 0.57));
+                vec2 across = vec2(-along.y, along.x);
                 float curl = dn.a * 2.0 - 1.0;
-                vec3 rotatedUvw = fract(
-                    vec3(rotatedXz.x, detailWorld.y, rotatedXz.y) / detailScale +
-                    vec3(0.371, 0.683, 0.193) +
-                    vec3(curl * 0.055, -curl * 0.035, curl * 0.047));
-                vec4 rotatedDn = textureLod(
+                float heightShear = (h - 0.42) * detailScale * 0.52;
+                vec2 shearedXz = detailWorld.xz +
+                    along * heightShear +
+                    across * curl * detailScale * 0.12;
+                float alongWorld = dot(shearedXz, along);
+                float acrossWorld = dot(shearedXz, across);
+                float boundaryScale = detailScale * (quality >= 3 ? 0.68 : 0.82);
+                vec3 boundarySpace = vec3(
+                    alongWorld * 0.18,
+                    detailWorld.y * 0.72 + curl * detailScale * 0.075,
+                    acrossWorld * 0.70);
+                vec3 boundaryUvw = fract(
+                    boundarySpace / boundaryScale +
+                    vec3(0.371, 0.683, 0.193));
+                float boundaryRepeat = boundaryScale / 0.72;
+                float boundaryLod = vcCloudRayFootprintLod(
+                    sampleFootprint,
+                    boundaryRepeat,
+                    detailDimension,
+                    detailLodBias + 0.20);
+                vec4 boundaryDn = textureLod(
                     detailNoise,
-                    rotatedUvw,
-                    detailLod);
-                float rotatedBillow = mix(
-                    rotatedDn.r,
-                    rotatedDn.g,
+                    boundaryUvw,
+                    boundaryLod);
+                float boundaryBillow = mix(
+                    boundaryDn.r,
+                    boundaryDn.g,
                     billowMix);
-                float rotatedDetail = mix(
-                    rotatedDn.b,
-                    rotatedBillow,
-                    upperBoundary);
-                float rotatedBlend = quality >= 3 ? 0.50 : 0.35;
-                detailFbm = mix(
-                    detailFbm,
-                    rotatedDetail,
-                    rotatedBlend);
+                boundaryBillow = smoothstep(0.24, 0.78, boundaryBillow);
+                float boundaryWispy = mix(
+                    dn.b,
+                    boundaryDn.b,
+                    quality >= 3 ? 0.80 : 0.68);
+                boundaryWispy = mix(0.50, boundaryWispy, 0.86);
+                float upperBillow = mix(
+                    billow,
+                    boundaryBillow,
+                    quality >= 3 ? 0.58 : 0.46);
+                detailFbm = mix(boundaryWispy, upperBillow, upperBoundary);
+
+                // Dry lower/side edges can break into wisps, while convective upper edges
+                // stay more solid and scalloped. Interior erosion is reduced from CQ2 so
+                // stronger silhouettes do not hollow the humid core into foam.
+                float dryness = 1.0 - saturate1(densityPotential);
+                float lowerEvaporation = 1.0 - smoothstep(0.52, 0.88, h);
+                float lowerEdgeStrength = (quality >= 3 ? 0.34 : 0.28) *
+                    mix(0.94, 1.05, dryness);
+                float upperEdgeStrength = (quality >= 3 ? 0.30 : 0.25) *
+                    mix(0.96, 1.05, saturate1(convection));
+                float materialStrength = mix(
+                    upperEdgeStrength,
+                    lowerEdgeStrength,
+                    lowerEvaporation);
+                erosionStrength = mix(0.055, materialStrength, edgeWeight);
             }
         }
         else
         {
             detailFbm = dn.r * 0.625 + dn.g * 0.25 + dn.b * 0.125;
             detailFbm = mix(detailFbm, 1.0 - detailFbm, saturate1(h * 5.0));
+            float edgeWeight = 1.0 - smoothstep(0.18, 0.62, base);
+            erosionStrength = mix(0.10, 0.24, edgeWeight);
         }
 
         // Erode silhouettes without hollowing the cloud body. Strong full-volume erosion
         // made nearby clouds look like disconnected foam/splotches.
-        float edgeWeight = 1.0 - smoothstep(0.18, 0.62, base);
-        erode = detailFbm * mix(0.10, 0.24, edgeWeight);
+        erode = detailFbm * erosionStrength;
     }
 
     float density = vcRemap01(base, erode, 1.0);
-    float layerH = max(layerTop - layerBase, 0.001);
-    float altitude = vcFlatAltitude(worldPos, planetCenter, planetRadius);
-    float h = saturate1((altitude - layerBase) / layerH);
+    float densityLayerH = max(localTop - localBase, 0.001);
+    float densityH = hasDeck
+        ? saturate1(vcDeckNormalizedHeight(altitude, deck))
+        : saturate1((altitude - localBase) / densityLayerH);
     density *= vcCloudDensityPotentialScale(
-        h,
+        densityH,
         densityPotential,
         densityAssetVersion);
     return density * densityMul;
@@ -528,7 +621,7 @@ float vcCloudDensityFromBase(float base, vec3 worldPos, vec3 planetCenter, float
 float vcCloudDensityEx(vec3 worldPos, vec3 planetCenter, float planetRadius,
     float layerBase, float layerTop, float densityMul, float coverageScale, float volumeSize,
     sampler3D cloudNoise, int hasCloudNoise, sampler3D detailNoise, int hasDetailNoise,
-    sampler2D coverageMap, int hasCoverageMap, vec3 windOffset,
+    sampler2D coverageMap, int hasCoverageMap, vec3 windOffset, vec2 flowDirection,
     float sampleFootprint, float detailLodBias, int quality, int densityAssetVersion)
 {
     vec4 weather = vcSampleWeather(
@@ -554,7 +647,7 @@ float vcCloudDensityEx(vec3 worldPos, vec3 planetCenter, float planetRadius,
         weather,
         densityAssetVersion);
     return vcCloudDensityFromBase(base, worldPos, planetCenter, planetRadius, layerBase, layerTop,
-        densityMul, volumeSize, detailNoise, hasDetailNoise, windOffset,
+        densityMul, volumeSize, detailNoise, hasDetailNoise, windOffset, flowDirection,
         sampleFootprint, detailLodBias, quality,
         weather.z, weather.w, densityAssetVersion);
 }

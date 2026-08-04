@@ -159,6 +159,11 @@ internal sealed class GlCloudTemporalRenderTarget : IDisposable
         ConfigureAllAttachments();
     }
 
+    /// <summary>
+    /// Copies color + metadata history. Moment attachment failures are non-fatal: color/data
+    /// history remains valid and moments are reset to the invalid sentinel so temporal can
+    /// fall back to neighborhood clipping instead of wiping the entire CQ1 history.
+    /// </summary>
     public bool CopyFrom(GlCloudTemporalRenderTarget source)
     {
         if (!IsValid || !source.IsValid || Profile != source.Profile ||
@@ -183,7 +188,24 @@ internal sealed class GlCloudTemporalRenderTarget : IDisposable
             ConfigureSingleDrawAttachment(attachment);
             _gl.BlitFramebuffer(0, 0, _width, _height, 0, 0, _width, _height,
                 ClearBufferMask.ColorBufferBit, GLEnum.Nearest);
-            ok &= _gl.GetError() == GLEnum.NoError;
+            if (_gl.GetError() == GLEnum.NoError)
+            {
+                continue;
+            }
+
+            // Attachment 0/1 are required. Attachment 2 (moments) must not discard the
+            // accepted color/data history or confidence stays near 1/8 forever.
+            if (attachment < 2)
+            {
+                ok = false;
+                break;
+            }
+
+            ConfigureSingleDrawAttachment(2);
+            _gl.ClearColor(-1f, 0f, 0f, 0f);
+            _gl.Clear(ClearBufferMask.ColorBufferBit);
+            _gl.ClearColor(0f, 0f, 0f, 0f);
+            _ = _gl.GetError();
         }
 
         _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, (uint)Math.Max(0, priorRead));

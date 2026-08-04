@@ -13,6 +13,7 @@ internal static class PreviewCloudBakedAssetLoader
     private const string V1WeatherFileName = "cloud_coverage_256.bin";
     private static readonly StandardAssetLoader BundledAssetLoader =
         new StandardAssetLoader(typeof(PreviewCloudBakedAssetLoader).Assembly);
+    private static readonly object BundledAssetLoaderGate = new();
 
     public static bool TryLoadDensityAssetSet(
         bool allowV2,
@@ -303,16 +304,23 @@ internal static class PreviewCloudBakedAssetLoader
         var uri = new Uri(AssetRoot + fileName);
         try
         {
-            if (!BundledAssetLoader.Exists(uri))
+            lock (BundledAssetLoaderGate)
             {
-                reason = "missing";
-                return false;
+                // StandardAssetLoader can be reached concurrently by CQ1/CQ2/CQ4 startup
+                // and headless tests. Keep its Exists/Open pair atomic so one valid bundled
+                // asset cannot transiently report missing while another stream is opening.
+                if (!BundledAssetLoader.Exists(uri))
+                {
+                    reason = "missing";
+                    return false;
+                }
+
+                using var stream = BundledAssetLoader.Open(uri);
+                using var ms = new MemoryStream();
+                stream.CopyTo(ms);
+                data = ms.ToArray();
             }
 
-            using var stream = BundledAssetLoader.Open(uri);
-            using var ms = new MemoryStream();
-            stream.CopyTo(ms);
-            data = ms.ToArray();
             if (data.Length == 0)
             {
                 reason = "empty";
@@ -328,6 +336,12 @@ internal static class PreviewCloudBakedAssetLoader
             return false;
         }
     }
+
+    internal static bool TryLoadBundledRaw(
+        string fileName,
+        out byte[] data,
+        out string reason) =>
+        TryLoadRaw(fileName, out data, out reason);
 }
 
 internal delegate bool PreviewCloudRawAssetReader(

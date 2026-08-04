@@ -23,6 +23,8 @@ uniform int uHasSceneDepth;
 uniform int uCloudDataDirect;
 uniform float uCloudExposure;
 uniform int uHdrPresent;
+uniform float uHdrPaperWhiteNits;
+uniform float uHdrPeakNits;
 uniform int uApplyCloudEncoding;
 uniform int uCloudSourceFullResolution;
 out vec4 FragColor;
@@ -97,7 +99,13 @@ void main()
     vec3 rgb = (c0.rgb * w0 + c1.rgb * w1 + c2.rgb * w2 + c3.rgb * w3) /
         wSum;
     vec3 presentedRgb = cpEncodeCloudRadiance(
-        rgb, coverage, uCloudExposure, uHdrPresent, uApplyCloudEncoding);
+        rgb,
+        coverage,
+        uCloudExposure,
+        uHdrPresent,
+        uApplyCloudEncoding,
+        uHdrPaperWhiteNits,
+        uHdrPeakNits);
     float directDiscCoverage = cdoDirectDiscOcclusionAlpha(
             coverage,
             dot(rayDir, normalize(-uSunDir)),
@@ -108,5 +116,9 @@ void main()
             directDiscCoverage,
             clamp(uSunDiscVisibility, 0.0, 1.0))
         : coverage;
-    FragColor = vec4(presentedRgb, compositeCoverage);
+    // Premultiplied ONE / ONE_MINUS_SRC_ALPHA requires RGB and A to share opacity.
+    // Direct-disc extinction boosts A over the sun; rescale RGB so the seal shows
+    // cloud radiance instead of punching a dark hole through the HDR disc.
+    vec3 compositeRgb = presentedRgb * (compositeCoverage / max(coverage, 1e-5));
+    FragColor = vec4(compositeRgb, compositeCoverage);
 }

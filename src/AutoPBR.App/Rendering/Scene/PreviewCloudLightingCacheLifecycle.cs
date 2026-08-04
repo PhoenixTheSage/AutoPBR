@@ -31,7 +31,8 @@ public readonly record struct PreviewCloudLightUpdateRequest(
     bool MaterialSettingsChanged,
     bool LargeCameraMovement,
     bool MaterialSunDirectionChanged,
-    bool LightBasisChanged);
+    bool LightBasisChanged,
+    bool SpreadHeavyInvalidation = false);
 
 public readonly record struct PreviewCloudLightUpdateDecision(
     PreviewCloudLightCascadeSelection Cascades,
@@ -70,8 +71,25 @@ public static class PreviewCloudLightUpdateScheduler
         var invalidationReason = ResolveInvalidationReason(request);
         if (invalidationReason != PreviewCloudLightInvalidationReason.None)
         {
+            var invalidationCascades = PreviewCloudLightCascadeSelection.Both;
+            // Cinematic near+far together is a multi-millisecond spike. Large camera
+            // moves already happen while sparse residency is rebuilding; spread the
+            // dual-cascade invalidation across frames when requested. The backend must
+            // invalidate only the selected cascade so the other remains sampleable.
+            if (request.SpreadHeavyInvalidation &&
+                invalidationReason ==
+                    PreviewCloudLightInvalidationReason.LargeCameraMovement &&
+                (request.NearGenerated || request.FarGenerated))
+            {
+                invalidationCascades = !request.NearGenerated
+                    ? PreviewCloudLightCascadeSelection.Near
+                    : !request.FarGenerated
+                        ? PreviewCloudLightCascadeSelection.Far
+                        : PreviewCloudLightCascadeSelection.Near;
+            }
+
             return new PreviewCloudLightUpdateDecision(
-                PreviewCloudLightCascadeSelection.Both,
+                invalidationCascades,
                 InvalidateBeforeGeneration: true,
                 invalidationReason,
                 nearAge,

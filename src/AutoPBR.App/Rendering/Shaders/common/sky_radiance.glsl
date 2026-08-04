@@ -52,9 +52,9 @@ vec3 skyDayRadiance(vec3 viewDir, vec3 lightPropagationDir, float sunIntensity, 
     // Sky brightness tracks sun intensity only gently (perceptual auto-exposure).
     float illum = 0.8 + 0.2 * smoothstep(1.0, 12.0, max(sunIntensity, 0.0));
 
-    // Rayleigh blue: saturated zenith, paler toward horizon (linear RGB targets).
-    vec3 zenithBlue = vec3(0.052, 0.22, 0.74);
-    vec3 horizonBlue = vec3(0.38, 0.62, 0.98);
+    // Bright aqua / clear-day sky blue: saturated zenith, paler toward horizon.
+    vec3 zenithBlue = vec3(0.20, 0.55, 0.85);
+    vec3 horizonBlue = vec3(0.58, 0.82, 0.97);
     float gradT = pow(1.0 - max(mu, 0.0), 2.4);
     vec3 sky = mix(zenithBlue, horizonBlue, gradT * mix(0.7, 1.0, bandScale));
 

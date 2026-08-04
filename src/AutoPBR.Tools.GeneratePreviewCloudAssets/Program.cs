@@ -43,6 +43,16 @@ WriteDensityBlob(
     PreviewCloudDensityAssetContract.Weather,
     cq2.WeatherRgba);
 
+foreach (var template in PreviewSparseCloudTemplateAssetGenerator.GenerateAll())
+{
+    WriteSparseTemplateBlob(outDir, template);
+}
+
+foreach (var template in PreviewSparseCloudTemplateAssetGenerator.GenerateAllV2())
+{
+    WriteSparseTemplateBlob(outDir, template);
+}
+
 Console.WriteLine($"Wrote preview cloud assets to {outDir}");
 return 0;
 
@@ -75,4 +85,26 @@ static void WriteDensityBlob(
 static void WriteAtomically(string path, byte[] data)
 {
     PreviewCloudAssetFileWriter.WriteAtomically(path, data);
+}
+
+static void WriteSparseTemplateBlob(
+    string dir,
+    PreviewSparseCloudTemplateAssetPayload payload)
+{
+    if (!PreviewSparseCloudTemplateAssetGenerator.ValidatePayloadForVersion(
+            payload.Descriptor,
+            payload.Rg,
+            out var reason))
+    {
+        throw new InvalidDataException(
+            $"{payload.Descriptor.FileName} failed CQ4 validation: {reason}.");
+    }
+
+    var path = Path.Combine(dir, payload.Descriptor.FileName);
+    WriteAtomically(path, payload.Rg);
+    Console.WriteLine(
+        $"  {payload.Descriptor.FileName} " +
+        $"({payload.Descriptor.DimensionLabel} RG8 v{payload.Descriptor.Version}, " +
+        $"{payload.Rg.Length:N0} bytes, seed={payload.Descriptor.Seed}, sha256=" +
+        $"{PreviewSparseCloudTemplateAssetGenerator.ComputeSha256Hex(payload.Rg)})");
 }

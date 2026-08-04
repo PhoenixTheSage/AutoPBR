@@ -6,12 +6,18 @@ using AutoPBR.Preview;
 namespace AutoPBR.App.Rendering.Scene;
 
 /// <summary>
-/// Distant Horizons / Voxy–style LOD: 1m column silhouette (tops + vertical steps) as one
-/// aggressively greedy-merged mesh. No fill-depth underground solids. Surfaces, step faces,
-/// and vegetation use the same biome / kit material slots as Full chunks.
+/// Distant Horizons / Voxy–style combined LOD: stepped column silhouette (tops + vertical steps)
+/// as one aggressively greedy-merged mesh per section. No fill-depth underground solids.
+/// Vegetation is block-space 1:1 with Full (same 1 m roots, trunks, canopy blocks, model stamps).
+/// Allowed LOD cost levers are render-side only: texture mips, transparency/alpha policy,
+/// and shadow caster distance — never drop or simplify vegetation voxels for budget.
 /// </summary>
 public static class PreviewTerrainLodMeshBaker
 {
+    /// <summary>
+    /// Single-chunk 1 m LOD silhouette for material/compat tests. Streaming uses
+    /// <see cref="BakeLodSection"/>.
+    /// </summary>
     public static PreviewTerrainChunkMesh? BakeLodChunk(
         TerrainChunkKey key,
         PreviewTerrainWorldGenSettings worldGen = default,
@@ -23,15 +29,87 @@ public static class PreviewTerrainLodMeshBaker
         int flatPadHalfExtent = PreviewStageConstants.TerrainFlatPadHalfExtent,
         int transitionBlocks = PreviewStageConstants.TerrainTransitionBlocks,
         int maxRelief = PreviewStageConstants.TerrainMaxReliefBlocks,
+        int seed = PreviewStageConstants.TerrainHeightSeed) =>
+        BakeLodRegion(
+            TerrainResidencyKey.Section(key.X, key.Z, 1),
+            worldOriginX: key.OriginX(chunkSize),
+            worldOriginZ: key.OriginZ(chunkSize),
+            worldSize: Math.Max(1, chunkSize),
+            sampleStep: 1,
+            emitVegetation: true,
+            worldGen,
+            grassSettings,
+            vegetation,
+            metersPerTile,
+            surfaceWorldY,
+            flatPadHalfExtent,
+            transitionBlocks,
+            maxRelief,
+            seed);
+
+    public static PreviewTerrainChunkMesh? BakeLodSection(
+        TerrainResidencyKey key,
+        PreviewTerrainWorldGenSettings worldGen = default,
+        PreviewTerrainGrassBakeSettings grassSettings = default,
+        PreviewTerrainVegetationBakePlan? vegetation = null,
+        int chunkSize = PreviewStageConstants.TerrainChunkSize,
+        float metersPerTile = PreviewStageConstants.MetersPerGrassTile,
+        float surfaceWorldY = PreviewStageConstants.GroundPlaneWorldY,
+        int flatPadHalfExtent = PreviewStageConstants.TerrainFlatPadHalfExtent,
+        int transitionBlocks = PreviewStageConstants.TerrainTransitionBlocks,
+        int maxRelief = PreviewStageConstants.TerrainMaxReliefBlocks,
         int seed = PreviewStageConstants.TerrainHeightSeed)
     {
+        if (key.LodLevel == 0)
+        {
+            return null;
+        }
+
         chunkSize = Math.Max(1, chunkSize);
+        var worldSize = key.SectionWorldSize(chunkSize);
+        var sampleStep = Math.Max(1, key.SampleStepMeters);
+        return BakeLodRegion(
+            key,
+            key.OriginWorldX(chunkSize),
+            key.OriginWorldZ(chunkSize),
+            worldSize,
+            sampleStep,
+            emitVegetation: true,
+            worldGen,
+            grassSettings,
+            vegetation,
+            metersPerTile,
+            surfaceWorldY,
+            flatPadHalfExtent,
+            transitionBlocks,
+            maxRelief,
+            seed);
+    }
+
+    private static PreviewTerrainChunkMesh? BakeLodRegion(
+        TerrainResidencyKey key,
+        int worldOriginX,
+        int worldOriginZ,
+        int worldSize,
+        int sampleStep,
+        bool emitVegetation,
+        PreviewTerrainWorldGenSettings worldGen,
+        PreviewTerrainGrassBakeSettings grassSettings,
+        PreviewTerrainVegetationBakePlan? vegetation,
+        float metersPerTile,
+        float surfaceWorldY,
+        int flatPadHalfExtent,
+        int transitionBlocks,
+        int maxRelief,
+        int seed)
+    {
+        worldSize = Math.Max(1, worldSize);
+        sampleStep = Math.Max(1, sampleStep);
         if (metersPerTile <= 1e-6f)
         {
             metersPerTile = PreviewStageConstants.MetersPerGrassTile;
         }
 
-        // default(grassSettings) looks like BuiltIn for Mode/flags (BuiltInSingleTop == 0).
         if (grassSettings is
             {
                 Mode: PreviewTerrainGrassMode.BuiltInSingleTop,
@@ -47,25 +125,33 @@ public static class PreviewTerrainLodMeshBaker
             ? PreviewTerrainWorldGenSettings.Resolve(worldGen)
             : PreviewTerrainWorldGenSettings.Default with { Seed = seed };
 
-        var cx0 = key.OriginX(chunkSize);
-        var cz0 = key.OriginZ(chunkSize);
-        var cx1 = cx0 + chunkSize;
-        var cz1 = cz0 + chunkSize;
+        var cx0 = worldOriginX;
+        var cz0 = worldOriginZ;
+        var cx1 = cx0 + worldSize;
+        var cz1 = cz0 + worldSize;
+        var grid = worldSize / sampleStep;
+        if (grid <= 0)
+        {
+            return null;
+        }
 
-        // Core + 1-column halo for step occlusion / material against neighbors.
+        // Coarse core + 1-cell halo for step occlusion against neighbors.
+        // Core cells use the max height in the sampleStep×sampleStep block so LOD hulls sit
+        // above Full detail and edge skirts can hide residual cracks.
         _ = maxRelief;
-        var side = chunkSize + 2;
+        var side = grid + 2;
         var board = new PreviewTerrainColumnSample[side * side];
-        var ox = cx0 - 1;
-        var oz = cz0 - 1;
+        var ox = cx0 - sampleStep;
+        var oz = cz0 - sampleStep;
         var minH = int.MaxValue;
         var maxH = int.MinValue;
         for (var lz = 0; lz < side; lz++)
         {
             for (var lx = 0; lx < side; lx++)
             {
-                var sample = PreviewTerrainBiomeSampler.Sample(
-                    ox + lx, oz + lz, gen, flatPadHalfExtent, transitionBlocks);
+                var wx = ox + lx * sampleStep;
+                var wz = oz + lz * sampleStep;
+                var sample = SampleLodCell(wx, wz, sampleStep, gen, flatPadHalfExtent, transitionBlocks);
                 board[lz * side + lx] = sample;
                 if (lx > 0 && lx < side - 1 && lz > 0 && lz < side - 1)
                 {
@@ -82,12 +168,12 @@ public static class PreviewTerrainLodMeshBaker
 
         PreviewTerrainColumnSample ColumnAt(int x, int z)
         {
-            var lx = x - ox;
-            var lz = z - oz;
+            // Snap to sample grid relative to halo origin.
+            var lx = (x - ox) / sampleStep;
+            var lz = (z - oz) / sampleStep;
             if ((uint)lx >= (uint)side || (uint)lz >= (uint)side)
             {
-                return PreviewTerrainBiomeSampler.Sample(
-                    x, z, gen, flatPadHalfExtent, transitionBlocks);
+                return SampleLodCell(x, z, sampleStep, gen, flatPadHalfExtent, transitionBlocks);
             }
 
             return board[lz * side + lx];
@@ -98,14 +184,44 @@ public static class PreviewTerrainLodMeshBaker
         var vegPlan = vegetation is { HasAny: true } ? vegetation : PreviewTerrainVegetationBakePlan.Empty;
         var slotCount = Math.Max(PreviewTerrainGrassSlots.MaxCount, vegPlan.TotalSlotCount);
         var buckets = PreviewTerrainMeshBaker.CreateMaterialBuckets(slotCount);
-        EmitTopFaces(H, ColumnAt, grassSettings, cx0, cx1, cz0, cz1, surfaceWorldY, metersPerTile, buckets);
-        EmitStepFacesX(H, ColumnAt, grassSettings, cx0, cx1, cz0, cz1, surfaceWorldY, metersPerTile, buckets);
-        EmitStepFacesZ(H, ColumnAt, grassSettings, cx0, cx1, cz0, cz1, surfaceWorldY, metersPerTile, buckets);
-
-        if (vegPlan.HasAny && grassSettings.EmitVegetation)
+        EmitTopFaces(H, ColumnAt, grassSettings, cx0, cx1, cz0, cz1, sampleStep, surfaceWorldY, metersPerTile, buckets);
+        EmitStepFacesX(H, ColumnAt, grassSettings, cx0, cx1, cz0, cz1, sampleStep, surfaceWorldY, metersPerTile, buckets);
+        EmitStepFacesZ(H, ColumnAt, grassSettings, cx0, cx1, cz0, cz1, sampleStep, surfaceWorldY, metersPerTile, buckets);
+        // Edge skirts hide Full↔LOD / LOD↔LOD cracks; skip on 1 m test helper meshes.
+        if (sampleStep > 1)
         {
+            var skirtDepth = Math.Max(
+                PreviewStageConstants.TerrainLodEdgeSkirtMinBlocks,
+                sampleStep * 2);
+            EmitSectionSkirts(
+                H,
+                ColumnAt,
+                grassSettings,
+                cx0, cx1, cz0, cz1,
+                sampleStep,
+                skirtDepth,
+                surfaceWorldY,
+                metersPerTile,
+                buckets);
+        }
+
+        if (emitVegetation && vegPlan.HasAny && grassSettings.EmitVegetation)
+        {
+            // Exact 1 m columns match Full spawn decisions (density + positions). LOD hull
+            // sampling alone would shift biome/surface and thin/shift trees at the fade.
+            PreviewTerrainColumnSample ExactColumn(int x, int z) =>
+                PreviewTerrainBiomeSampler.Sample(x, z, gen, flatPadHalfExtent, transitionBlocks);
+
             var placements = PreviewTerrainTreePlacer.CollectForChunk(
-                cx0, cz0, cx1, cz1, ColumnAt, gen, vegPlan, flatPadHalfExtent);
+                cx0,
+                cz0,
+                cx1,
+                cz1,
+                ExactColumn,
+                gen,
+                vegPlan,
+                flatPadHalfExtent,
+                placementStep: 1);
             PreviewTerrainTreeMeshEmitter.EmitPlacements(
                 placements,
                 surfaceWorldY,
@@ -129,7 +245,7 @@ public static class PreviewTerrainLodMeshBaker
         return new PreviewTerrainChunkMesh
         {
             Key = key,
-            Lod = TerrainChunkLodKind.Lod,
+            Lod = key.Kind,
             InterleavedVertices = verts,
             Indices = indices,
             DrawBatches = batches,
@@ -140,17 +256,168 @@ public static class PreviewTerrainLodMeshBaker
         };
     }
 
+    private static PreviewTerrainColumnSample SampleLodCell(
+        int wx,
+        int wz,
+        int sampleStep,
+        in PreviewTerrainWorldGenSettings gen,
+        int flatPadHalfExtent,
+        int transitionBlocks)
+    {
+        if (sampleStep <= 1)
+        {
+            return PreviewTerrainBiomeSampler.Sample(wx, wz, gen, flatPadHalfExtent, transitionBlocks);
+        }
+
+        // Max-height hull over the coarse cell; keep material from the highest column.
+        var best = PreviewTerrainBiomeSampler.Sample(wx, wz, gen, flatPadHalfExtent, transitionBlocks);
+        for (var dz = 0; dz < sampleStep; dz++)
+        {
+            for (var dx = 0; dx < sampleStep; dx++)
+            {
+                if (dx == 0 && dz == 0)
+                {
+                    continue;
+                }
+
+                var s = PreviewTerrainBiomeSampler.Sample(
+                    wx + dx, wz + dz, gen, flatPadHalfExtent, transitionBlocks);
+                if (s.Height > best.Height)
+                {
+                    best = s;
+                }
+            }
+        }
+
+        return best;
+    }
+
+    private static void EmitSectionSkirts(
+        Func<int, int, int> h,
+        Func<int, int, PreviewTerrainColumnSample> columnAt,
+        PreviewTerrainGrassBakeSettings grassSettings,
+        int cx0, int cx1, int cz0, int cz1,
+        int sampleStep,
+        int skirtDepth,
+        float surfaceWorldY,
+        float metersPerTile,
+        List<float>[] buckets)
+    {
+        skirtDepth = Math.Max(1, skirtDepth);
+        Span<Vector3> face = stackalloc Vector3[4];
+
+        // -Z and +Z edges.
+        for (var x = cx0; x < cx1; x += sampleStep)
+        {
+            var x1 = Math.Min(x + sampleStep, cx1);
+            var hSouth = h(x, cz0);
+            var matSouth = PreviewTerrainMeshBaker.ResolveHorizontalFaceMaterial(
+                columnAt, x, hSouth, cz0, x, cz0 - sampleStep, grassSettings);
+            EmitSkirtQuad(
+                face, -Vector3.UnitZ, -Vector3.UnitX,
+                x, x1, cz0, cz0,
+                surfaceWorldY + hSouth, surfaceWorldY + hSouth - skirtDepth,
+                metersPerTile, buckets[matSouth]);
+
+            var hNorth = h(x, cz1 - sampleStep);
+            var matNorth = PreviewTerrainMeshBaker.ResolveHorizontalFaceMaterial(
+                columnAt, x, hNorth, cz1 - sampleStep, x, cz1, grassSettings);
+            EmitSkirtQuad(
+                face, Vector3.UnitZ, Vector3.UnitX,
+                x, x1, cz1, cz1,
+                surfaceWorldY + hNorth, surfaceWorldY + hNorth - skirtDepth,
+                metersPerTile, buckets[matNorth]);
+        }
+
+        // -X and +X edges.
+        for (var z = cz0; z < cz1; z += sampleStep)
+        {
+            var z1 = Math.Min(z + sampleStep, cz1);
+            var hWest = h(cx0, z);
+            var matWest = PreviewTerrainMeshBaker.ResolveHorizontalFaceMaterial(
+                columnAt, cx0, hWest, z, cx0 - sampleStep, z, grassSettings);
+            EmitSkirtQuad(
+                face, -Vector3.UnitX, new Vector3(0, 0, 1),
+                cx0, cx0, z, z1,
+                surfaceWorldY + hWest, surfaceWorldY + hWest - skirtDepth,
+                metersPerTile, buckets[matWest]);
+
+            var hEast = h(cx1 - sampleStep, z);
+            var matEast = PreviewTerrainMeshBaker.ResolveHorizontalFaceMaterial(
+                columnAt, cx1 - sampleStep, hEast, z, cx1, z, grassSettings);
+            EmitSkirtQuad(
+                face, Vector3.UnitX, new Vector3(0, 0, -1),
+                cx1, cx1, z, z1,
+                surfaceWorldY + hEast, surfaceWorldY + hEast - skirtDepth,
+                metersPerTile, buckets[matEast]);
+        }
+    }
+
+    private static void EmitSkirtQuad(
+        Span<Vector3> face,
+        Vector3 normal,
+        Vector3 tangentHint,
+        float x0, float x1, float z0, float z1,
+        float yTop, float yBot,
+        float metersPerTile,
+        List<float> bucket)
+    {
+        if (yTop <= yBot)
+        {
+            return;
+        }
+
+        if (Math.Abs(normal.X) > 0.5f)
+        {
+            var x = normal.X > 0f ? x1 : x0;
+            if (normal.X > 0f)
+            {
+                face[0] = new(x, yBot, z1);
+                face[1] = new(x, yBot, z0);
+                face[2] = new(x, yTop, z0);
+                face[3] = new(x, yTop, z1);
+            }
+            else
+            {
+                face[0] = new(x, yBot, z0);
+                face[1] = new(x, yBot, z1);
+                face[2] = new(x, yTop, z1);
+                face[3] = new(x, yTop, z0);
+            }
+        }
+        else
+        {
+            var z = normal.Z > 0f ? z1 : z0;
+            if (normal.Z > 0f)
+            {
+                face[0] = new(x0, yBot, z);
+                face[1] = new(x1, yBot, z);
+                face[2] = new(x1, yTop, z);
+                face[3] = new(x0, yTop, z);
+            }
+            else
+            {
+                face[0] = new(x1, yBot, z);
+                face[1] = new(x0, yBot, z);
+                face[2] = new(x0, yTop, z);
+                face[3] = new(x1, yTop, z);
+            }
+        }
+
+        EmitQuad(normal, tangentHint, 1f, face, metersPerTile, topUv: false, bucket);
+    }
+
     private static void EmitTopFaces(
         Func<int, int, int> h,
         Func<int, int, PreviewTerrainColumnSample> columnAt,
         PreviewTerrainGrassBakeSettings grassSettings,
         int cx0, int cx1, int cz0, int cz1,
+        int sampleStep,
         float surfaceWorldY, float metersPerTile,
         List<float>[] buckets)
     {
-        var uSize = cx1 - cx0;
-        var vSize = cz1 - cz0;
-        // Group by height + surface material so greedy merge stays coplanar and same slot.
+        var uSize = (cx1 - cx0) / sampleStep;
+        var vSize = (cz1 - cz0) / sampleStep;
         var visited = new bool[uSize * vSize];
         Span<Vector3> top = stackalloc Vector3[4];
         for (var v = 0; v < vSize; v++)
@@ -163,17 +430,19 @@ public static class PreviewTerrainLodMeshBaker
                     continue;
                 }
 
-                var wx = cx0 + u;
-                var wz = cz0 + v;
+                var wx = cx0 + u * sampleStep;
+                var wz = cz0 + v * sampleStep;
                 var height = h(wx, wz);
                 var material = PreviewTerrainMeshBaker.ResolveYFaceMaterial(
                     positiveUp: true, columnAt(wx, wz), grassSettings);
                 var width = 1;
                 while (u + width < uSize &&
                        !visited[v * uSize + u + width] &&
-                       h(cx0 + u + width, cz0 + v) == height &&
+                       h(cx0 + (u + width) * sampleStep, cz0 + v * sampleStep) == height &&
                        PreviewTerrainMeshBaker.ResolveYFaceMaterial(
-                           positiveUp: true, columnAt(cx0 + u + width, cz0 + v), grassSettings) == material)
+                           positiveUp: true,
+                           columnAt(cx0 + (u + width) * sampleStep, cz0 + v * sampleStep),
+                           grassSettings) == material)
                 {
                     width++;
                 }
@@ -184,8 +453,8 @@ public static class PreviewTerrainLodMeshBaker
                 {
                     for (var k = 0; k < width; k++)
                     {
-                        var nx = cx0 + u + k;
-                        var nz = cz0 + v + runH;
+                        var nx = cx0 + (u + k) * sampleStep;
+                        var nz = cz0 + (v + runH) * sampleStep;
                         if (visited[(v + runH) * uSize + u + k] ||
                             h(nx, nz) != height ||
                             PreviewTerrainMeshBaker.ResolveYFaceMaterial(
@@ -210,10 +479,10 @@ public static class PreviewTerrainLodMeshBaker
                     }
                 }
 
-                var x0 = cx0 + u;
-                var z0 = cz0 + v;
-                var x1 = x0 + width;
-                var z1 = z0 + runH;
+                var x0 = cx0 + u * sampleStep;
+                var z0 = cz0 + v * sampleStep;
+                var x1 = x0 + width * sampleStep;
+                var z1 = z0 + runH * sampleStep;
                 var y = surfaceWorldY + height;
                 top[0] = new(x0, y, z0);
                 top[1] = new(x1, y, z0);
@@ -229,37 +498,37 @@ public static class PreviewTerrainLodMeshBaker
         Func<int, int, PreviewTerrainColumnSample> columnAt,
         PreviewTerrainGrassBakeSettings grassSettings,
         int cx0, int cx1, int cz0, int cz1,
+        int sampleStep,
         float surfaceWorldY, float metersPerTile,
         List<float>[] buckets)
     {
         Span<Vector3> face = stackalloc Vector3[4];
-        // Faces on planes x = cx0..cx1 between columns (cx-1,z) and (cx,z).
-        for (var x = cx0; x <= cx1; x++)
+        for (var x = cx0; x <= cx1; x += sampleStep)
         {
             for (var z = cz0; z < cz1;)
             {
-                var left = h(x - 1, z);
+                var left = h(x - sampleStep, z);
                 var right = h(x, z);
                 if (left == right)
                 {
-                    z++;
+                    z += sampleStep;
                     continue;
                 }
 
-                var positive = left > right; // face points +X when left is higher
+                var positive = left > right;
                 var hi = Math.Max(left, right);
                 var lo = Math.Min(left, right);
                 var material = ResolveStepMaterial(
                     columnAt,
                     grassSettings,
-                    hiColX: positive ? x - 1 : x,
+                    hiColX: positive ? x - sampleStep : x,
                     hiColZ: z,
-                    neighborX: positive ? x : x - 1,
+                    neighborX: positive ? x : x - sampleStep,
                     neighborZ: z);
-                var run = 1;
+                var run = sampleStep;
                 while (z + run < cz1)
                 {
-                    var l2 = h(x - 1, z + run);
+                    var l2 = h(x - sampleStep, z + run);
                     var r2 = h(x, z + run);
                     if (Math.Max(l2, r2) != hi || Math.Min(l2, r2) != lo || (l2 > r2) != positive)
                     {
@@ -269,19 +538,18 @@ public static class PreviewTerrainLodMeshBaker
                     var mat2 = ResolveStepMaterial(
                         columnAt,
                         grassSettings,
-                        hiColX: positive ? x - 1 : x,
+                        hiColX: positive ? x - sampleStep : x,
                         hiColZ: z + run,
-                        neighborX: positive ? x : x - 1,
+                        neighborX: positive ? x : x - sampleStep,
                         neighborZ: z + run);
                     if (mat2 != material)
                     {
                         break;
                     }
 
-                    run++;
+                    run += sampleStep;
                 }
 
-                // Only emit the step if at least one side is inside the chunk core.
                 var coreTouches = (x > cx0 && x <= cx1) || (x >= cx0 && x < cx1);
                 if (coreTouches && hi > lo)
                 {
@@ -330,19 +598,20 @@ public static class PreviewTerrainLodMeshBaker
         Func<int, int, PreviewTerrainColumnSample> columnAt,
         PreviewTerrainGrassBakeSettings grassSettings,
         int cx0, int cx1, int cz0, int cz1,
+        int sampleStep,
         float surfaceWorldY, float metersPerTile,
         List<float>[] buckets)
     {
         Span<Vector3> face = stackalloc Vector3[4];
-        for (var z = cz0; z <= cz1; z++)
+        for (var z = cz0; z <= cz1; z += sampleStep)
         {
             for (var x = cx0; x < cx1;)
             {
-                var back = h(x, z - 1);
+                var back = h(x, z - sampleStep);
                 var fwd = h(x, z);
                 if (back == fwd)
                 {
-                    x++;
+                    x += sampleStep;
                     continue;
                 }
 
@@ -353,13 +622,13 @@ public static class PreviewTerrainLodMeshBaker
                     columnAt,
                     grassSettings,
                     hiColX: x,
-                    hiColZ: positive ? z - 1 : z,
+                    hiColZ: positive ? z - sampleStep : z,
                     neighborX: x,
-                    neighborZ: positive ? z : z - 1);
-                var run = 1;
+                    neighborZ: positive ? z : z - sampleStep);
+                var run = sampleStep;
                 while (x + run < cx1)
                 {
-                    var b2 = h(x + run, z - 1);
+                    var b2 = h(x + run, z - sampleStep);
                     var f2 = h(x + run, z);
                     if (Math.Max(b2, f2) != hi || Math.Min(b2, f2) != lo || (b2 > f2) != positive)
                     {
@@ -370,15 +639,15 @@ public static class PreviewTerrainLodMeshBaker
                         columnAt,
                         grassSettings,
                         hiColX: x + run,
-                        hiColZ: positive ? z - 1 : z,
+                        hiColZ: positive ? z - sampleStep : z,
                         neighborX: x + run,
-                        neighborZ: positive ? z : z - 1);
+                        neighborZ: positive ? z : z - sampleStep);
                     if (mat2 != material)
                     {
                         break;
                     }
 
-                    run++;
+                    run += sampleStep;
                 }
 
                 var coreTouches = (z > cz0 && z <= cz1) || (z >= cz0 && z < cz1);

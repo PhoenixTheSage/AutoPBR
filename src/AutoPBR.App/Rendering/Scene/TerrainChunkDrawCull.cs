@@ -266,16 +266,14 @@ public static class TerrainChunkDrawCull
 
     private static int DrawGroup(in Candidate c)
     {
-        if (c is { Lod: TerrainChunkLodKind.Full, NearPom: true })
+        // Coarser LOD first as solid underlay; Full draws last and may dither-out at its edge.
+        if (c.Lod != TerrainChunkLodKind.Full)
         {
-            return 0;
+            return TerrainResidencyKey.MaxLodLevel - (int)c.Lod;
         }
 
-        if (c is { Lod: TerrainChunkLodKind.Full })
-        {
-            return 1;
-        }
-
-        return 2;
+        return c.NearPom
+            ? TerrainResidencyKey.MaxLodLevel + 1
+            : TerrainResidencyKey.MaxLodLevel + 2;
     }
 }

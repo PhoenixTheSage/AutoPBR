@@ -2,6 +2,7 @@
 // Shadow-aware screen-space god rays (epipolar-style occlusion via shadow maps).
 
 //!include "common/common.glsl"
+//!include "common/cloud_present.glsl"
 //!include "common/godray_integration.glsl"
 #ifdef GENESIS_GODRAY_SPARSE_MARCH
 //!include "common/godray_march_sparse.glsl"
@@ -19,7 +20,11 @@ uniform vec3 uCameraPos;
 uniform vec2 uSunUv;
 uniform float uSunDiscRadius;
 uniform float uSunConeRadius;
+uniform float uAspect;
 uniform float uStrength;
+uniform int uHdrPresent;
+uniform float uHdrPaperWhiteNits;
+uniform float uHdrPeakNits;
 uniform float uLayerHeight;
 uniform float uVolumeHeight;
 uniform float uCloudDensity;
@@ -53,14 +58,20 @@ void main()
     }
 
     float receiverDepth = texture(uSceneDepth, vUv).r;
-    if (receiverDepth >= SKY_DEPTH_EPS)
+    // Do not discard sky: leaf-gap / open-air shafts must light sky pixels looking toward the sun.
+    bool isSkyReceiver = receiverDepth >= SKY_DEPTH_EPS;
+
+    vec2 toSun = uSunUv - vUv;
+    float distFromSun = length(vec2(toSun.x * max(uAspect, 1e-4), toSun.y));
+    if (distFromSun > uSunConeRadius)
     {
         discard;
     }
 
-    vec2 toSun = uSunUv - vUv;
-    float distFromSun = length(toSun);
-    if (distFromSun > uSunConeRadius)
+    float disc = max(uSunDiscRadius, 1e-4);
+    float cone = max(uSunConeRadius, disc + 1e-4);
+    float discKeep = smoothstep(disc * 1.05, disc * 1.85, distFromSun);
+    if (discKeep <= 1e-4)
     {
         discard;
     }
@@ -68,6 +79,7 @@ void main()
     float layerTop = uLayerHeight + uVolumeHeight;
     float shaft = 0.0;
     float visibility = 1.0;
+    float occlusionScore = 0.0;
     const float decay = 0.90;
     const float weight = 1.0 / float(GR_SAMPLES);
 
@@ -108,9 +120,12 @@ void main()
         }
 
         float sampleDepth = texture(uSceneDepth, marchUv).r;
-        float expectedDepth = mix(receiverDepth, SKY_DEPTH_EPS, t);
+        float expectedDepth = isSkyReceiver
+            ? mix(0.0, SKY_DEPTH_EPS, t)
+            : mix(receiverDepth, SKY_DEPTH_EPS, t);
         if (sampleDepth < expectedDepth - 0.0006)
         {
+            occlusionScore += weight * visibility;
             visibility *= 0.30;
             if (visibility < 0.04)
             {
@@ -119,8 +134,22 @@ void main()
             continue;
         }
 
+        // Same core fade as depth-only SS: keep beams, spare the sun disc/aureole.
+        float sampleCoreFade = smoothstep(disc * 1.1, disc * 2.1, beamDist);
         if (sampleDepth >= SKY_DEPTH_EPS)
         {
+            // Sky taps: depth occlusion already carved leaf gaps. Do NOT sample cascaded
+            // shadows at cloud-slab reconstructions — that paints shadow-map texel squares.
+            shaft += visibility * weight * beamFalloff * sampleCoreFade;
+        }
+        else if (isSkyReceiver)
+        {
+            // Geometry between camera and sun blocks the beam for sky receivers.
+            visibility *= 0.55;
+        }
+        else
+        {
+            // Lit geometry receivers can still take a cheap shadow gate (near surface).
             vec3 worldPos = grMarchWorldPos(marchUv, sampleDepth, uInvViewProj, uCameraPos, uLayerHeight, layerTop);
             float lightVis = grShadowGateCascaded(worldPos, uCameraPos,
                 uLightViewProjNear, uLightViewProjMid, uLightViewProj,
@@ -128,9 +157,7 @@ void main()
                 uShadowTexelSizeNear, uShadowTexelSizeMid, uShadowTexelSize, uShadowMinBias, uEnableShadowMap,
                 uEnableShadowCascades, uCascadeSplitDistance, uCascadeMidSplitDistance, uCascadeBlendWidth,
                 uShadowDistance, uShadowFadeStart);
-            float cloudAtten = grCloudAttenuation(worldPos, uGroundWorldY, uFogSlabHeight, uLayerHeight, layerTop,
-                uCloudDensity, uVolumeSize, uHeightFogStrength, uEnableCloudAttenuation);
-            shaft += visibility * weight * beamFalloff * lightVis * cloudAtten;
+            shaft += visibility * weight * beamFalloff * lightVis * sampleCoreFade * 0.35;
         }
 
 #ifdef GENESIS_GODRAY_SPARSE_MARCH
@@ -145,16 +172,25 @@ void main()
         visibility *= decay;
     }
 
-    float sunProximity = 1.0 - smoothstep(uSunDiscRadius, uSunConeRadius, distFromSun);
-    vec3 warmScatter = vec3(1.0, 0.94, 0.82);
-    vec3 rays = warmScatter * shaft * sunProximity * uStrength * 4.5;
-    rays = softKnee(rays, 0.45);
+    float structure = smoothstep(0.015, 0.10, occlusionScore);
+    float washGate = isSkyReceiver
+        ? mix(0.015, 1.0, structure)
+        : mix(0.20, 1.0, structure);
+    float coneT = saturate1((distFromSun - disc) / (cone - disc));
+    float rimSoft = 1.0 - smoothstep(0.82, 1.0, coneT);
 
-    float alpha = saturate1(max(max(rays.r, rays.g), rays.b));
-    if (alpha <= 1e-5)
+    vec3 warmScatter = vec3(1.0, 0.94, 0.82);
+    // Linear scene-referred; encode once for the already-presented destination.
+    // Blend is One,One — keep A=1 so energy is not multiplied by luma again.
+    vec3 rays = warmScatter * shaft * washGate * discKeep * rimSoft * uStrength * 9.0;
+    rays = softKnee(rays, 0.85);
+    rays = cpEncodeShaftRadiance(rays, uHdrPresent, uHdrPaperWhiteNits, uHdrPeakNits);
+
+    float luma = max(max(rays.r, rays.g), rays.b);
+    if (luma <= 1e-5)
     {
         discard;
     }
 
-    FragColor = vec4(rays, alpha);
+    FragColor = vec4(rays, 1.0);
 }

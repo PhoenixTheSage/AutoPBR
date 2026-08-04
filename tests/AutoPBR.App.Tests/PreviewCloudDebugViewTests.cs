@@ -20,7 +20,9 @@ public sealed class PreviewCloudDebugViewTests
         Assert.Equal(14, (int)PreviewCloudDebugView.SelectedLod);
         Assert.Equal(15, (int)PreviewCloudDebugView.BaseDensity);
         Assert.Equal(16, (int)PreviewCloudDebugView.AssetProfile);
-        Assert.Equal(17, Enum.GetValues<PreviewCloudDebugView>().Length);
+        Assert.Equal(17, (int)PreviewCloudDebugView.SparseClipmapLevel);
+        Assert.Equal(25, (int)PreviewCloudDebugView.SparseCascadeBlend);
+        Assert.Equal(26, Enum.GetValues<PreviewCloudDebugView>().Length);
     }
 
     [Fact]
@@ -42,6 +44,9 @@ public sealed class PreviewCloudDebugViewTests
         Assert.Contains("CLOUD_DEBUG_SELECTED_LOD = 14", shader, StringComparison.Ordinal);
         Assert.Contains("CLOUD_DEBUG_BASE_DENSITY = 15", shader, StringComparison.Ordinal);
         Assert.Contains("CLOUD_DEBUG_ASSET_PROFILE = 16", shader, StringComparison.Ordinal);
+        Assert.Contains("CLOUD_DEBUG_SPARSE_CLIPMAP_LEVEL = 17", shader, StringComparison.Ordinal);
+        Assert.Contains("CLOUD_DEBUG_SPARSE_CASCADE_BLEND = 25", shader, StringComparison.Ordinal);
+        Assert.Contains("cq45ResolveBaseDensity(pos, 0.0)", shader, StringComparison.Ordinal);
         Assert.Contains("shapeCoordinates.xyz,\n                    0.0", shader, StringComparison.Ordinal);
         Assert.Contains("textureLod(\n                    uDetailNoise,\n                    detailCoordinates.xyz,\n                    0.0)", shader,
             StringComparison.Ordinal);
@@ -137,10 +142,15 @@ public sealed class PreviewCloudDebugViewTests
             "UserSettingsSynchronizer.cs"));
 
         Assert.Contains("Preview3DCloudDebugViewAssetProfile", viewModel, StringComparison.Ordinal);
-        Assert.Contains("(int)PreviewCloudDebugView.AssetProfile", viewModel, StringComparison.Ordinal);
+        Assert.Contains("Preview3DCloudDebugViewSparseCascadeBlend", viewModel, StringComparison.Ordinal);
+        Assert.Contains("(int)PreviewCloudDebugView.SparseCascadeBlend", viewModel, StringComparison.Ordinal);
         Assert.Equal(
             2,
-            CountOccurrences(synchronizer, "(int)PreviewCloudDebugView.AssetProfile"));
+            CountOccurrences(synchronizer, "(int)PreviewCloudDebugView.SparseCascadeBlend"));
+        Assert.DoesNotContain(
+            "(int)PreviewCloudDebugView.AssetProfile)",
+            synchronizer,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -175,15 +185,25 @@ public sealed class PreviewCloudDebugViewTests
 
     private static string RepositoryPath(params string[] segments)
     {
-        var parts = new[]
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
         {
-            AppContext.BaseDirectory,
-            "..",
-            "..",
-            "..",
-            "..",
-            "..",
-        }.Concat(segments).ToArray();
-        return Path.GetFullPath(Path.Combine(parts));
+            if (File.Exists(Path.Combine(directory.FullName, "AutoPBR.sln")) ||
+                File.Exists(Path.Combine(
+                    directory.FullName,
+                    "docs",
+                    "volumetric-cloud-quality-roadmap.md")))
+            {
+                return Path.GetFullPath(
+                    Path.Combine(
+                        new[] { directory.FullName }.Concat(segments).ToArray()));
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException(
+            "Unable to locate the AutoPBR repository root from " +
+            AppContext.BaseDirectory);
     }
 }

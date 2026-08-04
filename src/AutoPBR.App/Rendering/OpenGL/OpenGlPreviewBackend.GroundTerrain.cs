@@ -48,7 +48,8 @@ public sealed partial class OpenGlPreviewBackend
     private bool _loggedTerrainMeshPoolReady;
     private bool _loggedTerrainMultiDraw;
     private bool _loggedTerrainPoolLimit;
-    private readonly HashSet<TerrainChunkKey> _terrainDeferredChunks = [];
+    private bool _terrainPoolPressureLatched;
+    private readonly HashSet<TerrainResidencyKey> _terrainDeferredChunks = [];
     private TerrainChunkKey? _terrainDeferredCameraChunk;
 
     private void ApplyTerrainGrassBakeSettings(PreviewTerrainGrassBakeSettings settings)
@@ -209,6 +210,24 @@ public sealed partial class OpenGlPreviewBackend
 
     private void TickTerrainStreaming(ref GlRenderFrame frame)
     {
+        var clearLodCache = false;
+        lock (_sync)
+        {
+            if (_pendingTerrainLodCacheClear)
+            {
+                clearLodCache = true;
+                _pendingTerrainLodCacheClear = false;
+                _terrainStreamingNeedsFrames = true;
+            }
+        }
+
+        if (clearLodCache)
+        {
+            EnsureTerrainStreamer();
+            DisposeTerrainGpuChunks();
+            _terrainStreamer!.InvalidateAll();
+        }
+
         if (!frame.Settings.ShowGroundMesh)
         {
             return;
@@ -220,18 +239,17 @@ public sealed partial class OpenGlPreviewBackend
         var cameraChunk = _terrainStreamer.CameraChunk;
         if (_terrainDeferredCameraChunk is { } deferredCamera && deferredCamera != cameraChunk)
         {
-            foreach (var key in _terrainDeferredChunks)
-            {
-                _terrainStreamer.NotifyUnloaded(key);
-            }
-
-            _terrainDeferredChunks.Clear();
+            // Camera moved: allow workers to rebake previously deferred desired keys and retry uploads.
+            ReleaseDeferredTerrainResidency();
             _terrainDeferredCameraChunk = cameraChunk;
         }
         else
         {
             _terrainDeferredCameraChunk ??= cameraChunk;
         }
+
+        // Soft-start grew: re-open budget-parked keys now inside the unlocked annular window.
+        UnparkDeferredInsideScheduleWindow();
 
         // Rebuilds when desired LOD differs from resident.
         var desired = _terrainStreamer.SnapshotDesired();
@@ -244,69 +262,46 @@ public sealed partial class OpenGlPreviewBackend
             }
         }
 
-        var uploadCap = _terrainStreamingNeedsFrames
+        EnsureTerrainMeshPool(frame.Gl);
+        var targetBudget = PreviewStageConstants.ResolveTerrainMeshPoolBudgetBytes(
+            _terrainStreamer.HardRadiusChunks,
+            _terrainStreamer.LodRingChunks);
+        _terrainMeshPool?.ConfigureBudgetCeiling(targetBudget);
+
+        var poolPressure = UpdateTerrainPoolPressureLatch();
+        // Never freeze LOD unlock on pool *capacity* (buffers don't shrink). Only pause
+        // expansion when live resident bytes are truly near the ceiling.
+        _terrainStreamer.HoldScheduleExpansion = poolPressure;
+
+        var disposalCap = poolPressure
+            ? PreviewStageConstants.TerrainMaxChunkDisposalsPerFramePressure
+            : PreviewStageConstants.TerrainMaxChunkDisposalsPerFrame;
+
+        // Evict trailing / out-of-desired residents so the bounded pool can follow the camera.
+        // Do NOT force-dump the soft trail every pressure frame — that flashes near chunks.
+        DisposeTerrainGpuResidents(desired, cameraChunk, disposalCap, forceNonDesired: false);
+
+        var uploadCap = _terrainStreamingNeedsFrames || poolPressure
             ? PreviewStageConstants.TerrainMaxChunkUploadsPerFrameCatchUp
             : PreviewStageConstants.TerrainMaxChunkUploadsPerFrame;
-        var uploadByteCap = _terrainStreamingNeedsFrames
+        var uploadByteCap = _terrainStreamingNeedsFrames || poolPressure
             ? PreviewStageConstants.TerrainMaxUploadBytesPerFrameCatchUp
             : PreviewStageConstants.TerrainMaxUploadBytesPerFrame;
         var uploads = new List<PreviewTerrainChunkMesh>(uploadCap);
         _terrainStreamer.DrainReady(uploads, uploadCap, uploadByteCap);
+        PrioritizeTerrainUploadsByCameraDistance(uploads, cameraChunk);
 
-        var disposed = 0;
-        List<TerrainChunkKey>? toRemove = null;
-        foreach (var (key, _) in _terrainGpuChunks)
-        {
-            if (!_terrainStreamer.ShouldUnload(key) && desired.ContainsKey(key))
-            {
-                continue;
-            }
-
-            // Keep hysteresis: only unload when ShouldUnload (past LOD+1).
-            if (!_terrainStreamer.ShouldUnload(key))
-            {
-                continue;
-            }
-
-            toRemove ??= [];
-            toRemove.Add(key);
-            if (++disposed >= PreviewStageConstants.TerrainMaxChunkDisposalsPerFrame)
-            {
-                break;
-            }
-        }
-
-        if (toRemove is not null)
-        {
-            foreach (var key in toRemove)
-            {
-                if (_terrainGpuChunks.Remove(key, out var gpu))
-                {
-                    _terrainMeshPool?.Free(gpu.Allocation);
-                    _terrainStreamer.NotifyUnloaded(key);
-                    _terrainCandidatesChunkVersion++;
-                    InvalidateTerrainShadowWorldAabbCache();
-                }
-            }
-        }
-
-        // Reclaim hysteresis-expired ranges before processing new camera-local uploads.
-        // This lets a bounded pool reuse storage rather than deferring a visible chunk
-        // merely because its old, now-distant replacement had not been freed yet.
+        // Drop stale deferred marks for keys we are about to retry so a prior budget-ceiling
+        // cannot permanently skip camera-local uploads after VRAM was freed.
         foreach (var cpu in uploads)
         {
-            if (_terrainDeferredChunks.Contains(cpu.Key) &&
-                !_terrainGpuChunks.ContainsKey(cpu.Key))
-            {
-                continue;
-            }
-
+            _terrainDeferredChunks.Remove(cpu.Key);
             UploadTerrainChunk(frame.Gl, cpu);
         }
 
         if (_terrainDeferredChunks.Count > 0)
         {
-            List<TerrainChunkKey>? deferredToRemove = null;
+            List<TerrainResidencyKey>? deferredToRemove = null;
             foreach (var key in _terrainDeferredChunks)
             {
                 if (desired.ContainsKey(key) && !_terrainStreamer.ShouldUnload(key))
@@ -330,12 +325,219 @@ public sealed partial class OpenGlPreviewBackend
 
         RefreshTerrainEnvBounds();
 
-        var desiredCount = desired.Count;
-        var accountedChunks = _terrainGpuChunks.Count + _terrainDeferredChunks.Count;
-        var needsFrames = accountedChunks < desiredCount || uploads.Count > 0;
+        // Deferred-without-mesh must NOT count as satisfied — that stopped the render pump
+        // while near Full keys were still empty and obsolete LOD covered the pad.
+        var scheduleMax = _terrainStreamer.ScheduleMaxRing;
+        var scheduleComplete = scheduleMax >= _terrainStreamer.LodRadiusChunks;
+        var missingDesiredGpu = 0;
+        foreach (var key in desired.Keys)
+        {
+            if (_terrainGpuChunks.ContainsKey(key))
+            {
+                continue;
+            }
+
+            // Soft-start: only unlocked LOD rings (+ always-on Full) must be GPU-resident.
+            if (key.IsFull ||
+                TerrainStreamSchedule.RingIndex(key, cameraChunk) <= scheduleMax)
+            {
+                missingDesiredGpu++;
+            }
+        }
+
+        var obsoleteLodUnderFull = false;
+        var hard = _terrainStreamer.HardRadiusChunks;
+        foreach (var key in _terrainGpuChunks.Keys)
+        {
+            if (TerrainChunkStreamer.IsObsoleteLodUnderFullDisk(
+                    key,
+                    desired.ContainsKey(key),
+                    cameraChunk,
+                    hard))
+            {
+                obsoleteLodUnderFull = true;
+                break;
+            }
+        }
+
+        var hasRetryDeferred = false;
+        foreach (var key in _terrainDeferredChunks)
+        {
+            // Parked far keys are intentional budget placeholders; only unparked retries
+            // (near Full / underlay / unlocked window) must keep the preview pump alive.
+            if (!ShouldParkDeferredTerrainKey(key))
+            {
+                hasRetryDeferred = true;
+                break;
+            }
+        }
+
+        var needsFrames = missingDesiredGpu > 0 ||
+                          !scheduleComplete ||
+                          obsoleteLodUnderFull ||
+                          uploads.Count > 0 ||
+                          poolPressure ||
+                          hasRetryDeferred;
         lock (_sync)
         {
             _terrainStreamingNeedsFrames = needsFrames;
+        }
+    }
+
+    private void ReleaseDeferredTerrainResidency()
+    {
+        if (_terrainStreamer is null || _terrainDeferredChunks.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var key in _terrainDeferredChunks)
+        {
+            _terrainStreamer.NotifyUnloaded(key);
+        }
+
+        _terrainDeferredChunks.Clear();
+    }
+
+    private bool UpdateTerrainPoolPressureLatch()
+    {
+        if (_terrainMeshPool is not { } pool)
+        {
+            _terrainPoolPressureLatched = false;
+            return false;
+        }
+
+        // Use live resident bytes — TotalCapacityBytes never shrinks after growth and would
+        // latch pressure forever (soft-start HoldScheduleExpansion → empty LOD rings).
+        long liveBytes = 0;
+        foreach (var chunk in _terrainGpuChunks.Values)
+        {
+            liveBytes += (long)chunk.Allocation.VertexFloatCount * sizeof(float);
+            liveBytes += (long)chunk.Allocation.IndexCount * sizeof(uint);
+        }
+
+        var budget = Math.Max(1L, pool.MaxTotalBufferBytes);
+        var ratio = liveBytes / (double)budget;
+        if (_terrainPoolPressureLatched)
+        {
+            if (ratio < PreviewStageConstants.TerrainMeshPoolPressureExitRatio)
+            {
+                _terrainPoolPressureLatched = false;
+            }
+        }
+        else if (ratio >= PreviewStageConstants.TerrainMeshPoolPressureEnterRatio)
+        {
+            _terrainPoolPressureLatched = true;
+        }
+
+        return _terrainPoolPressureLatched;
+    }
+
+    private bool TryRaiseTerrainMeshPoolBudget()
+    {
+        if (_terrainMeshPool is null || _terrainStreamer is null)
+        {
+            return false;
+        }
+
+        var target = PreviewStageConstants.ResolveTerrainMeshPoolBudgetBytes(
+            _terrainStreamer.HardRadiusChunks,
+            _terrainStreamer.LodRingChunks);
+        // If already at the scaled target, nudge toward the hard ceiling before evicting.
+        if (target <= _terrainMeshPool.MaxTotalBufferBytes)
+        {
+            target = Math.Min(
+                PreviewStageConstants.TerrainMeshPoolBudgetCeilingBytes,
+                _terrainMeshPool.MaxTotalBufferBytes + 256L * 1024L * 1024L);
+        }
+
+        return _terrainMeshPool.TryRaiseBudgetCeiling(target);
+    }
+
+    private static void PrioritizeTerrainUploadsByCameraDistance(
+        List<PreviewTerrainChunkMesh> uploads,
+        TerrainChunkKey cameraChunk)
+    {
+        if (uploads.Count <= 1)
+        {
+            return;
+        }
+
+        uploads.Sort((a, b) =>
+            TerrainStreamSchedule.CompareKeys(a.Key, b.Key, cameraChunk));
+    }
+
+    /// <summary>
+    /// Unloads hard-out-of-range residents, then soft-unloads / pressure-evicts keys that left
+    /// the desired set so extreme LOD rings can track the camera inside the VRAM budget.
+    /// </summary>
+    private void DisposeTerrainGpuResidents(
+        IReadOnlyDictionary<TerrainResidencyKey, TerrainChunkLodKind> desired,
+        TerrainChunkKey cameraChunk,
+        int disposalCap,
+        bool forceNonDesired)
+    {
+        if (_terrainStreamer is null || _terrainGpuChunks.Count == 0 || disposalCap <= 0)
+        {
+            return;
+        }
+
+        var softHysteresis = PreviewStageConstants.TerrainSoftUnloadHysteresisChunks;
+        var hardRadius = _terrainStreamer.HardRadiusChunks;
+        List<(int Rank, TerrainResidencyKey Key)>? ranked = null;
+        foreach (var (key, _) in _terrainGpuChunks)
+        {
+            var inDesired = desired.ContainsKey(key);
+            var hardUnload = _terrainStreamer.ShouldUnload(key);
+            if (inDesired && !hardUnload)
+            {
+                continue;
+            }
+
+            var dist = key.ChebyshevDistanceToChunk(cameraChunk);
+            var obsoleteUnderFull = TerrainChunkStreamer.IsObsoleteLodUnderFullDisk(
+                key, inDesired, cameraChunk, hardRadius);
+            // Multi-chunk LOD under the eye has dist=0 — hysteresis never clears it without this.
+            var softUnload = obsoleteUnderFull || (!inDesired && dist > softHysteresis);
+            if (!hardUnload && !softUnload && !(forceNonDesired && !inDesired))
+            {
+                continue;
+            }
+
+            ranked ??= new List<(int, TerrainResidencyKey)>(_terrainGpuChunks.Count);
+            ranked.Add((
+                TerrainChunkStreamer.RankGpuDisposal(key, cameraChunk, hardRadius, inDesired),
+                key));
+        }
+
+        if (ranked is null || ranked.Count == 0)
+        {
+            return;
+        }
+
+        ranked.Sort(static (a, b) => b.Rank.CompareTo(a.Rank));
+        var disposed = 0;
+        foreach (var (_, key) in ranked)
+        {
+            if (!_terrainGpuChunks.Remove(key, out var gpu))
+            {
+                continue;
+            }
+
+            _terrainMeshPool?.Free(gpu.Allocation);
+            _terrainStreamer.NotifyUnloaded(key);
+            _terrainDeferredChunks.Remove(key);
+            disposed++;
+            if (disposed >= disposalCap)
+            {
+                break;
+            }
+        }
+
+        if (disposed > 0)
+        {
+            _terrainCandidatesChunkVersion++;
+            InvalidateTerrainShadowWorldAabbCache();
         }
     }
 
@@ -346,10 +548,16 @@ public sealed partial class OpenGlPreviewBackend
         if (_terrainGpuChunks.TryGetValue(cpu.Key, out var existing))
         {
             var replacement = pool.Upload(cpu.InterleavedVertices, cpu.Indices);
+            if (replacement.IsEmpty &&
+                pool.LastFailureReason == "budget-ceiling" &&
+                (TryRaiseTerrainMeshPoolBudget() || TryEvictTerrainForUploadBudget()))
+            {
+                replacement = pool.Upload(cpu.InterleavedVertices, cpu.Indices);
+            }
+
             if (replacement.IsEmpty)
             {
-                // Preserve the last visible LOD. Treat the desired LOD as resident until
-                // a camera recenter or settings invalidation gives the pool another chance.
+                // Preserve the last visible mesh; keep streamer resident so we do not spin rebakes.
                 _terrainStreamer?.NotifyUploaded(cpu.Key, cpu.Lod);
                 EmitTerrainPoolLimitDiagnostic(pool, cpu.Key, replacingVisibleChunk: true);
                 return;
@@ -370,13 +578,24 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         var allocation = pool.Upload(cpu.InterleavedVertices, cpu.Indices);
+        if (allocation.IsEmpty &&
+            pool.LastFailureReason == "budget-ceiling" &&
+            (TryRaiseTerrainMeshPoolBudget() || TryEvictTerrainForUploadBudget()))
+        {
+            allocation = pool.Upload(cpu.InterleavedVertices, cpu.Indices);
+        }
+
         if (allocation.IsEmpty)
         {
             _terrainDeferredChunks.Add(cpu.Key);
             _terrainDeferredCameraChunk ??= _terrainStreamer?.CameraChunk;
-            // Mark this desired LOD as logically handled so workers do not continuously
-            // rebake a far chunk that cannot fit inside the bounded GPU pool.
-            _terrainStreamer?.NotifyUploaded(cpu.Key, cpu.Lod);
+            // Only park far/coarse desired keys as "uploaded" so near Full/LOD1 keep baking.
+            // Near keys stay non-resident and retry after eviction on later frames.
+            if (ShouldParkDeferredTerrainKey(cpu.Key))
+            {
+                _terrainStreamer?.NotifyUploaded(cpu.Key, cpu.Lod);
+            }
+
             if (pool.LastFailureReason == "budget-ceiling")
             {
                 DeferRemainingTerrainChunksAtPoolLimit();
@@ -402,6 +621,166 @@ public sealed partial class OpenGlPreviewBackend
         InvalidateTerrainShadowWorldAabbCache();
     }
 
+    private bool TryEvictTerrainForUploadBudget()
+    {
+        if (_terrainStreamer is null)
+        {
+            return false;
+        }
+
+        var desired = _terrainStreamer.SnapshotDesired();
+        var cam = _terrainStreamer.CameraChunk;
+        var before = _terrainGpuChunks.Count;
+        DisposeTerrainGpuResidents(
+            desired,
+            cam,
+            PreviewStageConstants.TerrainMaxChunkDisposalsPerFramePressure,
+            forceNonDesired: true);
+        if (_terrainGpuChunks.Count < before)
+        {
+            return true;
+        }
+
+        // Still full: drop farthest coarse desired LOD *outside* the soft-start unlock window
+        // so the annular fill does not flash near/unlocked residents.
+        if (!EvictFarthestDesiredLodSections(desired, cam, maxCount: 8))
+        {
+            return false;
+        }
+
+        // Re-open schedule-ordered deferred parks so underlay can refill into the freed budget.
+        UnparkNearestDeferredTerrainKeys(maxCount: 8);
+        return true;
+    }
+
+    private bool EvictFarthestDesiredLodSections(
+        IReadOnlyDictionary<TerrainResidencyKey, TerrainChunkLodKind> desired,
+        TerrainChunkKey cameraChunk,
+        int maxCount)
+    {
+        if (_terrainStreamer is null || maxCount <= 0)
+        {
+            return false;
+        }
+
+        var scheduleMax = _terrainStreamer.ScheduleMaxRing;
+        List<(int Dist, byte LodLevel, TerrainResidencyKey Key)>? ranked = null;
+        foreach (var (key, _) in _terrainGpuChunks)
+        {
+            if (!key.IsLod || !desired.ContainsKey(key))
+            {
+                continue;
+            }
+
+            // Never steal unlocked soft-start rings or near Full/LOD1 under the eye.
+            var ring = TerrainStreamSchedule.RingIndex(key, cameraChunk);
+            if (ring <= scheduleMax)
+            {
+                continue;
+            }
+
+            if (key.LodLevel <= 1 &&
+                key.ChebyshevDistanceToChunk(cameraChunk) <= _terrainStreamer.HardRadiusChunks + 8)
+            {
+                continue;
+            }
+
+            ranked ??= [];
+            ranked.Add((key.ChebyshevDistanceToChunk(cameraChunk), key.LodLevel, key));
+        }
+
+        if (ranked is null || ranked.Count == 0)
+        {
+            return false;
+        }
+
+        ranked.Sort(static (a, b) =>
+        {
+            var cmp = b.Dist.CompareTo(a.Dist);
+            return cmp != 0 ? cmp : b.LodLevel.CompareTo(a.LodLevel);
+        });
+
+        var hard = _terrainStreamer.HardRadiusChunks;
+        var disposed = 0;
+        foreach (var (_, _, key) in ranked)
+        {
+            // Prefer leaving fade underlay resident; steal farther/coarser rings first.
+            if (IsTerrainTransitionCoverageKey(key, cameraChunk, hard))
+            {
+                continue;
+            }
+
+            if (!_terrainGpuChunks.Remove(key, out var gpu))
+            {
+                continue;
+            }
+
+            _terrainMeshPool?.Free(gpu.Allocation);
+            _terrainStreamer.NotifyUnloaded(key);
+            _terrainDeferredChunks.Remove(key);
+            disposed++;
+            if (disposed >= maxCount)
+            {
+                break;
+            }
+        }
+
+        if (disposed > 0)
+        {
+            _terrainCandidatesChunkVersion++;
+            InvalidateTerrainShadowWorldAabbCache();
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool ShouldParkDeferredTerrainKey(TerrainResidencyKey key)
+    {
+        if (_terrainStreamer is null)
+        {
+            return true;
+        }
+
+        var cam = _terrainStreamer.CameraChunk;
+        var hard = _terrainStreamer.HardRadiusChunks;
+
+        // Never park the Full/LOD fade underlay ring — fake-resident empty keys punch sky holes.
+        if (IsTerrainTransitionCoverageKey(key, cam, hard))
+        {
+            return false;
+        }
+
+        // Soft-start unlocked window must keep retrying so the annular fill can complete.
+        if (TerrainStreamSchedule.RingIndex(key, cam) <= _terrainStreamer.ScheduleMaxRing)
+        {
+            return false;
+        }
+
+        // Keep Full + near LOD1 actively retrying; park only mid/far coarse sections under pressure.
+        if (key.IsFull || key.LodLevel <= 1)
+        {
+            var dist = key.ChebyshevDistanceToChunk(cam);
+            return dist > hard + 8;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Keys that must stay drawable (or keep retrying upload) to avoid seam holes: Full disk,
+    /// near LOD1, and coarser underlay pulled under the fade band.
+    /// </summary>
+    private static bool IsTerrainTransitionCoverageKey(
+        TerrainResidencyKey key,
+        TerrainChunkKey cameraChunk,
+        int hardRadiusChunks)
+    {
+        var overlap = TerrainChunkStreamer.ResolveLodFadeOverlapChunks();
+        var protect = hardRadiusChunks + Math.Max(overlap * 2, key.ChunksPerSide);
+        return key.ChebyshevDistanceToChunk(cameraChunk) <= protect;
+    }
+
     private void DeferRemainingTerrainChunksAtPoolLimit()
     {
         if (_terrainStreamer is null)
@@ -409,6 +788,9 @@ public sealed partial class OpenGlPreviewBackend
             return;
         }
 
+        var cam = _terrainStreamer.CameraChunk;
+        var hard = _terrainStreamer.HardRadiusChunks;
+        var scheduleMax = _terrainStreamer.ScheduleMaxRing;
         foreach (var (key, lod) in _terrainStreamer.SnapshotDesired())
         {
             if (_terrainGpuChunks.ContainsKey(key) || !_terrainDeferredChunks.Add(key))
@@ -416,13 +798,102 @@ public sealed partial class OpenGlPreviewBackend
                 continue;
             }
 
+            // Only mass-park beyond the soft-start unlock window. Keys inside the annular
+            // window stay retryable so budget pressure cannot freeze the horizon forever.
+            var ring = TerrainStreamSchedule.RingIndex(key, cam);
+            if (ring <= scheduleMax ||
+                IsTerrainTransitionCoverageKey(key, cam, hard) ||
+                ((key.IsFull || key.LodLevel <= 1) &&
+                 key.ChebyshevDistanceToChunk(cam) <= hard + 8))
+            {
+                _terrainDeferredChunks.Remove(key);
+                continue;
+            }
+
             _terrainStreamer.NotifyUploaded(key, lod);
+        }
+    }
+
+    /// <summary>
+    /// After VRAM is freed, release deferred keys in clockwise annular schedule order so
+    /// workers continue the same surround fill (not pure nearest Chebyshev).
+    /// </summary>
+    private void UnparkNearestDeferredTerrainKeys(int maxCount)
+    {
+        if (_terrainStreamer is null || maxCount <= 0 || _terrainDeferredChunks.Count == 0)
+        {
+            return;
+        }
+
+        var cam = _terrainStreamer.CameraChunk;
+        List<(TerrainStreamSchedule.Rank Rank, TerrainResidencyKey Key)>? ranked = null;
+        foreach (var key in _terrainDeferredChunks)
+        {
+            ranked ??= [];
+            ranked.Add((TerrainStreamSchedule.RankKey(key, cam), key));
+        }
+
+        if (ranked is null)
+        {
+            return;
+        }
+
+        ranked.Sort(static (a, b) => TerrainStreamSchedule.Compare(a.Rank, b.Rank));
+        var released = 0;
+        foreach (var (_, key) in ranked)
+        {
+            if (!_terrainDeferredChunks.Remove(key))
+            {
+                continue;
+            }
+
+            _terrainStreamer.NotifyUnloaded(key);
+            released++;
+            if (released >= maxCount)
+            {
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Soft-start unlock grew past previously mass-parked keys — clear fake residency so
+    /// bakers can claim them inside the new annular window.
+    /// </summary>
+    private void UnparkDeferredInsideScheduleWindow()
+    {
+        if (_terrainStreamer is null || _terrainDeferredChunks.Count == 0)
+        {
+            return;
+        }
+
+        var cam = _terrainStreamer.CameraChunk;
+        var maxRing = _terrainStreamer.ScheduleMaxRing;
+        List<TerrainResidencyKey>? release = null;
+        foreach (var key in _terrainDeferredChunks)
+        {
+            if (TerrainStreamSchedule.RingIndex(key, cam) <= maxRing)
+            {
+                release ??= [];
+                release.Add(key);
+            }
+        }
+
+        if (release is null)
+        {
+            return;
+        }
+
+        foreach (var key in release)
+        {
+            _terrainDeferredChunks.Remove(key);
+            _terrainStreamer.NotifyUnloaded(key);
         }
     }
 
     private void EmitTerrainPoolLimitDiagnostic(
         GlTerrainMeshPool pool,
-        TerrainChunkKey key,
+        TerrainResidencyKey key,
         bool replacingVisibleChunk)
     {
         if (_loggedTerrainPoolLimit)
@@ -531,7 +1002,7 @@ public sealed partial class OpenGlPreviewBackend
         HasTerrainChunk(_terrainStreamer.CameraChunk);
 
     private bool HasTerrainChunk(TerrainChunkKey key) =>
-        _terrainGpuChunks.TryGetValue(key, out var chunk) &&
+        _terrainGpuChunks.TryGetValue(TerrainResidencyKey.Full(key), out var chunk) &&
         chunk.IndexCount > 0;
 
     private float TerrainEnvironmentHalfExtent
@@ -786,47 +1257,45 @@ public sealed partial class OpenGlPreviewBackend
             return false;
         }
 
+        // Cutout foliage needs per-material baseInstance + albedo arrays; without that, keep CPU
+        // Select so BindGroundSlotForDraw can alpha-discard leaf texels.
+        if (TerrainShadowRequiresCutoutSupport() && !TryEnsureTerrainShadowGpuCutoutPath())
+        {
+            return false;
+        }
+
         EnsureTerrainMeshPool(_gl);
         if (_terrainMultiDrawIndirectCount is null)
         {
             return false;
         }
 
-        var candidateCount = _terrainDrawCandidates.Count;
-        if (_terrainShadowCullRecordScratch.Length < candidateCount)
+        var sourceCount = CountTerrainShadowGpuSourceCommands();
+        if (sourceCount <= 0)
         {
-            _terrainShadowCullRecordScratch = new TerrainShadowCullRecord[candidateCount];
+            return false;
         }
 
-        var dwordCount = candidateCount * GlIndirectDrawCommandBuffer.CommandDwords;
+        if (_terrainShadowCullRecordScratch.Length < sourceCount)
+        {
+            _terrainShadowCullRecordScratch = new TerrainShadowCullRecord[sourceCount];
+        }
+
+        var dwordCount = sourceCount * GlIndirectDrawCommandBuffer.CommandDwords;
         if (_terrainShadowSourceCommandScratch.Length < dwordCount)
         {
             _terrainShadowSourceCommandScratch = new uint[Math.Max(dwordCount, 256)];
         }
 
-        var records = _terrainShadowCullRecordScratch.AsSpan(0, candidateCount);
-        for (var i = 0; i < candidateCount; i++)
+        var records = _terrainShadowCullRecordScratch.AsSpan(0, sourceCount);
+        var written = FillTerrainShadowGpuSourceCommands(records, _terrainShadowSourceCommandScratch);
+        if (written != sourceCount)
         {
-            var c = _terrainDrawCandidates[i];
-            var chunk = _terrainDrawChunkScratch[c.SourceIndex];
-            records[i] = new TerrainShadowCullRecord(
-                c.BoundsCenter,
-                c.BoundsRadius,
-                isFullLod: c.Lod == TerrainChunkLodKind.Full,
-                candidateIndex: i);
-            var shadowIndexCount = Math.Max(0, chunk.IndexCount);
-            var shadowFirstIndex = Math.Max(0, chunk.Allocation.IndexOffset);
-            GlIndirectDrawCommandBuffer.WriteCommandDwords(
-                _terrainShadowSourceCommandScratch.AsSpan(
-                    i * GlIndirectDrawCommandBuffer.CommandDwords,
-                    GlIndirectDrawCommandBuffer.CommandDwords),
-                (uint)shadowIndexCount,
-                (uint)shadowFirstIndex,
-                baseInstance: 0u);
+            return false;
         }
 
         _terrainShadowSourceCommands ??= new GlIndirectDrawCommandBuffer(_gl);
-        if (!_terrainShadowSourceCommands.UploadCommands(_terrainShadowSourceCommandScratch, candidateCount))
+        if (!_terrainShadowSourceCommands.UploadCommands(_terrainShadowSourceCommandScratch, sourceCount))
         {
             return false;
         }
@@ -859,11 +1328,147 @@ public sealed partial class OpenGlPreviewBackend
         {
             _loggedTerrainShadowGpuCull = true;
             EmitDiagnostic(
-                $"[3D preview] GPU terrain shadow cull enabled (no readback): candidates={candidateCount}, " +
-                "MultiDrawIndirectCount per cascade.");
+                $"[3D preview] GPU terrain shadow cull enabled (no readback): sources={sourceCount} " +
+                $"(candidates={_terrainDrawCandidates.Count}), MultiDrawIndirectCount per cascade.");
         }
 
         return true;
+    }
+
+    private bool TerrainShadowRequiresCutoutSupport()
+    {
+        for (var i = 0; i < _grassGroundSlots.Length; i++)
+        {
+            if (_grassGroundSlots[i].Cutout)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryEnsureTerrainShadowGpuCutoutPath()
+    {
+        if (_gl is null ||
+            !_activeGenesisProgramKey.MaterialDrawRecordSsbo ||
+            !_activeGenesisProgramKey.MaterialTextureArrays ||
+            !_activeGenesisProgramKey.DrawRecordBaseInstance ||
+            _shadowUniformLocs.AlbedoArray < 0 ||
+            _shadowUniformLocs.GenesisUseMaterialDrawRecord < 0 ||
+            _shadowUniformLocs.GenesisUseMaterialTextureArray < 0)
+        {
+            return false;
+        }
+
+        TryEnsureGroundTextureArrays(_gl);
+        return _groundTextureArraysReady && _groundAlbedoArray is not null;
+    }
+
+    private int CountTerrainShadowGpuSourceCommands()
+    {
+        var count = 0;
+        for (var i = 0; i < _terrainDrawCandidates.Count; i++)
+        {
+            var chunk = _terrainDrawChunkScratch[_terrainDrawCandidates[i].SourceIndex];
+            var batches = chunk.DrawBatches;
+            if (batches.Length == 0)
+            {
+                if (chunk.IndexCount > 0)
+                {
+                    count++;
+                }
+
+                continue;
+            }
+
+            for (var b = 0; b < batches.Length; b++)
+            {
+                if (batches[b].IndexCount > 0)
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    private int FillTerrainShadowGpuSourceCommands(
+        Span<TerrainShadowCullRecord> records,
+        uint[] commandScratch)
+    {
+        var sourceIndex = 0;
+        for (var i = 0; i < _terrainDrawCandidates.Count; i++)
+        {
+            var c = _terrainDrawCandidates[i];
+            var chunk = _terrainDrawChunkScratch[c.SourceIndex];
+            var batches = chunk.DrawBatches;
+            var isFullLod = c.Lod == TerrainChunkLodKind.Full;
+            if (batches.Length == 0)
+            {
+                if (chunk.IndexCount <= 0)
+                {
+                    continue;
+                }
+
+                if ((uint)sourceIndex >= (uint)records.Length)
+                {
+                    return -1;
+                }
+
+                records[sourceIndex] = new TerrainShadowCullRecord(
+                    c.BoundsCenter,
+                    c.BoundsRadius,
+                    isFullLod,
+                    candidateIndex: sourceIndex);
+                GlIndirectDrawCommandBuffer.WriteCommandDwords(
+                    commandScratch.AsSpan(
+                        sourceIndex * GlIndirectDrawCommandBuffer.CommandDwords,
+                        GlIndirectDrawCommandBuffer.CommandDwords),
+                    (uint)Math.Max(0, chunk.IndexCount),
+                    (uint)Math.Max(0, chunk.Allocation.IndexOffset),
+                    baseInstance: 0u);
+                sourceIndex++;
+                continue;
+            }
+
+            for (var b = 0; b < batches.Length; b++)
+            {
+                var batch = batches[b];
+                if (batch.IndexCount <= 0)
+                {
+                    continue;
+                }
+
+                if ((uint)sourceIndex >= (uint)records.Length)
+                {
+                    return -1;
+                }
+
+                var materialIndex = batch.MaterialIndex;
+                if ((uint)materialIndex >= (uint)_grassGroundSlots.Length)
+                {
+                    materialIndex = 0;
+                }
+
+                records[sourceIndex] = new TerrainShadowCullRecord(
+                    c.BoundsCenter,
+                    c.BoundsRadius,
+                    isFullLod,
+                    candidateIndex: sourceIndex);
+                GlIndirectDrawCommandBuffer.WriteCommandDwords(
+                    commandScratch.AsSpan(
+                        sourceIndex * GlIndirectDrawCommandBuffer.CommandDwords,
+                        GlIndirectDrawCommandBuffer.CommandDwords),
+                    (uint)batch.IndexCount,
+                    (uint)Math.Max(0, batch.FirstIndex),
+                    baseInstance: (uint)materialIndex);
+                sourceIndex++;
+            }
+        }
+
+        return sourceIndex;
     }
 
     private bool TryEnsureTerrainShadowCuller()
@@ -938,6 +1543,17 @@ public sealed partial class OpenGlPreviewBackend
             return false;
         }
 
+        var useCutoutPath = TerrainShadowRequiresCutoutSupport();
+        if (useCutoutPath)
+        {
+            if (!TryEnsureTerrainShadowGpuCutoutPath() ||
+                _grassGroundSlotMaterials is not { Length: > 0 } ||
+                !UploadGroundMaterialDrawRecords(_grassGroundSlotMaterials))
+            {
+                return false;
+            }
+        }
+
         GlIndirectDrawCommandBuffer commands;
         nint countOffset;
         if (ReferenceEquals(selected, _terrainShadowSelectedNear))
@@ -961,6 +1577,22 @@ public sealed partial class OpenGlPreviewBackend
             return false;
         }
 
+        if (useCutoutPath)
+        {
+            var su = _shadowUniformLocs;
+            _groundAlbedoArray!.Bind(ShadowPassAlbedoArrayUnit);
+            SetIntOnProgramLoc(_shadowProgram!, su.AlbedoArray, ShadowPassAlbedoArrayUnit);
+            SetIntOnProgramLoc(_shadowProgram!, su.GenesisUseMaterialDrawRecord, 1);
+            SetIntOnProgramLoc(_shadowProgram!, su.GenesisUseMaterialTextureArray, 1);
+            SetIntOnProgramLoc(_shadowProgram!, su.EntityAlphaMode, 0);
+            // Keep sampler2D albedo complete for array-capable shadow programs.
+            if (_grassGroundAlbedo is not null)
+            {
+                _grassGroundAlbedo.Bind(0);
+                SetIntOnProgramLoc(_shadowProgram!, su.Albedo, 0);
+            }
+        }
+
         pool.BindVertexArray();
         var drawn = pool.MultiDrawIndirectCount(
             commands,
@@ -971,6 +1603,14 @@ public sealed partial class OpenGlPreviewBackend
             keepBound: true,
             drawCountOffset: countOffset);
         pool.UnbindVertexArray();
+
+        if (useCutoutPath && _shadowProgram is not null)
+        {
+            var su = _shadowUniformLocs;
+            SetIntOnProgramLoc(_shadowProgram, su.GenesisUseMaterialDrawRecord, 0);
+            SetIntOnProgramLoc(_shadowProgram, su.GenesisUseMaterialTextureArray, 0);
+        }
+
         return drawn;
     }
 
@@ -1157,6 +1797,7 @@ public sealed partial class OpenGlPreviewBackend
         var lastPom = !enableParallaxSetting;
         var lastMaterial = int.MinValue;
         var lastCutout = false;
+        var lastLod = (TerrainChunkLodKind)byte.MaxValue;
         // Opaque depth/shadow prepass: no alpha discard → skip albedo binds / material splits.
         var skipMaterialBinds = opaqueOnly && shadowPass;
         foreach (var item in _terrainDrawItems)
@@ -1166,6 +1807,12 @@ public sealed partial class OpenGlPreviewBackend
             {
                 setParallaxEnabled(pom);
                 lastPom = pom;
+            }
+
+            if (!shadowPass && item.Lod != lastLod)
+            {
+                SetTerrainLodDetailFade(item.Lod);
+                lastLod = item.Lod;
             }
 
             if (!skipMaterialBinds && !useArrays && item.MaterialIndex != lastMaterial)
@@ -1208,6 +1855,11 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         pool.UnbindVertexArray();
+        if (!shadowPass)
+        {
+            SetTerrainLodDetailFade(TerrainChunkLodKind.Full);
+        }
+
         if (!shadowPass && lastPom != enableParallaxSetting)
         {
             setParallaxEnabled(enableParallaxSetting);
@@ -1217,6 +1869,38 @@ public sealed partial class OpenGlPreviewBackend
         {
             SetGroundAlphaMode(cutout: false, shadowPass);
         }
+    }
+
+    private void SetTerrainLodDetailFade(TerrainChunkLodKind lod)
+    {
+        var u = _mainUniformLocs;
+        if (_terrainStreamer is null || u.TerrainLodFadeEnable < 0)
+        {
+            SetIntLoc(u.TerrainLodFadeEnable, 0);
+            return;
+        }
+
+        var hard = _terrainStreamer.HardRadiusChunks;
+        var ring = _terrainStreamer.LodRingChunks;
+        var level = (byte)lod;
+        // Outermost / sole coverage stays fully opaque — dither only where coarser underlay exists.
+        if (ring <= 0 ||
+            TerrainChunkStreamer.IsOutermostLodLevel(hard, ring, level) ||
+            (level == 0 && TerrainChunkStreamer.ResolveActiveLodLevelCount(ring) == 0))
+        {
+            SetIntLoc(u.TerrainLodFadeEnable, 0);
+            return;
+        }
+
+        TerrainChunkStreamer.ResolveLodDetailFadeMeters(
+            hard,
+            ring,
+            level,
+            out var fadeStart,
+            out var fadeEnd);
+        SetIntLoc(u.TerrainLodFadeEnable, 1);
+        SetFloatLoc(u.TerrainLodFadeStart, fadeStart);
+        SetFloatLoc(u.TerrainLodFadeEnd, fadeEnd);
     }
 
     private bool TryDrawTerrainMultiDrawIndirect(
@@ -1312,10 +1996,11 @@ public sealed partial class OpenGlPreviewBackend
                 var next = _terrainDrawItems[groupEnd];
                 var samePom = next.NearPom == head.NearPom;
                 var sameCutout = next.Cutout == head.Cutout;
+                var sameLod = next.Lod == head.Lod;
                 // With texture arrays + draw-parameter baseInstance, materials share one bind group.
                 var sameMaterial = (!shadowPass && useArrays && _activeGenesisProgramKey.DrawRecordBaseInstance) ||
                                    next.MaterialIndex == head.MaterialIndex;
-                if (!samePom || !sameCutout || !sameMaterial)
+                if (!samePom || !sameCutout || !sameMaterial || !sameLod)
                 {
                     break;
                 }
@@ -1327,6 +2012,7 @@ public sealed partial class OpenGlPreviewBackend
             if (!shadowPass)
             {
                 setParallaxEnabled(pom);
+                SetTerrainLodDetailFade(head.Lod);
             }
 
             if (useArrays && !shadowPass)
@@ -1376,6 +2062,11 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         pool.UnbindVertexArray();
+        if (!shadowPass)
+        {
+            SetTerrainLodDetailFade(TerrainChunkLodKind.Full);
+        }
+
         if (!_loggedTerrainMultiDraw)
         {
             _loggedTerrainMultiDraw = true;

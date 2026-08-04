@@ -1,7 +1,8 @@
 #version 330 core
 // GENESIS_GLES_PACK rev29
-// Full froxel integrate: view-ray Mie in-scatter march with froxel-space + screen-space temporal reuse.
+// Full froxel integrate: view-ray Mie + ambient atmospheric fill with froxel-space + screen-space temporal reuse.
 // Fog/shaft medium with detailed cloud opacity/depth supplied by genesis_clouds.frag.
+// RGB = in-scatter, A = remaining transmittance for scene*T + inscatter composite.
 // ANGLE-safe: texture()-based froxel sampling (no texelFetch), ASCII-only sources, single FragColor write.
 
 //!include "common/common.glsl"
@@ -33,6 +34,7 @@ uniform vec3 uPrevCamRight;
 uniform vec3 uPrevCamUp;
 uniform vec3 uPrevCamForward;
 uniform vec3 uLightDir;
+uniform vec3 uLightColor;
 uniform vec3 uHalfExtent;
 uniform vec3 uPrevHalfExtent;
 uniform int uSliceCount;
@@ -44,6 +46,8 @@ uniform float uFroxelTemporalWeight;
 uniform float uDepthDistribution;
 uniform float uScatterGain;
 uniform float uExtinction;
+uniform float uAmbientFillGain;
+uniform float uPhaseDirectivity;
 uniform int uHasPrevIntegrate;
 uniform int uHasPrevFroxel;
 uniform int uHasCloudTransmittance;
@@ -63,16 +67,28 @@ void main()
 
     vec3 rd = grWorldRayDir(vUv, uInvViewProj, uCameraPos);
     float receiverDepth = texture(uSceneDepth, vUv).r;
+    bool isSky = receiverDepth >= SKY_DEPTH_EPS;
 
-    if (receiverDepth >= SKY_DEPTH_EPS)
+    float froxelFar = uHalfExtent.z * 2.0;
+    float maxT = froxelFar;
+    if (!isSky)
     {
-        discard;
+        vec3 receiverPos = grWorldPosFromUvDepth(vUv, receiverDepth, uInvViewProj);
+        maxT = min(froxelFar, max(length(receiverPos - uCameraPos), 1e-3));
     }
 
     vec3 sunToward = normalize(-uLightDir);
-    float miePhase = atmosphereMiePhase(dot(rd, sunToward));
+    float cosSun = clamp(dot(rd, sunToward), -1.0, 1.0);
+    float miePhase = atmosphereMiePhase(cosSun);
+    // Dual-lobe: a small isotropic floor keeps sun-lit fog readable off-axis; Mie carries
+    // crepuscular shafts. Keep the floor low — high values read as an open-sky grey film
+    // (especially after HDR present encode). Directivity 0 = volume glow only, 1 = shafts only.
+    float isoPhase = 0.06;
+    float phase = mix(isoPhase, miePhase, saturate1(uPhaseDirectivity));
+    // Fill picks up TOD shaft tint (sun warm / dusk / moon cool) so height fog matches shafts.
+    vec3 ambientTint = mix(vec3(0.36, 0.44, 0.58), uLightColor, 0.52);
 
-    float stepLen = uHalfExtent.z * 2.0 / float(VM_STEPS);
+    float stepLen = froxelFar / float(VM_STEPS);
     float stepLenCoarse = stepLen;
     float stepLenFine = stepLenCoarse * 0.5;
 #ifdef GENESIS_VOLUME_MEDIUMP_ACCUM
@@ -92,6 +108,7 @@ void main()
 #else
     float froxelTemporal = 0.0;
 #endif
+    float kneeWidth = max(stepLenFine * 2.5, 0.35);
 
     for (int i = 0; i < VM_STEPS; ++i)
     {
@@ -102,10 +119,23 @@ void main()
         }
 
         float t = viSparseMarchT(i, jitter, stepLenCoarse, stepLenFine);
+        if (t >= maxT)
+        {
+            continue;
+        }
+
+        float receiverW = isSky ? 1.0 : (1.0 - smoothstep(maxT - kneeWidth, maxT, t));
+        if (receiverW <= 1e-4)
+        {
+            continue;
+        }
+
         vec3 worldPos = uCameraPos + rd * t;
         vec3 froxelUv = vfWorldToFroxelUv(worldPos, uCameraPos, uCamRight, uCamUp, uCamForward,
             uHalfExtent, uSliceCount, uDepthDistribution);
         float edgeW = vfFroxelEdgeWeight(froxelUv);
+        float forward01 = dot(worldPos - uCameraPos, uCamForward) / max(uHalfExtent.z * 2.0, 1e-3);
+        edgeW *= vfFroxelFarWeight(forward01);
         if (edgeW <= 1e-5)
         {
             continue;
@@ -136,39 +166,53 @@ void main()
             continue;
         }
 
-        vec3 sunScatter = vec3(voxel.g, voxel.b, voxel.b * 0.92) * miePhase;
+        // Sun energy in G (and mirrored B); tint from uLightColor (TOD sun/moon + scene light).
+        vec3 sunScatter = uLightColor * voxel.g * phase * uScatterGain;
+        // Ambient is for shadowed medium only — adding it in fully lit open air doubles the grey veil.
+        float litApprox = saturate1(voxel.g / max(density * 1.15, 1e-4));
+        vec3 ambientScatter = ambientTint * uAmbientFillGain * (1.0 - litApprox);
         float inscatterW = vmSegmentInscatterWeight(density, stepLen, uExtinction);
         float cloudViewT = cstViewTransmittance(t, sharedCloudDistance, sharedCloudOpacity, stepLenFine);
-        accum += transmittance * cloudViewT * sunScatter * inscatterW * uScatterGain * edgeW;
-        transmittance *= mix(1.0, vmSegmentTransmittance(density, stepLen, uExtinction), edgeW);
-        if (transmittance < 0.02)
+        float weight = inscatterW * edgeW * receiverW;
+        accum += transmittance * cloudViewT * (sunScatter + ambientScatter) * weight;
+        // Softer extinction keeps looking-into-fog translucent so shafts remain readable.
+        float extStep = mix(1.0, vmSegmentTransmittance(density, stepLen, uExtinction * 0.72), edgeW * receiverW);
+        transmittance *= extStep;
+        if (transmittance < 0.04)
         {
             break;
         }
     }
 
-    vec3 vol = softKnee(accum * uStrength, 0.2);
+    // Keep scene-referred linear inscatter; present encode happens in god-ray composite.
+    vec3 vol = max(accum * uStrength, vec3(0.0));
+    // Strength also deepens extinction slightly so fill and shafts stay coupled.
+    float outT = mix(1.0, max(transmittance, 0.05), saturate1(uStrength));
 
 #ifdef GENESIS_VOLUME_TEMPORAL
     if (uHasPrevIntegrate > 0 && uTemporalWeight > 0.0)
     {
-        vec2 prevUv = trReprojectUvFromDepth(vUv, receiverDepth, uInvViewProj, uPrevViewProj);
+        vec2 prevUv = trReprojectUvFromDepth(vUv, isSky ? 0.9995 : receiverDepth, uInvViewProj, uPrevViewProj);
         if (trPrevUvOnScreen(prevUv))
         {
-            vec3 history = texture(uPrevIntegrate, prevUv).rgb;
+            vec4 history = texture(uPrevIntegrate, prevUv);
             float histDepth = texture(uSceneDepth, prevUv).r;
-            float depthValid = trDepthDisocclusionWeight(receiverDepth, histDepth, 0.002, 0.02);
-            float reactive = trLuminanceReactiveWeight(vol, history);
-            vol = mix(vol, history, uTemporalWeight * depthValid * reactive);
+            float depthValid = isSky
+                ? step(SKY_DEPTH_EPS, histDepth)
+                : trDepthDisocclusionWeight(receiverDepth, histDepth, 0.002, 0.02);
+            float reactive = trLuminanceReactiveWeight(vol, history.rgb);
+            float blend = uTemporalWeight * depthValid * reactive;
+            vol = mix(vol, history.rgb, blend);
+            outT = mix(outT, history.a, blend);
         }
     }
 #endif
 
     float luma = max(max(vol.r, vol.g), vol.b);
-    if (luma <= 1e-6)
+    if (luma <= 1e-6 && outT >= 0.999)
     {
         discard;
     }
 
-    FragColor = vec4(vol, 1.0);
+    FragColor = vec4(vol, outT);
 }

@@ -137,7 +137,9 @@ internal sealed class GlCpuTimerProfiler
             _elapsedMs[(int)GlGpuTimerScope.SubjectDraw],
             _elapsedMs[(int)GlGpuTimerScope.CloudRepair],
             _elapsedMs[(int)GlGpuTimerScope.CloudLightNear],
-            _elapsedMs[(int)GlGpuTimerScope.CloudLightFar]);
+            _elapsedMs[(int)GlGpuTimerScope.CloudLightFar],
+            _elapsedMs[(int)GlGpuTimerScope.Ao],
+            SparseBrickGenMs: _elapsedMs[(int)GlGpuTimerScope.SparseBrickGen]);
     }
 
     public bool TryTakeLatestSnapshot(out GlGpuTimingSnapshot snapshot)

@@ -34,6 +34,8 @@ internal ref struct GlRenderFrame
     public float OrbitYaw;
     public float OrbitPitch;
     public float OrbitDistance;
+    /// <summary>1 = normal FOV; &gt;1 narrows FOV while hold-zoom (C) is active.</summary>
+    public float HoldFovZoomMagnification;
     public float VerticalFieldOfViewRadians;
     public bool MeshDirty;
     public bool MaterialDirty;

@@ -91,8 +91,8 @@ vec3 vcSunScatterCq34(
     vec3 sum = sunColor * phaseTerms.x *
         directTransmittance;
 
-    float octave1Visibility = mix(0.28, 1.0, boundedSkyVisibility);
-    float octave2Visibility = mix(0.14, 1.0, boundedSkyVisibility);
+    float octave1Visibility = mix(0.22, 1.0, boundedSkyVisibility);
+    float octave2Visibility = mix(0.10, 1.0, boundedSkyVisibility);
     sum += sunColor *
         (max(octave1.z, 0.0) * octave1Visibility) *
         phaseTerms.y *
@@ -104,8 +104,9 @@ vec3 vcSunScatterCq34(
 
     // Restrained powder shaping: retain the bright-edge cue without whitening thick
     // interiors into the flat, cartoon-like appearance of an aggressive powder term.
+    // CA3.3 slightly lowers the powder floor/ceiling so silver lining stays local.
     float powder = 1.0 - cacheTransmittance * cacheTransmittance;
-    sum *= mix(0.72, 0.90, powder);
+    sum *= mix(0.70, 0.88, powder);
 
     // Clamp once after all orders. Per-octave clamps flatten the structure that cached sky
     // visibility is intended to preserve.

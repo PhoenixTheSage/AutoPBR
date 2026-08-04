@@ -42,6 +42,7 @@ public sealed partial class OpenGlPreviewBackend
         int ShadowMinBias,
         int ShadowMaxBias,
         int ShadowSoftnessTexels,
+        int ShadowStrength,
         int ParallaxTraceLayers,
         int ParallaxRefineSteps,
         int ParallaxShadowSamples,
@@ -64,6 +65,9 @@ public sealed partial class OpenGlPreviewBackend
         int TerrainFogEnd,
         int TerrainPomFadeStart,
         int TerrainPomFadeEnd,
+        int TerrainLodFadeEnable,
+        int TerrainLodFadeStart,
+        int TerrainLodFadeEnd,
         int Turbidity,
         int HorizonFalloff,
         int GroundWorldY,
@@ -132,7 +136,8 @@ public sealed partial class OpenGlPreviewBackend
         int DiscStrength,
         int GlowStrength,
         int TextureSharpness,
-        int MoonAlbedo);
+        int MoonAlbedo,
+        int HdrPresent);
 
     private MainProgramUniformLocs _mainUniformLocs;
     private ShadowProgramUniformLocs _shadowUniformLocs;
@@ -179,6 +184,7 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uShadowMinBias"),
             program.GetUniformLocation("uShadowMaxBias"),
             program.GetUniformLocation("uShadowSoftnessTexels"),
+            program.GetUniformLocation("uShadowStrength"),
             program.GetUniformLocation("uParallaxTraceLayers"),
             program.GetUniformLocation("uParallaxRefineSteps"),
             program.GetUniformLocation("uParallaxShadowSamples"),
@@ -201,6 +207,9 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uTerrainFogEnd"),
             program.GetUniformLocation("uTerrainPomFadeStart"),
             program.GetUniformLocation("uTerrainPomFadeEnd"),
+            program.GetUniformLocation("uTerrainLodFadeEnable"),
+            program.GetUniformLocation("uTerrainLodFadeStart"),
+            program.GetUniformLocation("uTerrainLodFadeEnd"),
             program.GetUniformLocation("uTurbidity"),
             program.GetUniformLocation("uHorizonFalloff"),
             program.GetUniformLocation("uGroundWorldY"),
@@ -272,5 +281,6 @@ public sealed partial class OpenGlPreviewBackend
             program.GetUniformLocation("uDiscStrength"),
             program.GetUniformLocation("uGlowStrength"),
             program.GetUniformLocation("uTextureSharpness"),
-            program.GetUniformLocation("uMoonAlbedo"));
+            program.GetUniformLocation("uMoonAlbedo"),
+            program.GetUniformLocation("uHdrPresent"));
 }

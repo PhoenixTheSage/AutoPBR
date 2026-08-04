@@ -47,7 +47,10 @@ public sealed partial class OpenGlPreviewBackend
         SetIntOnProgramLoc(_taaResolveProgram, tu.HdrPresent, settings.HdrPresentActive ? 1 : 0);
     }
 
-    private void BindScenePresentUniforms(in PreviewRenderSettingsSnapshot settings, bool sceneIsLinear)
+    private void BindScenePresentUniforms(
+        in PreviewRenderSettingsSnapshot settings,
+        bool sceneIsLinear,
+        bool encodeHdr = true)
     {
         if (_scenePresentProgram is not { IsValid: true })
         {
@@ -56,7 +59,12 @@ public sealed partial class OpenGlPreviewBackend
 
         var pu = _scenePresentUniformLocs;
         SetIntOnProgramLoc(_scenePresentProgram, pu.SceneColor, 0);
-        SetIntOnProgramLoc(_scenePresentProgram, pu.HdrPresent, settings.HdrPresentActive ? 1 : 0);
+        // TAA resolves an already present-encoded default FBO; re-running presentEncodeScRgb
+        // double-compresses midtones and re-crushes paper-scaled post layers (clouds / rays).
+        SetIntOnProgramLoc(
+            _scenePresentProgram,
+            pu.HdrPresent,
+            encodeHdr && settings.HdrPresentActive ? 1 : 0);
         SetIntOnProgramLoc(_scenePresentProgram, pu.SceneIsLinear, sceneIsLinear ? 1 : 0);
         SetFloatOnProgramLoc(_scenePresentProgram, pu.HdrPaperWhiteNits, settings.HdrPaperWhiteNits);
         SetFloatOnProgramLoc(_scenePresentProgram, pu.HdrPeakNits, settings.HdrPeakNits);
@@ -68,13 +76,13 @@ public sealed partial class OpenGlPreviewBackend
         if (_screenSpaceGodRayProgram is { IsValid: true })
         {
             var ssu = _screenSpaceGodRayUniformLocs;
-            SetFloatOnProgramLoc(_screenSpaceGodRayProgram, ssu.Strength, settings.GodRayStrength);
+            SetFloatOnProgramLoc(_screenSpaceGodRayProgram, ssu.Strength, settings.ScreenSpaceGodRayStrength);
         }
 
         if (_shadowAwareGodRayProgram is { IsValid: true })
         {
             var shu = _shadowAwareGodRayUniformLocs;
-            SetFloatOnProgramLoc(_shadowAwareGodRayProgram, shu.Strength, settings.GodRayStrength);
+            SetFloatOnProgramLoc(_shadowAwareGodRayProgram, shu.Strength, settings.ScreenSpaceGodRayStrength);
             SetFloatOnProgramLoc(_shadowAwareGodRayProgram, shu.LayerHeight, layerWorldY);
             SetFloatOnProgramLoc(_shadowAwareGodRayProgram, shu.VolumeHeight, settings.CloudVolumeHeight);
             SetFloatOnProgramLoc(_shadowAwareGodRayProgram, shu.CloudDensity, settings.CloudDensity);
@@ -84,8 +92,8 @@ public sealed partial class OpenGlPreviewBackend
             SetFloatOnProgramLoc(_shadowAwareGodRayProgram, shu.HeightFogStrength,
                 ResolveVolumeHeightFogStrength(settings));
             SetFloatOnProgramLoc(_shadowAwareGodRayProgram, shu.ShadowMinBias, settings.ShadowMinBias);
-            SetIntOnProgramLoc(_shadowAwareGodRayProgram, shu.EnableCloudAttenuation,
-                settings.EnableVolumetricClouds ? 1 : 0);
+            // SS beams are leaf/gap detail; never bake procedural cloud density into them.
+            SetIntOnProgramLoc(_shadowAwareGodRayProgram, shu.EnableCloudAttenuation, 0);
         }
     }
 
@@ -106,7 +114,8 @@ public sealed partial class OpenGlPreviewBackend
             SetFloatOnProgramLoc(_volumeInjectProgram, vi.FogSlabHeight, PreviewStageConstants.GroundFogSlabHeight);
             SetFloatOnProgramLoc(_volumeInjectProgram, vi.HeightFogStrength, ResolveVolumeHeightFogStrength(settings));
             SetFloatOnProgramLoc(_volumeInjectProgram, vi.DebugDensity, Math.Max(0f, settings.GodRayDebugDensity));
-            SetFloatOnProgramLoc(_volumeInjectProgram, vi.ShadowMinBias, settings.ShadowMinBias);
+            // Volume path: tighter bias than opaque lighting so cutout canopy holes stay open in shafts.
+            SetFloatOnProgramLoc(_volumeInjectProgram, vi.ShadowMinBias, settings.ShadowMinBias * 0.45f);
         }
 
         if (_volumeInjectComputeProgram is { IsValid: true })
@@ -121,7 +130,7 @@ public sealed partial class OpenGlPreviewBackend
             SetFloatOnProgramLoc(_volumeInjectComputeProgram, vci.FogSlabHeight, PreviewStageConstants.GroundFogSlabHeight);
             SetFloatOnProgramLoc(_volumeInjectComputeProgram, vci.HeightFogStrength, ResolveVolumeHeightFogStrength(settings));
             SetFloatOnProgramLoc(_volumeInjectComputeProgram, vci.DebugDensity, Math.Max(0f, settings.GodRayDebugDensity));
-            SetFloatOnProgramLoc(_volumeInjectComputeProgram, vci.ShadowMinBias, settings.ShadowMinBias);
+            SetFloatOnProgramLoc(_volumeInjectComputeProgram, vci.ShadowMinBias, settings.ShadowMinBias * 0.45f);
         }
 
         if (_volumeIntegrateProgram is { IsValid: true })
@@ -130,6 +139,15 @@ public sealed partial class OpenGlPreviewBackend
             SetFloatOnProgramLoc(_volumeIntegrateProgram, iu.ScatterGain, settings.GodRayScatterGain);
             SetFloatOnProgramLoc(_volumeIntegrateProgram, iu.Extinction, Math.Max(1e-3f, settings.GodRayExtinction));
             SetFloatOnProgramLoc(_volumeIntegrateProgram, iu.DepthDistribution, quality.FroxelDepthExp);
+            // Ambient fill scales with horizon fog so one slider drives valley haze visibility.
+            SetFloatOnProgramLoc(
+                _volumeIntegrateProgram,
+                iu.AmbientFillGain,
+                ResolveVolumeAmbientFillGain(settings));
+            SetFloatOnProgramLoc(
+                _volumeIntegrateProgram,
+                iu.PhaseDirectivity,
+                Math.Clamp(settings.GodRayPhaseDirectivity, 0f, 1f));
         }
     }
 
@@ -153,5 +171,37 @@ public sealed partial class OpenGlPreviewBackend
         SetIntOnProgramLoc(_cloudProgram, cu.Quality, profile.CloudQuality);
         SetIntOnProgramLoc(_cloudProgram, cu.MarchSteps, Math.Clamp(settings.CloudMarchStepOverride, 0, 64));
         SetIntOnProgramLoc(_cloudProgram, cu.DebugView, (int)settings.CloudDebugView);
+        ApplyCloudLayerEnvelopeUniforms(
+            _cloudProgram,
+            cu.CumulusLayerCount,
+            cu.InterDeckGap,
+            cu.HeightVariance,
+            cu.UpperThicknessScale,
+            cu.UpperCoverageScale,
+            cu.UpperDensityScale,
+            cu.UpperWindOffset,
+            cu.CirrusGap,
+            cu.CirrusThickness,
+            cu.StyleBias,
+            settings,
+            upperWindOffset: default);
+        if (_cloudHighProgram is { IsValid: true })
+        {
+            var hu = _cloudHighUniformLocs;
+            ApplyCloudLayerEnvelopeUniforms(
+                _cloudHighProgram,
+                hu.CumulusLayerCount,
+                hu.InterDeckGap,
+                hu.HeightVariance,
+                hu.UpperThicknessScale,
+                hu.UpperCoverageScale,
+                hu.UpperDensityScale,
+                hu.UpperWindOffset,
+                hu.CirrusGap,
+                hu.CirrusThickness,
+                hu.StyleBias,
+                settings,
+                upperWindOffset: default);
+        }
     }
 }

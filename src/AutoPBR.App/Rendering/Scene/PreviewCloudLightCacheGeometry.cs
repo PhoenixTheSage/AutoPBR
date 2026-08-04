@@ -11,36 +11,64 @@ public readonly record struct PreviewCloudLightAltitudeBounds(
     float CumulusTopAltitude,
     float CirrusBaseAltitude,
     float CirrusTopAltitude,
-    float DetailPadding)
+    float DetailPadding,
+    float PrimaryCumulusBaseAltitude = 0f,
+    float PrimaryCumulusTopAltitude = 0f)
 {
+    /// <summary>Support-band base used for light-depth coverage (all decks + variance).</summary>
     public float MinimumAltitude => CumulusBaseAltitude - DetailPadding;
+
     public float MaximumAltitude =>
         MathF.Max(CumulusTopAltitude, CirrusTopAltitude) + DetailPadding;
+
+    /// <summary>Primary deck base for density sampling (deck stacking origin).</summary>
+    public float DensityCumulusBaseAltitude =>
+        PrimaryCumulusBaseAltitude > 0f ? PrimaryCumulusBaseAltitude : CumulusBaseAltitude;
+
+    /// <summary>Primary deck top for density sampling (primary thickness only).</summary>
+    public float DensityCumulusTopAltitude =>
+        PrimaryCumulusTopAltitude > 0f ? PrimaryCumulusTopAltitude : CumulusTopAltitude;
 
     public static PreviewCloudLightAltitudeBounds Create(
         float groundWorldY,
         float layerWorldY,
         float volumeHeight,
         float volumeSize,
-        float cirrusStrength)
+        float cirrusStrength,
+        int cumulusLayerCount = PreviewCloudLayerEnvelope.DefaultCumulusLayerCount,
+        float interDeckGap = PreviewCloudLayerEnvelope.DefaultInterDeckGap,
+        float heightVariance = PreviewCloudLayerEnvelope.DefaultHeightVariance,
+        float upperThicknessScale = PreviewCloudLayerEnvelope.DefaultUpperThicknessScale,
+        float cirrusGap = PreviewCloudLayerEnvelope.DefaultCirrusGap,
+        float cirrusThickness = PreviewCloudLayerEnvelope.DefaultCirrusThickness)
     {
-        var safeHeight = MathF.Max(volumeHeight, 0.01f);
-        var cumulusBase = MathF.Max(layerWorldY - groundWorldY, 0.01f);
-        var cumulusTop = cumulusBase + safeHeight;
-        var cirrusBase = cumulusTop + MathF.Max(safeHeight * 1.5f, 18f);
-        var cirrusThickness = MathF.Max(safeHeight * 0.035f, 0.75f);
-
-        // CQ2 detail repeats every half volume scale. Retain that full period at both
-        // boundaries so array filtering and rotated edge detail cannot clip the envelope.
-        var detailPadding = MathF.Max(volumeSize, 8f) * 0.5f;
-        return new PreviewCloudLightAltitudeBounds(
-            cumulusBase,
-            cumulusTop,
-            cirrusStrength > 0f ? cirrusBase : cumulusTop,
-            cirrusStrength > 0f ? cirrusBase + cirrusThickness : cumulusTop,
-            detailPadding);
+        var stack = PreviewCloudLayerEnvelope.Build(
+            groundWorldY,
+            layerWorldY,
+            volumeHeight,
+            volumeSize,
+            cirrusStrength,
+            cumulusLayerCount,
+            interDeckGap,
+            heightVariance,
+            upperThicknessScale,
+            cirrusGap,
+            cirrusThickness);
+        return FromStack(stack);
     }
+
+    public static PreviewCloudLightAltitudeBounds FromStack(
+        in PreviewCloudLayerEnvelope.AltitudeStack stack) =>
+        new(
+            stack.CumulusSupportBase,
+            stack.CumulusSupportTop,
+            stack.CirrusBaseAltitude,
+            stack.CirrusTopAltitude,
+            stack.DetailPadding,
+            stack.Deck0.BaseAltitude,
+            stack.Deck0.TopAltitude);
 }
+
 
 /// <summary>
 /// Conservative light-axis interval covering a cascade's world footprint and complete cloud

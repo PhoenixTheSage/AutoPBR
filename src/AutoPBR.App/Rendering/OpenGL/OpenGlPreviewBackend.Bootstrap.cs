@@ -52,6 +52,9 @@ public sealed partial class OpenGlPreviewBackend
         PreviewShaderPrewarm.ClearAndRestart();
         lock (_sync)
         {
+            // Shader reload tears down the terrain streamer; also mark LOD cache clear so a
+            // partial path cannot leave stale CPU section meshes around.
+            _pendingTerrainLodCacheClear = true;
             if (_gl is null)
             {
                 return;
@@ -60,6 +63,15 @@ public sealed partial class OpenGlPreviewBackend
             _pendingShaderReload = true;
             _gpuInitStopwatch.Restart();
             RaiseGpuInitProgress(PreviewGpuInitPhases.ClearingShaderCache, _settings);
+        }
+    }
+
+    public void ClearTerrainLodCache()
+    {
+        lock (_sync)
+        {
+            _pendingTerrainLodCacheClear = true;
+            _terrainStreamingNeedsFrames = true;
         }
     }
 
@@ -147,6 +159,7 @@ public sealed partial class OpenGlPreviewBackend
         _gpuInitTier = PreviewGpuInitTier.None;
         _gpuGenesisPrewarmIndex = 0;
         _shadowAwareGodRayInitAttempted = false;
+        _godRayCanopyRefineInitAttempted = false;
         _atmoLutsValid = false;
         // Atlas may survive reload; re-emit the enable diagnostic when DDA comes back.
         _loggedVoxelDdaOcclusionEnabled = false;

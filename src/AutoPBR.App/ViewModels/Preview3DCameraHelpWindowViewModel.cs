@@ -41,6 +41,7 @@ public sealed partial class Preview3DCameraHelpWindowViewModel : ViewModelBase
         new(LocalizedStrings.Preview3DCameraHelpItemOrbitInput, LocalizedStrings.Preview3DCameraHelpItemOrbitDesc),
         new(LocalizedStrings.Preview3DCameraHelpItemPanInput, LocalizedStrings.Preview3DCameraHelpItemPanDesc),
         new(LocalizedStrings.Preview3DCameraHelpItemZoomInput, LocalizedStrings.Preview3DCameraHelpItemZoomDesc),
+        new(LocalizedStrings.Preview3DCameraHelpItemHoldZoomInput, LocalizedStrings.Preview3DCameraHelpItemHoldZoomDesc),
     ];
 
     public IReadOnlyList<Preview3DCameraHelpItem> FlyItems { get; } =

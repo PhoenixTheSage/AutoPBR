@@ -102,6 +102,11 @@
                                         ToolTip.Tip="{Binding Strings.ForceShaderCacheInvalidationTooltip}">
                                     <TextBlock Text="{Binding Strings.ForceShaderCacheInvalidation}" TextWrapping="Wrap" />
                                 </Button>
+                                <Button HorizontalAlignment="Left"
+                                        Command="{Binding ClearLodCacheCommand}"
+                                        ToolTip.Tip="{Binding Strings.ClearLodCacheTooltip}">
+                                    <TextBlock Text="{Binding Strings.ClearLodCache}" TextWrapping="Wrap" />
+                                </Button>
                             </StackPanel>
                         </Border>
 

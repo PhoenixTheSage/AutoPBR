@@ -53,6 +53,7 @@ vec3 vfWorldToFroxelUv(vec3 worldPos, vec3 cameraPos, vec3 camRight, vec3 camUp,
 }
 
 // Soft falloff near froxel XY edges (replaces hard continue that caused visible screen seams).
+// Wider band so camera-pitch seams at the bottom third of the view fade instead of cutting.
 float vfFroxelEdgeWeight(vec3 froxelUv)
 {
     if (froxelUv.z < 0.0)
@@ -60,9 +61,15 @@ float vfFroxelEdgeWeight(vec3 froxelUv)
         return 0.0;
     }
 
-    float wx = smoothstep(0.0, 0.06, froxelUv.x) * smoothstep(1.0, 0.94, froxelUv.x);
-    float wy = smoothstep(0.0, 0.06, froxelUv.y) * smoothstep(1.0, 0.94, froxelUv.y);
+    float wx = smoothstep(0.0, 0.12, froxelUv.x) * smoothstep(1.0, 0.88, froxelUv.x);
+    float wy = smoothstep(0.0, 0.12, froxelUv.y) * smoothstep(1.0, 0.88, froxelUv.y);
     return wx * wy;
+}
+
+// Soft fade as samples approach the froxel far plane (forward01 in 0..1).
+float vfFroxelFarWeight(float forward01)
+{
+    return 1.0 - smoothstep(0.82, 0.985, clamp(forward01, 0.0, 1.0));
 }
 
 #endif // GENESIS_VOLUME_FROXEL_MATH_GLSL

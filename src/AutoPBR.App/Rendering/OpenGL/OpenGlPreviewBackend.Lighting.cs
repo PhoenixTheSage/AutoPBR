@@ -104,7 +104,7 @@ public sealed partial class OpenGlPreviewBackend
     /// </summary>
     private void DrawMoonBillboard(GL gl, Matrix4x4 proj, Matrix4x4 view, Vector3 eye, Vector3 lightPropagationDir,
         float farPlane, float discStrength, float discSize, float glowStrength, float textureSharpness,
-        bool restoreSolidBackFaceCull)
+        bool hdrPresent, bool restoreSolidBackFaceCull)
     {
         if (_moonProgram is null || !_moonProgram.IsValid || _moonVao == 0 || _moonAlbedo is null)
         {
@@ -149,6 +149,7 @@ public sealed partial class OpenGlPreviewBackend
         SetFloatLoc(m.DiscStrength, Math.Max(discStrength, 0f));
         SetFloatLoc(m.GlowStrength, Math.Max(glowStrength, 0f));
         SetFloatLoc(m.TextureSharpness, Math.Clamp(textureSharpness, 0f, 4f));
+        SetIntLoc(m.HdrPresent, hdrPresent ? 1 : 0);
         gl.ActiveTexture(TextureUnit.Texture0);
         _moonAlbedo.Bind(0);
         SetIntLoc(m.MoonAlbedo, 0);
@@ -634,6 +635,7 @@ public sealed partial class OpenGlPreviewBackend
                 ? Math.Max(Vector3.Normalize(-frame.WorldLightDir).Y, 0f)
                 : 0f;
             SetFloatLoc(proc.SunElevation, sunElev);
+            SetIntLoc(proc.HdrPresent, frame.Settings.HdrPresentActive ? 1 : 0);
             gl.BindVertexArray(_atmoQuadVao);
             gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
             gl.BindVertexArray(0);

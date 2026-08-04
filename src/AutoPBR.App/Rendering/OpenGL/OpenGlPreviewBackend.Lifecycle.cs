@@ -1176,6 +1176,7 @@ public sealed partial class OpenGlPreviewBackend
                 _gl = null;
                 _gpuInitTier = PreviewGpuInitTier.None;
                 _shadowAwareGodRayInitAttempted = false;
+                _godRayCanopyRefineInitAttempted = false;
                 _gpuInitProgress = PreviewGpuInitProgress.Starting;
             }
 
@@ -1191,6 +1192,7 @@ public sealed partial class OpenGlPreviewBackend
             _nativeWglPresenterActive = false;
             _gpuInitTier = PreviewGpuInitTier.None;
             _shadowAwareGodRayInitAttempted = false;
+            _godRayCanopyRefineInitAttempted = false;
             _gpuInitProgress = PreviewGpuInitProgress.Starting;
         }
     }
@@ -1253,6 +1255,7 @@ public sealed partial class OpenGlPreviewBackend
         DestroyVolumeResources();
         DestroyVolumetricCloudResources();
         DestroyPreviewTaaResources();
+        DestroyScreenSpaceAoResources();
         DestroyMoonBillboard();
         DestroyLineOverlay();
         DestroyNativeWglOverlay();
@@ -1325,6 +1328,7 @@ public sealed partial class OpenGlPreviewBackend
         DestroyVolumeResources();
         DestroyVolumetricCloudResources();
         DestroyPreviewTaaResources();
+        DestroyScreenSpaceAoResources();
         DestroyHdr2DResources(_gl);
         DestroyMoonBillboard();
         DestroyLineOverlay();

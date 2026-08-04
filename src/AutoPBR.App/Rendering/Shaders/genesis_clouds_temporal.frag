@@ -24,6 +24,7 @@ uniform float uTemporalWeight;
 uniform float uMomentSigma;
 uniform float uMomentMinBand;
 uniform float uHistoryConfidence;
+uniform float uTemporalStability;
 uniform int uHasHistory;
 uniform int uHasMoments;
 uniform int uCloudDataDirect;
@@ -174,7 +175,9 @@ void main()
 
     float kindWeight = 1.0 - smoothstep(0.20, 0.45, abs(currentKind - historyKind));
     vec2 velocity = vUv - previousUv;
-    float motionWeight = trMotionRejectionWeight(velocity, 0.025, 0.24);
+    // Slightly wider motion acceptance keeps soft-edge history while panning so
+    // CA3.1/CQ1.8 do not flash raw 2/3-res borders the moment idle ends.
+    float motionWeight = trMotionRejectionWeight(velocity, 0.040, 0.32);
     float borderWeight = trHistoryBorderWeight(previousUv, 0.035);
 
     vec3 neighborhoodMin;
@@ -240,9 +243,22 @@ void main()
     float coverageAgreement = 1.0 - smoothstep(0.08, 0.42, abs(current.a - history.a));
     float luminanceAgreement = trLuminanceReactiveWeight(current.rgb, history.rgb);
     float reactiveWeight = mix(0.35, 1.0, min(coverageAgreement, luminanceAgreement));
+    // CA3.1: optically thin / changing wisps keep less history so CA1/CA2 evaporation
+    // survives motion without ghost fringes. Dense cores retain the prior weight path.
+    // Idle raises the floor (anti-grain); motion keeps agreeing soft edges on history
+    // (anti-border) and only disagreement forces a strong cut.
+    float minAlpha = min(current.a, history.a);
+    float thinness = 1.0 - smoothstep(0.28, 0.55, minAlpha);
+    float alphaDisagreement = smoothstep(0.06, 0.28, abs(current.a - history.a));
+    float stability = clamp(uTemporalStability, 0.0, 1.0);
+    float idleReactiveScale = max(1.0 - stability * 0.72, alphaDisagreement);
+    float motionReactiveScale = mix(0.40, 1.0, alphaDisagreement);
+    float lowAlphaReactive = thinness * mix(motionReactiveScale, idleReactiveScale, stability);
+    float lowAlphaFloor = mix(0.58, 0.86, stability);
+    float lowAlphaWeight = mix(1.0, lowAlphaFloor, clamp(lowAlphaReactive, 0.0, 1.0));
     float confidenceWeight = momentsValid ? clamp(uHistoryConfidence, 0.0, 1.0) : 1.0;
     float historyWeight = clamp(uTemporalWeight * depthWeight * kindWeight * motionWeight *
-        borderWeight * reactiveWeight * confidenceWeight, 0.0, 0.92);
+        borderWeight * reactiveWeight * lowAlphaWeight * confidenceWeight, 0.0, 0.92);
 
     FragColor = mix(current, history, historyWeight);
     if (momentsValid)

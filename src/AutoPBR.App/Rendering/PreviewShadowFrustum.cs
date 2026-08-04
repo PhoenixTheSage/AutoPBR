@@ -22,8 +22,14 @@ internal static class PreviewShadowFrustum
     /// </summary>
     public const float TerrainShadowMinXzHalfExtent = 48f;
 
-    /// <summary>Upper clamp for far-cascade half-extent covering the streamed terrain ring.</summary>
-    public const float TerrainShadowFarMaxHalfExtent = 512f;
+    /// <summary>
+    /// Upper clamp for far-cascade half-extent covering the streamed terrain ring.
+    /// Matches extreme distant LOD (view distance + 1024 chunks × 16 m).
+    /// </summary>
+    public const float TerrainShadowFarMaxHalfExtent =
+        (PreviewStageConstants.TerrainMaxChunkViewDistance +
+         PreviewStageConstants.TerrainMaxLodRingChunks) *
+        (float)PreviewStageConstants.TerrainChunkSize;
 
     public static Matrix4x4 BuildDirectionalViewProj(
         Vector3 worldLightDir,

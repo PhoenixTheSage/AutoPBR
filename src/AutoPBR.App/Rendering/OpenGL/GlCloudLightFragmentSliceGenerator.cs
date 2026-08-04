@@ -24,7 +24,24 @@ internal readonly record struct GlCloudLightSliceGenerationInputs(
     uint CloudNoiseTexture,
     uint DetailNoiseTexture,
     uint CoverageTexture,
-    float ReferenceDensity = -1f);
+    float ReferenceDensity = -1f,
+    GlSparseCloudSamplingBindings? SparseCloud = null,
+    int CumulusLayerCount = PreviewCloudLayerEnvelope.DefaultCumulusLayerCount,
+    float InterDeckGap = PreviewCloudLayerEnvelope.DefaultInterDeckGap,
+    float HeightVariance = PreviewCloudLayerEnvelope.DefaultHeightVariance,
+    float UpperThicknessScale = PreviewCloudLayerEnvelope.DefaultUpperThicknessScale,
+    float UpperCoverageScale = PreviewCloudLayerEnvelope.DefaultUpperCoverageScale,
+    float UpperDensityScale = PreviewCloudLayerEnvelope.DefaultUpperDensityScale,
+    Vector3 UpperWindOffset = default,
+    float CirrusGap = PreviewCloudLayerEnvelope.DefaultCirrusGap,
+    float CirrusThickness = PreviewCloudLayerEnvelope.DefaultCirrusThickness,
+    int StyleBias = 0)
+{
+    public int DensityIdentity =>
+        SparseCloud is { IsValid: true } sparse
+            ? sparse.IdentitySignature
+            : 0;
+}
 
 /// <summary>
 /// Ordered GL 3.3 fragment-slice generator. Each layer writes the RG16F array and one alternating
@@ -109,6 +126,7 @@ internal sealed class GlCloudLightFragmentSliceGenerator
                     inputs.WindOffset,
                     generationFrame,
                     inputs.ReferenceDensity,
+                    inputs.DensityIdentity,
                     out var nearDiagnostic))
             {
                 cache.Near.InvalidateGeneration();
@@ -123,6 +141,7 @@ internal sealed class GlCloudLightFragmentSliceGenerator
                     inputs.WindOffset,
                     generationFrame,
                     inputs.ReferenceDensity,
+                    inputs.DensityIdentity,
                     out var farDiagnostic))
             {
                 cache.Far.InvalidateGeneration();
@@ -170,6 +189,7 @@ internal sealed class GlCloudLightFragmentSliceGenerator
         Vector3 generationWindOffset,
         int generationFrame,
         float referenceDensity,
+        int densityIdentity,
         out string diagnostic)
     {
         BindTransform(transform, referenceDensity);
@@ -201,7 +221,8 @@ internal sealed class GlCloudLightFragmentSliceGenerator
         target.CommitGeneration(
             transform,
             generationFrame,
-            generationWindOffset);
+            generationWindOffset,
+            densityIdentity);
         diagnostic = "generated";
         return true;
     }
@@ -227,6 +248,10 @@ internal sealed class GlCloudLightFragmentSliceGenerator
         SetInt(_uniforms.DetailNoise, 1);
         SetInt(_uniforms.CoverageMap, 2);
         SetInt(_uniforms.PreviousPrefix, 3);
+        SetInt(_uniforms.SparseCloudAtlas, 4);
+        SetInt(_uniforms.SparseCloudPageL0, 5);
+        SetInt(_uniforms.SparseCloudPageL1, 6);
+        SetInt(_uniforms.SparseCloudPageL2, 7);
 
         _gl.ActiveTexture(TextureUnit.Texture0);
         _gl.BindTexture(TextureTarget.Texture3D, inputs.CloudNoiseTexture);
@@ -234,11 +259,16 @@ internal sealed class GlCloudLightFragmentSliceGenerator
         _gl.BindTexture(TextureTarget.Texture3D, inputs.DetailNoiseTexture);
         _gl.ActiveTexture(TextureUnit.Texture2);
         _gl.BindTexture(TextureTarget.Texture2D, inputs.CoverageTexture);
+        BindSparseCloud(inputs.SparseCloud);
 
         SetVector3(_uniforms.PlanetCenter, inputs.PlanetCenter);
         SetFloat(_uniforms.PlanetRadius, inputs.PlanetRadius);
-        SetFloat(_uniforms.CumulusBaseAltitude, inputs.AltitudeBounds.CumulusBaseAltitude);
-        SetFloat(_uniforms.CumulusTopAltitude, inputs.AltitudeBounds.CumulusTopAltitude);
+        SetFloat(
+            _uniforms.CumulusBaseAltitude,
+            inputs.AltitudeBounds.DensityCumulusBaseAltitude);
+        SetFloat(
+            _uniforms.CumulusTopAltitude,
+            inputs.AltitudeBounds.DensityCumulusTopAltitude);
         SetFloat(_uniforms.CirrusBaseAltitude, inputs.AltitudeBounds.CirrusBaseAltitude);
         SetFloat(_uniforms.CirrusTopAltitude, inputs.AltitudeBounds.CirrusTopAltitude);
         SetFloat(_uniforms.Density, inputs.Density);
@@ -253,6 +283,36 @@ internal sealed class GlCloudLightFragmentSliceGenerator
         SetInt(_uniforms.HasDetailNoise, inputs.DetailNoiseTexture != 0 ? 1 : 0);
         SetInt(_uniforms.HasCoverageMap, inputs.CoverageTexture != 0 ? 1 : 0);
         SetInt(_uniforms.DensityAssetVersion, inputs.DensityAssetVersion);
+        SetInt(
+            _uniforms.CumulusLayerCount,
+            PreviewCloudLayerEnvelope.ClampDeckCount(inputs.CumulusLayerCount));
+        SetFloat(_uniforms.InterDeckGap, inputs.InterDeckGap);
+        SetFloat(_uniforms.HeightVariance, inputs.HeightVariance);
+        SetFloat(_uniforms.UpperThicknessScale, inputs.UpperThicknessScale);
+        SetFloat(_uniforms.UpperCoverageScale, inputs.UpperCoverageScale);
+        SetFloat(_uniforms.UpperDensityScale, inputs.UpperDensityScale);
+        SetVector3(_uniforms.UpperWindOffset, inputs.UpperWindOffset);
+        SetFloat(_uniforms.CirrusGap, inputs.CirrusGap);
+        SetFloat(_uniforms.CirrusThickness, inputs.CirrusThickness);
+        SetInt(_uniforms.StyleBias, Math.Clamp(inputs.StyleBias, 0, 4));
+    }
+
+    private void BindSparseCloud(GlSparseCloudSamplingBindings? bindings)
+    {
+        var valid = bindings is { IsValid: true };
+        var sparse = valid ? bindings!.Value : default;
+        SetInt(_uniforms.HasSparseCloudTraversal, valid ? 1 : 0);
+        SetInt3(_uniforms.SparseCloudOriginL0, sparse.OriginL0);
+        SetInt3(_uniforms.SparseCloudOriginL1, sparse.OriginL1);
+        SetInt3(_uniforms.SparseCloudOriginL2, sparse.OriginL2);
+        _gl.ActiveTexture(TextureUnit.Texture4);
+        _gl.BindTexture(TextureTarget.Texture3D, sparse.AtlasTexture);
+        _gl.ActiveTexture(TextureUnit.Texture5);
+        _gl.BindTexture(TextureTarget.Texture3D, sparse.PageTableL0);
+        _gl.ActiveTexture(TextureUnit.Texture6);
+        _gl.BindTexture(TextureTarget.Texture3D, sparse.PageTableL1);
+        _gl.ActiveTexture(TextureUnit.Texture7);
+        _gl.BindTexture(TextureTarget.Texture3D, sparse.PageTableL2);
     }
 
     private void BindTransform(
@@ -293,6 +353,14 @@ internal sealed class GlCloudLightFragmentSliceGenerator
         if (location >= 0)
         {
             _gl.Uniform1(location, value);
+        }
+    }
+
+    private void SetInt3(int location, AutoPBR.App.Rendering.Scene.Int3 value)
+    {
+        if (location >= 0)
+        {
+            _gl.Uniform3(location, value.X, value.Y, value.Z);
         }
     }
 
@@ -362,7 +430,25 @@ internal sealed class GlCloudLightFragmentSliceGenerator
         int HasDetailNoise,
         int HasCoverageMap,
         int DensityAssetVersion,
-        int ReferenceDensity)
+        int ReferenceDensity,
+        int SparseCloudAtlas,
+        int SparseCloudPageL0,
+        int SparseCloudPageL1,
+        int SparseCloudPageL2,
+        int SparseCloudOriginL0,
+        int SparseCloudOriginL1,
+        int SparseCloudOriginL2,
+        int HasSparseCloudTraversal,
+        int CumulusLayerCount,
+        int InterDeckGap,
+        int HeightVariance,
+        int UpperThicknessScale,
+        int UpperCoverageScale,
+        int UpperDensityScale,
+        int UpperWindOffset,
+        int CirrusGap,
+        int CirrusThickness,
+        int StyleBias)
     {
         public static Uniforms Resolve(GlShaderProgram program) =>
             new(
@@ -400,6 +486,24 @@ internal sealed class GlCloudLightFragmentSliceGenerator
                 program.GetUniformLocation("uHasDetailNoise"),
                 program.GetUniformLocation("uHasCoverageMap"),
                 program.GetUniformLocation("uDensityAssetVersion"),
-                program.GetUniformLocation("uReferenceDensity"));
+                program.GetUniformLocation("uReferenceDensity"),
+                program.GetUniformLocation("uSparseCloudAtlas"),
+                program.GetUniformLocation("uSparseCloudPageL0"),
+                program.GetUniformLocation("uSparseCloudPageL1"),
+                program.GetUniformLocation("uSparseCloudPageL2"),
+                program.GetUniformLocation("uSparseCloudOriginL0"),
+                program.GetUniformLocation("uSparseCloudOriginL1"),
+                program.GetUniformLocation("uSparseCloudOriginL2"),
+                program.GetUniformLocation("uHasSparseCloudTraversal"),
+                program.GetUniformLocation("uCumulusLayerCount"),
+                program.GetUniformLocation("uInterDeckGap"),
+                program.GetUniformLocation("uHeightVariance"),
+                program.GetUniformLocation("uUpperThicknessScale"),
+                program.GetUniformLocation("uUpperCoverageScale"),
+                program.GetUniformLocation("uUpperDensityScale"),
+                program.GetUniformLocation("uUpperWindOffset"),
+                program.GetUniformLocation("uCirrusGap"),
+                program.GetUniformLocation("uCirrusThickness"),
+                program.GetUniformLocation("uStyleBias"));
     }
 }

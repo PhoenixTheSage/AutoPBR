@@ -283,7 +283,7 @@ public static class PreviewTerrainMeshBaker
         var center = (boundsMin + boundsMax) * 0.5f;
         return new PreviewTerrainChunkMesh
         {
-            Key = key,
+            Key = TerrainResidencyKey.Full(key),
             Lod = TerrainChunkLodKind.Full,
             InterleavedVertices = verts,
             Indices = indices,

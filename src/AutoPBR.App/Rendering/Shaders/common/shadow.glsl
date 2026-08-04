@@ -117,13 +117,14 @@ float shadowUvEdgeWeight(vec2 uv)
     return clamp(wx * wy, 0.0, 1.0);
 }
 
-float sampleSceneShadowFromWorld(vec3 worldPos, mat4 lightVp, sampler2DShadow shadowMap, vec2 texelSize,
+// Visibility in [0,1], or -1 when worldPos is outside this cascade's light frustum.
+float sampleSceneShadowFromWorldOrOutside(vec3 worldPos, mat4 lightVp, sampler2DShadow shadowMap, vec2 texelSize,
     float minBias, float maxBias, vec3 N, vec3 L, float softnessTexels)
 {
     vec4 shadowPack = worldToShadowUv(worldPos, lightVp);
     if (shadowPack.w < 0.5)
     {
-        return 1.0;
+        return -1.0;
     }
 
     vec3 sUv = shadowPack.xyz;
@@ -131,6 +132,14 @@ float sampleSceneShadowFromWorld(vec3 worldPos, mat4 lightVp, sampler2DShadow sh
     sUv.z = clamp(sUv.z - bias, 0.0, 1.0);
     float vis = sampleShadowPcfSoft(shadowMap, sUv, texelSize, softnessTexels);
     return mix(1.0, vis, shadowUvEdgeWeight(sUv.xy));
+}
+
+float sampleSceneShadowFromWorld(vec3 worldPos, mat4 lightVp, sampler2DShadow shadowMap, vec2 texelSize,
+    float minBias, float maxBias, vec3 N, vec3 L, float softnessTexels)
+{
+    float vis = sampleSceneShadowFromWorldOrOutside(
+        worldPos, lightVp, shadowMap, texelSize, minBias, maxBias, N, L, softnessTexels);
+    return vis < 0.0 ? 1.0 : vis;
 }
 
 float sampleSceneShadowFromClip(vec4 lightClip, sampler2DShadow shadowMap, vec2 texelSize,
@@ -200,39 +209,58 @@ float sampleSceneShadowCascaded(vec3 worldPos, vec3 cameraPos, vec4 lightClipFar
         return mix(1.0, singleVis, rangeFade);
     }
 
-    // Neighbor blend for cascade detail. min() with far (outer softness only) keeps tall terrain
-    // casters that only fit the wide far ortho from leaving lit holes near the camera.
+    // Prefer the highest-res cascade that covers this receiver. min() with far keeps tall
+    // terrain casters that only fit the wide far ortho from leaving lit holes. Never treat
+    // "outside preferred map" as lit — that painted a camera-centered wipe between near
+    // coverage and the mid split whenever far was also misaligned.
     float nearMidT = shadowCascadeBlendT(dist, splitNear, blendWidth);
     float midFarT = shadowCascadeBlendT(dist, splitMid, blendWidth);
 
-    float farVis = sampleSceneShadowFromWorld(worldPos, lightVpFar, shadowFar, texelSizeFar,
+    float farSample = sampleSceneShadowFromWorldOrOutside(worldPos, lightVpFar, shadowFar, texelSizeFar,
+        minBias, maxBias, N, L, outerSoftness);
+    float farVis = farSample < 0.0 ? 1.0 : farSample;
+
+    float nearSample = sampleSceneShadowFromWorldOrOutside(worldPos, lightVpNear, shadowNear, texelSizeNear,
+        minBias, maxBias, N, L, softnessTexels);
+    float midSample = sampleSceneShadowFromWorldOrOutside(worldPos, lightVpMid, shadowMid, texelSizeMid,
         minBias, maxBias, N, L, outerSoftness);
 
     float vis;
     if (nearMidT <= 0.0)
     {
-        float nearVis = sampleSceneShadowFromWorld(worldPos, lightVpNear, shadowNear, texelSizeNear,
-            minBias, maxBias, N, L, softnessTexels);
-        vis = min(nearVis, farVis);
+        if (nearSample >= 0.0)
+        {
+            vis = min(nearSample, farVis);
+        }
+        else if (midSample >= 0.0)
+        {
+            vis = min(midSample, farVis);
+        }
+        else
+        {
+            vis = farVis;
+        }
     }
     else if (nearMidT < 1.0)
     {
-        float nearVis = sampleSceneShadowFromWorld(worldPos, lightVpNear, shadowNear, texelSizeNear,
-            minBias, maxBias, N, L, softnessTexels);
-        float midVis = sampleSceneShadowFromWorld(worldPos, lightVpMid, shadowMid, texelSizeMid,
-            minBias, maxBias, N, L, outerSoftness);
+        float nearVis = nearSample >= 0.0 ? nearSample : (midSample >= 0.0 ? midSample : farVis);
+        float midVis = midSample >= 0.0 ? midSample : farVis;
         vis = min(mix(nearVis, midVis, nearMidT), farVis);
     }
     else if (midFarT <= 0.0)
     {
-        float midVis = sampleSceneShadowFromWorld(worldPos, lightVpMid, shadowMid, texelSizeMid,
-            minBias, maxBias, N, L, outerSoftness);
-        vis = min(midVis, farVis);
+        if (midSample >= 0.0)
+        {
+            vis = min(midSample, farVis);
+        }
+        else
+        {
+            vis = farVis;
+        }
     }
     else if (midFarT < 1.0)
     {
-        float midVis = sampleSceneShadowFromWorld(worldPos, lightVpMid, shadowMid, texelSizeMid,
-            minBias, maxBias, N, L, outerSoftness);
+        float midVis = midSample >= 0.0 ? midSample : farVis;
         vis = min(mix(midVis, farVis, midFarT), farVis);
     }
     else

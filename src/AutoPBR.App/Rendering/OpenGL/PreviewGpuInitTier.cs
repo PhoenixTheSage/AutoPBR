@@ -8,6 +8,7 @@ internal enum PreviewGpuInitTier
     GodRays = 1 << 1,
     Clouds = 1 << 2,
     PreviewTaa = 1 << 3,
+    ScreenSpaceAo = 1 << 4,
 }
 
 internal static class PreviewGpuInitTierExtensions

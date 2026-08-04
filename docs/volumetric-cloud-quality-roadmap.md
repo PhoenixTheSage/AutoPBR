@@ -1,9 +1,10 @@
 # Volumetric cloud quality roadmap
 
-**Status:** In progress
+**Status:** Complete — CQ1–CQ4 accepted
 **Created:** 2026-07-20  
 **Scope:** Genesis 3D preview volumetric cloud body, reconstruction, density assets, lighting, and the optional desktop sparse-volume backend.
 **Implementation handoff:** [Volumetric cloud implementation handoff](volumetric-cloud-implementation-handoff.md)
+**Post-CQ4 art direction:** [Volumetric cloud art-direction roadmap](volumetric-cloud-art-direction-roadmap.md)
 
 ## Purpose
 
@@ -56,7 +57,7 @@ Increasing the existing fog-froxel resolution is therefore not a substitute for 
 | CQ3 | Snapped light-aligned cloud-light cascades, long-range shadowing, cloud AO and ground contribution | CQ2 | Current per-sample short light march | Complete | Accepted 2026-07-29 with compute and GL 3.3 generation, transactional terrain/fog transmittance, bounded scheduling, live fallback coverage, 13-case visual evidence, and a passing High lighting gate |
 | CQ3.8 | Numerically stable shell traversal and continuous cumulus/cirrus altitude boundaries | CQ3 | Accepted CQ3.7 shell renderer | Complete | Accepted 2026-07-29 with stable shell/density math, live High/Cinematic boundary sweeps, temporal-on/off coverage, preserved terrain/depth behavior, and a passing frozen High trace gate |
 | CQ3.9 | Flat world-altitude slabs for an unbounded continuous world | CQ3.8 | CQ3.8 curved shell (historical rollback only) | Complete | Accepted 2026-07-30 with flat XZ-invariant layers, continuous interval-driven marching, 16 boundary sweeps, preserved depth ordering, a 13-case full-HD matrix, and a passing `0.931×` High lighting gate |
-| CQ4 | Desktop sparse brick/SDF density backend and deterministic cloud envelope library | CQ3.9 | CQ3 flat procedural-layer renderer | Proposed | Stable fly-through density with bounded residency, memory, and traversal cost |
+| CQ4 | Desktop sparse brick/SDF density backend and deterministic cloud envelope library | CQ3.9 | CQ3 flat procedural-layer renderer | Complete | Accepted 2026-07-30 with fenced eviction/overflow recovery, sparse debug views, bounded counters, SparseBrickGen timings, fault injection, and CQ4.8 fly-through/memory/fallback gates |
 
 ## Roadmap milestones
 
@@ -99,13 +100,15 @@ Increasing the existing fog-froxel resolution is therefore not a substitute for 
 
 ### CQ4 — Sparse voxel/SDF backend
 
-- [ ] CQ4.0: Add sparse-cloud capability/backend selection without changing shell behavior.
-- [ ] CQ4.1: Add brick atlas, page tables, allocator, residency policy, and bounded updates.
-- [ ] CQ4.2: Add three snapped logical clipmaps and double-buffered page-table publication.
-- [ ] CQ4.3: Add deterministic envelope templates and weather-driven brick generation.
-- [ ] CQ4.4: Add page-table DDA, conservative-distance skipping, and cascade blending.
-- [ ] CQ4.5: Feed sparse density into CQ3 lighting and CQ1 reconstruction.
-- [ ] CQ4.6: Complete fly-through, overflow, fault, memory, temporal, and fallback coverage.
+- [x] CQ4.0: Add sparse-cloud capability/backend selection without changing shell behavior. Completed 2026-07-30: capable Cinematic contexts request sparse density but remain explicitly on the CQ3.9 procedural layer until later milestones publish a complete resource set; unsupported, forced, and faulted paths report a bounded fallback reason.
+- [x] CQ4.1: Add the deterministic template ABI, generator, twelve bundled cumulus/stratus envelope assets, strict loader, and tests. Completed 2026-07-30 with a shared `32×24×32 RG8` layout, pinned seeds/hashes, connected envelopes, flat cumulus bases, conservative distance fields, and 589,824 bytes of all-or-nothing bundled data.
+- [x] CQ4.2: Add the physical brick atlas, double-buffered page tables, allocator, residency records, and memory accounting. Completed 2026-07-30 with a fixed `160³ RG8` atlas, six `32×16×32 R16UI` tables, 4,095 allocatable bricks plus one cleared fallback slot, active-reference-safe retirement, transactional allocation/rollback, and 9,407,452 bytes of total CQ4 density-residency state under the 16 MiB ceiling. Sampling remains disabled until later publication/generation milestones.
+- [x] CQ4.3: Add snapped clipmap origins, request prioritization, bounded updates, and table publication. Completed 2026-07-30 with independently snapped L0/L1/L2 origins, stable camera/frustum/level/distance ordering, a hard 96-page frame cap, overlap reuse, teleport retirement, complete sentinel/mapping staging, non-blocking fence polling, atomic active/build handle swaps, and publication generations. The expanded worst-case CPU control reservation keeps total CQ4 density-residency accounting at 12,684,220 bytes under the 16 MiB ceiling.
+- [x] CQ4.4: Add compute brick generation, border filling, conservative distance, barriers, and fences. Completed 2026-07-30 with a bounded 96-record std430 queue, one in-flight batch with controller backpressure, deterministic weather-selected CQ4.1 envelope evaluation, bit-identical one-voxel borders, `RG8` atlas image writes, image/texture/SSBO barriers, per-workgroup completion markers, and non-blocking generation fences. CQ4.5 subsequently upgraded the original zero/one G seed to the exact local Chebyshev field used by traversal. Only fully completed batches replace requested page sentinels with physical mappings. The persistent status SSBO raises exact CQ4 accounting by 384 bytes to 12,684,604 bytes, still under 16 MiB. Sampling remains disabled.
+- [x] CQ4.5: Add page-table DDA, conservative-distance skipping, CQ2 detail, and cascade/shell blending. Completed 2026-07-30 with shared active-table GLSL lookup, unmapped/requested coarse fallback, exact within-brick Chebyshev G generation capped at 32 voxels, brick-clipped `0.8×` distance stepping, fine CQ2 evaluation at occupied boundaries, finest-resident selection, 10% L0/L1/L2 and L2/shell transitions, traversal counters, a matching CPU oracle, and fixed-ray hidden-WGL SSBO readback. Runtime binds the published atlas/tables/origins but keeps `uHasSparseCloudTraversal=0` until CQ4.6 connects sparse generation identity to CQ1/CQ3.
+- [x] CQ4.6: Feed sparse density and generation identity into CQ3 lighting and CQ1 reconstruction. Completed 2026-07-30 with a deterministic atlas/table/plan/origin sampling identity, fail-closed publication gating, procedural fallback while an active plan is incomplete, and transactional activation only after both CQ3 near/far caches commit the same identity. The active identity participates in CQ1 history rejection; the view trace, Cinematic local cone taps, full-resolution edge repair, CQ3 optical-depth/sky-visibility generation, and derived ground transmittance all consume the same sparse base density. Recenter, publication, generation, backend, and fault discontinuities demote before any mismatched sparse pixel can render. Nine focused identity/activation tests, all 685 app tests, and all three explicitly enabled cloud live-GL tests pass.
+- [x] CQ4.7: Add overflow/fault recovery, debug views, counters, and GPU timings. Completed 2026-07-30 with fenced orphan recycle for bricks retired while generating, active-reference-safe retirement after publication drops mappings, bounded overflow that never wraps physical indices, nine sparse debug views (clipmap/page/atlas/density/distance/steps/fallback/template/blend), CPU residency/identity counters, SparseBrickGen pass timing, and injectable dispatch/barrier/fence/status/publication/context-loss demotion.
+- [x] CQ4.8: Complete fly-through, residency, visual, memory, fallback, and performance acceptance. Completed 2026-07-30 with always-on CPU memory/overflow/teleport gates under the 16 MiB ceiling, focused CQ4.7 recovery and debug-view coverage, and an opt-in hidden-WGL fly-through harness (`AUTOPBR_RUN_CQ4_ACCEPTANCE=1`) that exercises residency diagnostics, context-loss shell recovery, and High procedural fallback.
 
 ## Quality policy
 

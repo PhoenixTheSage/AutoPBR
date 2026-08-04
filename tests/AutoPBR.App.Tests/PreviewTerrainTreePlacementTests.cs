@@ -179,6 +179,126 @@ public sealed class PreviewTerrainTreePlacementTests
             b => b.MaterialIndex >= PreviewTerrainGrassSlots.VegetationBase);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public void BakeLodSection_with_vegetation_emits_on_all_lod_levels(byte lodLevel)
+    {
+        var plan = MakeOakPlan();
+        var grass = PreviewTerrainGrassBakeSettings.BuiltIn with
+        {
+            VegetationIdentity = plan.Identity,
+        };
+
+        PreviewTerrainChunkMesh? meshWithTrees = null;
+        for (var seed = 1; seed < 800 && meshWithTrees is null; seed++)
+        {
+            var gen = PreviewTerrainWorldGenSettings.Default with { Seed = seed };
+            // Stay outside the flat pad; section coords scale with LOD.
+            for (var sz = 1; sz <= 10 && meshWithTrees is null; sz++)
+            {
+                for (var sx = 1; sx <= 10 && meshWithTrees is null; sx++)
+                {
+                    var section = TerrainResidencyKey.Section(sx, sz, lodLevel);
+                    var mesh = PreviewTerrainLodMeshBaker.BakeLodSection(
+                        section,
+                        gen,
+                        grass,
+                        plan);
+                    if (mesh is null)
+                    {
+                        continue;
+                    }
+
+                    if (mesh.DrawBatches.Any(b => b.MaterialIndex >= PreviewTerrainGrassSlots.VegetationBase))
+                    {
+                        meshWithTrees = mesh;
+                    }
+                }
+            }
+        }
+
+        Assert.NotNull(meshWithTrees);
+        Assert.Contains(
+            meshWithTrees.DrawBatches,
+            b => b.MaterialIndex >= PreviewTerrainGrassSlots.VegetationBase);
+    }
+
+    [Fact]
+    public void Lod_and_Full_vegetation_share_placement_roots()
+    {
+        var plan = MakeOakPlan();
+        List<PreviewTerrainTreePlacer.Placement>? full = null;
+        List<PreviewTerrainTreePlacer.Placement>? lod = null;
+        for (var seed = 1; seed < 200 && full is null; seed++)
+        {
+            var gen = PreviewTerrainWorldGenSettings.Default with { Seed = seed };
+            for (var origin = 48; origin <= 160 && full is null; origin += 32)
+            {
+                var cx0 = origin;
+                var cz0 = origin;
+                var cx1 = origin + 32;
+                var cz1 = origin + 32;
+                PreviewTerrainColumnSample Column(int x, int z) =>
+                    PreviewTerrainBiomeSampler.Sample(
+                        x, z, gen, PreviewStageConstants.TerrainFlatPadHalfExtent);
+
+                var a = PreviewTerrainTreePlacer.CollectForChunk(
+                    cx0, cz0, cx1, cz1, Column, gen, plan, placementStep: 1);
+                if (a.Count == 0)
+                {
+                    continue;
+                }
+
+                var b = PreviewTerrainTreePlacer.CollectForChunk(
+                    cx0, cz0, cx1, cz1, Column, gen, plan, placementStep: 1);
+                full = a;
+                lod = b;
+            }
+        }
+
+        Assert.NotNull(full);
+        Assert.NotNull(lod);
+        Assert.Equal(full.Count, lod.Count);
+        Assert.Equal(
+            full.Select(p => (p.RootX, p.RootZ, p.Species)).ToArray(),
+            lod.Select(p => (p.RootX, p.RootZ, p.Species)).ToArray());
+    }
+
+    [Fact]
+    public void Vegetation_emit_is_deterministic_block_space_for_same_placements()
+    {
+        var plan = MakeOakPlan();
+        var gen = PreviewTerrainWorldGenSettings.Default with { Seed = 7 };
+        PreviewTerrainColumnSample Column(int x, int z) =>
+            PreviewTerrainBiomeSampler.Sample(x, z, gen, PreviewStageConstants.TerrainFlatPadHalfExtent);
+        var placements = PreviewTerrainTreePlacer.CollectForChunk(
+            64, -64, 96, -32, Column, gen, plan);
+        Assert.True(placements.Count > 0);
+        Assert.True(PreviewStageConstants.TerrainLodVegetationBlockSpaceIdentity);
+
+        static float[] Emit(IReadOnlyList<PreviewTerrainTreePlacer.Placement> roots)
+        {
+            var buckets = new List<float>[16];
+            for (var i = 0; i < buckets.Length; i++)
+            {
+                buckets[i] = [];
+            }
+
+            var maxH = 0;
+            PreviewTerrainTreeMeshEmitter.EmitPlacements(
+                roots, PreviewStageConstants.GroundPlaneWorldY, 1f, buckets, ref maxH);
+            return buckets.SelectMany(b => b).ToArray();
+        }
+
+        var first = Emit(placements);
+        var second = Emit(placements);
+        Assert.Equal(first, second);
+        Assert.True(first.Length > 0);
+    }
+
     [Fact]
     public void BakeFullChunk_without_vegetation_identity_skips_trees()
     {

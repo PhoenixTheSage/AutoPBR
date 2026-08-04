@@ -26,6 +26,9 @@ void main()
 }
 """;
 
+    // Embedded fragment: keep GLES/ANGLE-safe (no return in main; single FragColor write).
+    // HDR: same strength→radiance mapping as SDR (slider parity). Contrast expand only —
+    // do not undo paper-white (that made HDR ~paperScale darker than SDR at the same setting).
     private const string Frag330 = """
 #version 330 core
 in vec2 vTexCoord;
@@ -39,7 +42,28 @@ uniform vec3 uMoonFacing;
 uniform float uMoonCosDiscEdge;
 uniform float uGlowStrength;
 uniform float uTextureSharpness;
+uniform int uHdrPresent;
 out vec4 FragColor;
+
+vec3 moonHdrPreserveContrast(vec3 rgb)
+{
+    // Expand maria/highland separation so ACES + paper-white present does not flatten
+    // the disc; pivot near lunar mid-gray so mean brightness stays slider-matched to SDR.
+    vec3 pivot = vec3(0.46);
+    return max((rgb - pivot) * 1.55 + pivot, vec3(0.0));
+}
+
+vec3 moonSceneReferredRadiance(vec3 albedo, float strength, float discCut)
+{
+    vec3 rgb = albedo;
+    if (uHdrPresent > 0)
+    {
+        rgb = moonHdrPreserveContrast(rgb);
+    }
+
+    return max(rgb * max(strength, 0.35) * discCut, vec3(0.0));
+}
+
 void main()
 {
     vec2 centered = vTexCoord * 2.0 - 1.0;
@@ -54,9 +78,10 @@ void main()
     float pixelElev = asin(clamp(viewDir.y, -1.0, 1.0)) / thetaDisc;
     float discCut = smoothstep(-0.22, 0.1, pixelElev);
     float glowCut = discCut * discCut;
-
     float strength = max(uDiscStrength, 0.35);
 
+    vec3 outRgb;
+    float outAlpha;
     if (d > 1.0)
     {
         float outerCut = 1.0 - smoothstep(1.03, 1.20, d);
@@ -68,39 +93,54 @@ void main()
             discard;
         }
 
-        FragColor = vec4(haloCol, haloAlpha);
-        return;
+        outRgb = haloCol;
+        outAlpha = haloAlpha;
     }
-
-    vec4 texel = texture(uMoonAlbedo, vTexCoord);
-    vec2 texelStep = vec2(1.0 / 1024.0, 1.0 / 1024.0);
-    vec3 blur = (
-        texture(uMoonAlbedo, vTexCoord + vec2(texelStep.x, 0.0)).rgb +
-        texture(uMoonAlbedo, vTexCoord - vec2(texelStep.x, 0.0)).rgb +
-        texture(uMoonAlbedo, vTexCoord + vec2(0.0, texelStep.y)).rgb +
-        texture(uMoonAlbedo, vTexCoord - vec2(0.0, texelStep.y)).rgb) * 0.25;
-    float sharpen = clamp(uTextureSharpness, 0.0, 4.0);
-    texel.rgb = clamp((texel.rgb - vec3(0.5)) * 1.28 + vec3(0.5), 0.0, 1.0);
-    texel.rgb = clamp(texel.rgb + (texel.rgb - blur) * sharpen * 0.28, 0.0, 1.0);
-
-    float z = sqrt(max(1.0 - d * d, 0.0));
-    vec3 sphereNormal = normalize(uMoonRight * centered.x + uMoonUp * centered.y - uMoonFacing * z);
-    float fullMoonLight = clamp(dot(sphereNormal, -uMoonFacing), 0.0, 1.0);
-    float surface = 0.42 + 0.58 * pow(fullMoonLight, 0.58);
-    float grazing = pow(1.0 - max(fullMoonLight, 0.0), 2.2);
-    float limb = 1.0 - smoothstep(0.62, 1.0, d) * 0.34;
-    vec3 coolRim = vec3(0.64, 0.72, 0.95) * grazing * 0.08;
-
-    vec3 albedo = texel.rgb * surface * limb + coolRim;
-    albedo = mix(albedo, texel.rgb, 0.46);
-    albedo *= strength * discCut;
-    float alpha = texel.a * (1.0 - smoothstep(0.992, 1.0, d)) * discCut;
-    if (alpha < 0.01)
+    else
     {
-        discard;
+        vec4 texel = texture(uMoonAlbedo, vTexCoord);
+        vec2 texelStep = vec2(1.0 / 1024.0, 1.0 / 1024.0);
+        vec3 blur = (
+            texture(uMoonAlbedo, vTexCoord + vec2(texelStep.x, 0.0)).rgb +
+            texture(uMoonAlbedo, vTexCoord - vec2(texelStep.x, 0.0)).rgb +
+            texture(uMoonAlbedo, vTexCoord + vec2(0.0, texelStep.y)).rgb +
+            texture(uMoonAlbedo, vTexCoord - vec2(0.0, texelStep.y)).rgb) * 0.25;
+        float sharpen = clamp(uTextureSharpness, 0.0, 4.0);
+        // SDR keeps hard 0..1 clamps; HDR leaves headroom for contrast expand.
+        if (uHdrPresent > 0)
+        {
+            texel.rgb = (texel.rgb - vec3(0.5)) * 1.28 + vec3(0.5);
+            texel.rgb = texel.rgb + (texel.rgb - blur) * sharpen * 0.28;
+            texel.rgb = max(texel.rgb, vec3(0.0));
+        }
+        else
+        {
+            texel.rgb = clamp((texel.rgb - vec3(0.5)) * 1.28 + vec3(0.5), 0.0, 1.0);
+            texel.rgb = clamp(texel.rgb + (texel.rgb - blur) * sharpen * 0.28, 0.0, 1.0);
+        }
+
+        float z = sqrt(max(1.0 - d * d, 0.0));
+        vec3 sphereNormal = normalize(uMoonRight * centered.x + uMoonUp * centered.y - uMoonFacing * z);
+        float fullMoonLight = clamp(dot(sphereNormal, -uMoonFacing), 0.0, 1.0);
+        float surface = 0.42 + 0.58 * pow(fullMoonLight, 0.58);
+        float grazing = pow(1.0 - max(fullMoonLight, 0.0), 2.2);
+        float limb = 1.0 - smoothstep(0.62, 1.0, d) * 0.34;
+        vec3 coolRim = vec3(0.64, 0.72, 0.95) * grazing * 0.08;
+
+        vec3 albedo = texel.rgb * surface * limb + coolRim;
+        albedo = mix(albedo, texel.rgb, 0.46);
+        albedo = moonSceneReferredRadiance(albedo, strength, discCut);
+        float alpha = texel.a * (1.0 - smoothstep(0.992, 1.0, d)) * discCut;
+        if (alpha < 0.01)
+        {
+            discard;
+        }
+
+        outRgb = albedo;
+        outAlpha = alpha;
     }
 
-    FragColor = vec4(albedo, alpha);
+    FragColor = vec4(outRgb, outAlpha);
 }
 """;
 

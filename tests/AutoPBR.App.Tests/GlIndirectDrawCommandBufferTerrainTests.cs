@@ -42,16 +42,17 @@ public sealed class GlIndirectDrawCommandBufferTerrainTests
     [Fact]
     public void TerrainShadowSourceCommand_PacksPoolRangeForGpuCull()
     {
-        // Source command ABI consumed by genesis_terrain_shadow_cull.comp (one draw per chunk).
+        // Source command ABI consumed by genesis_terrain_shadow_cull.comp
+        // (one draw per material batch; baseInstance = ground material/draw-record index).
         Span<uint> dst = stackalloc uint[GlIndirectDrawCommandBuffer.CommandDwords];
         GlIndirectDrawCommandBuffer.WriteCommandDwords(
             dst,
             indexCount: 240u,
             firstIndex: 4800u,
-            baseInstance: 0u);
+            baseInstance: 2u);
         Assert.Equal(240u, dst[0]);
         Assert.Equal(1u, dst[1]);
         Assert.Equal(4800u, dst[2]);
-        Assert.Equal(0u, dst[4]);
+        Assert.Equal(2u, dst[4]);
     }
 }

@@ -84,6 +84,7 @@ public readonly struct PreviewRenderSettingsSnapshot
     public float ShadowMaxBias { get; init; }
     public float ShadowSoftnessTexels { get; init; }
     public float ShadowDistance { get; init; }
+    public float ShadowStrength { get; init; }
     public bool EnableShadowCascades { get; init; }
     public bool EnableGodRays { get; init; }
     public bool EnableVolumeGodRays { get; init; }
@@ -91,6 +92,10 @@ public readonly struct PreviewRenderSettingsSnapshot
     public int VolumetricQuality { get; init; }
     public float GodRayStrength { get; init; }
     public float GodRayConeScale { get; init; }
+    public bool EnableScreenSpaceGodRays { get; init; }
+    public float ScreenSpaceGodRayStrength { get; init; }
+    public float GodRayFroxelResolution { get; init; }
+    public float GodRayPhaseDirectivity { get; init; }
     public float GodRayScatterGain { get; init; }
     public float GodRayExtinction { get; init; }
     public float GodRayDebugDensity { get; init; }
@@ -105,6 +110,16 @@ public readonly struct PreviewRenderSettingsSnapshot
     public float CloudWindSpeed { get; init; }
     public float CloudWindHeadingDegrees { get; init; }
     public float CloudCirrusStrength { get; init; }
+    public int CloudCumulusLayerCount { get; init; }
+    public float CloudInterDeckGap { get; init; }
+    public float CloudLayerHeightVariance { get; init; }
+    public float CloudUpperThicknessScale { get; init; }
+    public float CloudUpperCoverageScale { get; init; }
+    public float CloudUpperDensityScale { get; init; }
+    public float CloudUpperWindSpeedScale { get; init; }
+    public float CloudCirrusGap { get; init; }
+    public float CloudCirrusThickness { get; init; }
+    public int CloudStyleBias { get; init; }
     public PreviewCloudDebugView CloudDebugView { get; init; }
     public bool CloudDisableTemporal { get; init; }
     public int CloudMarchStepOverride { get; init; }
@@ -115,6 +130,12 @@ public readonly struct PreviewRenderSettingsSnapshot
     public bool ShowExpandedGpuTimingHud { get; init; }
     public int OcclusionDebugMode { get; init; }
     public bool EnablePreviewTaa { get; init; }
+    public bool EnableScreenSpaceAo { get; init; }
+    public int PreviewAoMode { get; init; }
+    public float AoStrength { get; init; }
+    public float AoRadius { get; init; }
+    public float AoPower { get; init; }
+    public int AoDebugView { get; init; }
     public int PreviewTaaMode { get; init; }
     public float PreviewTaaTemporalScale { get; init; }
     public float PreviewTaaJitterScale { get; init; }
@@ -213,6 +234,7 @@ public readonly struct PreviewRenderSettingsSnapshot
         ShadowMaxBias = s.ShadowMaxBias,
         ShadowSoftnessTexels = s.ShadowSoftnessTexels,
         ShadowDistance = s.ShadowDistance,
+        ShadowStrength = s.ShadowStrength,
         EnableShadowCascades = s.EnableShadowCascades,
         EnableGodRays = s.EnableGodRays,
         EnableVolumeGodRays = s.EnableVolumeGodRays,
@@ -220,6 +242,10 @@ public readonly struct PreviewRenderSettingsSnapshot
         VolumetricQuality = s.VolumetricQuality,
         GodRayStrength = s.GodRayStrength,
         GodRayConeScale = s.GodRayConeScale,
+        EnableScreenSpaceGodRays = s.EnableScreenSpaceGodRays,
+        ScreenSpaceGodRayStrength = s.ScreenSpaceGodRayStrength,
+        GodRayFroxelResolution = s.GodRayFroxelResolution,
+        GodRayPhaseDirectivity = s.GodRayPhaseDirectivity,
         GodRayScatterGain = s.GodRayScatterGain,
         GodRayExtinction = s.GodRayExtinction,
         GodRayDebugDensity = s.GodRayDebugDensity,
@@ -234,6 +260,16 @@ public readonly struct PreviewRenderSettingsSnapshot
         CloudWindSpeed = s.CloudWindSpeed,
         CloudWindHeadingDegrees = s.CloudWindHeadingDegrees,
         CloudCirrusStrength = s.CloudCirrusStrength,
+        CloudCumulusLayerCount = s.CloudCumulusLayerCount,
+        CloudInterDeckGap = s.CloudInterDeckGap,
+        CloudLayerHeightVariance = s.CloudLayerHeightVariance,
+        CloudUpperThicknessScale = s.CloudUpperThicknessScale,
+        CloudUpperCoverageScale = s.CloudUpperCoverageScale,
+        CloudUpperDensityScale = s.CloudUpperDensityScale,
+        CloudUpperWindSpeedScale = s.CloudUpperWindSpeedScale,
+        CloudCirrusGap = s.CloudCirrusGap,
+        CloudCirrusThickness = s.CloudCirrusThickness,
+        CloudStyleBias = s.CloudStyleBias,
         CloudDebugView = s.CloudDebugView,
         CloudDisableTemporal = s.CloudDisableTemporal,
         CloudMarchStepOverride = s.CloudMarchStepOverride,
@@ -244,6 +280,12 @@ public readonly struct PreviewRenderSettingsSnapshot
         ShowExpandedGpuTimingHud = s.ShowExpandedGpuTimingHud,
         OcclusionDebugMode = Math.Clamp(s.OcclusionDebugMode, 0, 2),
         EnablePreviewTaa = s.EnablePreviewTaa,
+        EnableScreenSpaceAo = s.EnableScreenSpaceAo,
+        PreviewAoMode = Math.Clamp(s.PreviewAoMode, 0, 2),
+        AoStrength = s.AoStrength,
+        AoRadius = s.AoRadius,
+        AoPower = s.AoPower,
+        AoDebugView = Math.Clamp(s.AoDebugView, 0, 2),
         PreviewTaaMode = s.PreviewTaaMode,
         PreviewTaaTemporalScale = s.PreviewTaaTemporalScale,
         PreviewTaaJitterScale = s.PreviewTaaJitterScale,

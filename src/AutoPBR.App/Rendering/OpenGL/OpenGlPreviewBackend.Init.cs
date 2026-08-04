@@ -53,6 +53,8 @@ public sealed partial class OpenGlPreviewBackend
                           _gpuInitTier.HasAll(PreviewGpuInitTier.Clouds),
             PreviewTaaReady = (desired & PreviewGpuInitTier.PreviewTaa) == 0 ||
                               _gpuInitTier.HasAll(PreviewGpuInitTier.PreviewTaa),
+            ScreenSpaceAoReady = (desired & PreviewGpuInitTier.ScreenSpaceAo) == 0 ||
+                                 _gpuInitTier.HasAll(PreviewGpuInitTier.ScreenSpaceAo),
             IsFullyReady = fullyReady,
             Phase = phase,
             ProgressFraction = fullyReady ? 1.0 : progressFraction,
@@ -67,6 +69,7 @@ public sealed partial class OpenGlPreviewBackend
                       prev.GodRaysReady != progress.GodRaysReady ||
                       prev.CloudsReady != progress.CloudsReady ||
                       prev.PreviewTaaReady != progress.PreviewTaaReady ||
+                      prev.ScreenSpaceAoReady != progress.ScreenSpaceAoReady ||
                       prev.IsFullyReady != progress.IsFullyReady ||
                       !string.Equals(prev.Phase, progress.Phase, StringComparison.Ordinal) ||
                       Math.Abs(prev.ProgressFraction - progress.ProgressFraction) > 1e-4;
@@ -117,13 +120,22 @@ public sealed partial class OpenGlPreviewBackend
             }
         }
 
+        if ((desired & PreviewGpuInitTier.ScreenSpaceAo) != 0)
+        {
+            total++;
+            if (_gpuInitTier.HasAll(PreviewGpuInitTier.ScreenSpaceAo))
+            {
+                ready++;
+            }
+        }
+
         return total == 0 ? 1.0 : (double)ready / total;
     }
 
     private static PreviewGpuInitTier ComputeDesiredGpuTier(in PreviewRenderSettingsSnapshot settings)
     {
         var tier = PreviewGpuInitTier.Core;
-        if (settings.EnableGodRays)
+        if (settings.EnableGodRays || settings.EnableScreenSpaceGodRays)
         {
             tier |= PreviewGpuInitTier.GodRays;
         }
@@ -138,6 +150,11 @@ public sealed partial class OpenGlPreviewBackend
              settings.PreviewTaaForceFxaa))
         {
             tier |= PreviewGpuInitTier.PreviewTaa;
+        }
+
+        if (settings.EnableScreenSpaceAo)
+        {
+            tier |= PreviewGpuInitTier.ScreenSpaceAo;
         }
 
         return tier;
@@ -180,6 +197,24 @@ public sealed partial class OpenGlPreviewBackend
             RaiseGpuInitProgress(PreviewGpuInitPhases.LoadingTaa, settings);
             TryInitPreviewTaa(_gl, _useOpenGlEs);
             _gpuInitTier |= PreviewGpuInitTier.PreviewTaa;
+            RaiseGpuInitProgress(_gpuInitTier.HasAll(desired) ? PreviewGpuInitPhases.Ready : PreviewGpuInitPhases.PreviewReady, settings);
+            return;
+        }
+
+        if ((desired & PreviewGpuInitTier.ScreenSpaceAo) != 0 && !_gpuInitTier.HasAll(PreviewGpuInitTier.ScreenSpaceAo))
+        {
+            RaiseGpuInitProgress(PreviewGpuInitPhases.LoadingScreenSpaceAo, settings);
+            TryInitScreenSpaceAo(_gl, _useOpenGlEs);
+            // Only mark ready when programs linked; otherwise retry next frame.
+            if (_ssaoProgram is { IsValid: true } &&
+                _gtaoProgram is { IsValid: true } &&
+                _aoBilateralProgram is { IsValid: true } &&
+                _aoTemporalProgram is { IsValid: true } &&
+                _aoCompositeProgram is { IsValid: true } &&
+                _aoResources is not null)
+            {
+                _gpuInitTier |= PreviewGpuInitTier.ScreenSpaceAo;
+            }
         }
 
         RaiseGpuInitProgress(_gpuInitTier.HasAll(desired) ? PreviewGpuInitPhases.Ready : PreviewGpuInitPhases.PreviewReady, settings);

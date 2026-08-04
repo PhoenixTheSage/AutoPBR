@@ -38,6 +38,7 @@ uniform float uViewportAspect;
 uniform float uSunDiscRadiusUv;
 uniform float uSunElevation;
 uniform float uGroundWorldY;
+uniform int uHdrPresent;
 out vec4 FragColor;
 
 const float SKY_PI = 3.14159265358979323846;
@@ -158,8 +159,8 @@ vec3 proceduralSky(vec3 viewDir, vec3 lightPropagationDir, float sunIntensity, f
     float cosSun = dot(viewDir, towardSun);
     float sunElev = max(towardSun.y, 0.0);
     float illum = 0.8 + 0.2 * smoothstep(1.0, 12.0, max(sunIntensity, 0.0));
-    vec3 zenithBlue = vec3(0.052, 0.22, 0.74);
-    vec3 horizonBlue = vec3(0.38, 0.62, 0.98);
+    vec3 zenithBlue = vec3(0.20, 0.55, 0.85);
+    vec3 horizonBlue = vec3(0.58, 0.82, 0.97);
     float gradT = pow(1.0 - max(mu, 0.0), 2.4);
     vec3 sky = mix(zenithBlue, horizonBlue, gradT * mix(0.7, 1.0, bandScale));
     float bandExp = mix(9.0, 3.5, clamp(horizonFalloff, 0.0, 1.0));
@@ -186,7 +187,7 @@ vec3 horizonGlow(vec3 viewDir, float dayAmt, float horizonBandScale)
     float band = exp(-abs(viewDir.y) * 9.0);
     vec3 sunTint = vec3(1.0, 0.93, 0.74);
     vec3 nightGlow = vec3(0.04, 0.05, 0.08);
-    vec3 dayGlow = sunTint * 0.28 + vec3(0.28, 0.42, 0.72);
+    vec3 dayGlow = sunTint * 0.28 + vec3(0.42, 0.66, 0.86);
     return mix(nightGlow, dayGlow, dayAmt) * band * 0.42 * clamp(horizonBandScale, 0.0, 1.0);
 }
 
@@ -334,13 +335,19 @@ void main()
     }
 
     sky *= uSkyExposure * 1.4;
-    float lum = dot(sky, vec3(0.2126, 0.7152, 0.0722));
-    if (lum > 1e-5)
+    vec3 outRgb = max(sky, vec3(0.0));
+    if (uHdrPresent <= 0)
     {
-        sky *= (lum / (1.0 + lum)) / lum;
+        float lum = dot(outRgb, vec3(0.2126, 0.7152, 0.0722));
+        if (lum > 1e-5)
+        {
+            outRgb *= (lum / (1.0 + lum)) / lum;
+        }
+
+        outRgb = pow(clamp(outRgb, vec3(0.0), vec3(1.0)), vec3(1.0 / 2.2));
     }
 
-    FragColor = vec4(pow(clamp(sky, vec3(0.0), vec3(1.0)), vec3(1.0 / 2.2)), 1.0);
+    FragColor = vec4(outRgb, 1.0);
 }
 """;
 

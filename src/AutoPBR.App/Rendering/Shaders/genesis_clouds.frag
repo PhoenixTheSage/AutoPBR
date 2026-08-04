@@ -5,6 +5,7 @@
 //!include "common/atmosphere.glsl"
 //!include "common/cloud_shell.glsl"
 //!include "common/volumetric_clouds.glsl"
+//!include "common/sparse_cloud_traversal.glsl"
 //!include "common/cloud_light_cache.glsl"
 //!include "common/volumetric_segment.glsl"
 //!include "common/cloud_temporal.glsl"
@@ -39,6 +40,7 @@ uniform vec2 uCirrusWindDir;
 uniform int uQuality;
 uniform int uMarchSteps;
 uniform int uDebugView;
+// Multi-deck / cirrus / style uniforms are declared in cloud_layer_envelope.glsl.
 
 #ifdef GENESIS_CLOUD_QUALITY
 #define CLOUD_QUALITY GENESIS_CLOUD_QUALITY
@@ -105,6 +107,15 @@ const int CLOUD_DEBUG_DETAIL_A = 13;
 const int CLOUD_DEBUG_SELECTED_LOD = 14;
 const int CLOUD_DEBUG_BASE_DENSITY = 15;
 const int CLOUD_DEBUG_ASSET_PROFILE = 16;
+const int CLOUD_DEBUG_SPARSE_CLIPMAP_LEVEL = 17;
+const int CLOUD_DEBUG_SPARSE_PAGE_STATE = 18;
+const int CLOUD_DEBUG_SPARSE_PHYSICAL_BRICK = 19;
+const int CLOUD_DEBUG_SPARSE_BASE_DENSITY = 20;
+const int CLOUD_DEBUG_SPARSE_CONSERVATIVE_DISTANCE = 21;
+const int CLOUD_DEBUG_SPARSE_TRAVERSAL_STEPS = 22;
+const int CLOUD_DEBUG_SPARSE_FALLBACK = 23;
+const int CLOUD_DEBUG_SPARSE_TEMPLATE_FAMILY = 24;
+const int CLOUD_DEBUG_SPARSE_CASCADE_BLEND = 25;
 
 float cloudDayFactor(vec3 lightPropagationDir, float sunIntensity)
 {
@@ -152,12 +163,20 @@ vec3 cloudSampleSkyViewLutSrgb(sampler2D skyLut, vec3 viewDir)
     return texture(skyLut, texelUv).rgb;
 }
 
+// Pull skylight toward luminance so cloud bodies stay neutral white and shaded
+// regions read as grey rather than Rayleigh blue.
+vec3 cloudNeutralSkyAmbient(vec3 skyAmbient)
+{
+    float lum = dot(skyAmbient, vec3(0.2126, 0.7152, 0.0722));
+    return mix(skyAmbient, vec3(lum), 0.90);
+}
+
 vec3 sampleSkyAmbient(vec3 rd, sampler2D skyLut, int hasSkyLut, float dayAmt)
 {
     vec3 night = cloudNightZenith(rd) * 2.0;
     if (hasSkyLut < 1)
     {
-        return mix(night, vec3(0.42, 0.50, 0.63), dayAmt);
+        return cloudNeutralSkyAmbient(mix(night, vec3(0.52, 0.53, 0.55), dayAmt));
     }
 
     vec3 ambientDir = normalize(vec3(rd.x * 0.35, max(rd.y, 0.45), rd.z * 0.35));
@@ -165,8 +184,8 @@ vec3 sampleSkyAmbient(vec3 rd, sampler2D skyLut, int hasSkyLut, float dayAmt)
     // Flat layers can sustain much longer horizontal optical paths than the former curved
     // shell. Retain a conservative diffuse-sky floor so dense camera-inside views do not
     // collapse to unlit black after direct sunlight is fully extinguished.
-    vec3 dayFloor = vec3(0.060, 0.080, 0.120);
-    return mix(night, max(lut, dayFloor), dayAmt);
+    vec3 dayFloor = vec3(0.070, 0.072, 0.074);
+    return cloudNeutralSkyAmbient(mix(night, max(lut, dayFloor), dayAmt));
 }
 
 vec3 cloudResolveCachedLighting(
@@ -204,25 +223,52 @@ float cloudLocalConeDensity(
     float layerTopAltitude,
     float sampleFootprint)
 {
-    return vcCloudDensityEx(
+    vec4 weather = vcSampleWeather(
+        uCoverageMap,
+        uHasCoverageMap,
+        worldPosition,
+        uVolumeSize,
+        uWindOffset.xz,
+        sampleFootprint,
+        uDensityAssetVersion);
+    float baseShape = vcCloudBaseDensityFromWeather(
+        worldPosition,
+        planetCenter,
+        planetRadius,
+        layerBaseAltitude,
+        layerTopAltitude,
+        uCoverageScale,
+        uVolumeSize,
+        uCloudNoise,
+        uHasCloudNoise,
+        uWindOffset,
+        sampleFootprint,
+        weather,
+        uDensityAssetVersion);
+    if (uHasSparseCloudTraversal > 0)
+    {
+        Cq45ResolvedBase sparseBase =
+            cq45ResolveBaseDensity(worldPosition, baseShape);
+        baseShape = sparseBase.density;
+    }
+    return vcCloudDensityFromBase(
+        baseShape,
         worldPosition,
         planetCenter,
         planetRadius,
         layerBaseAltitude,
         layerTopAltitude,
         uDensity,
-        uCoverageScale,
         uVolumeSize,
-        uCloudNoise,
-        uHasCloudNoise,
         uDetailNoise,
         uHasDetailNoise,
-        uCoverageMap,
-        uHasCoverageMap,
         uWindOffset,
+        uCirrusWindDir,
         sampleFootprint,
         -0.35,
         3,
+        weather.z,
+        weather.w,
         uDensityAssetVersion);
 }
 
@@ -396,31 +442,108 @@ void main()
     vec3 planetCenter = vec3(0.0, uGroundWorldY - planetRadius, 0.0);
     float layerBaseAltitude = max(uLayerHeight - uGroundWorldY, 0.01);
     float layerTopAltitude = layerBaseAltitude + max(uVolumeHeight, 0.01);
-    // The support slab changes topology only inside a zero-density guard band. The
-    // physical density profile continues to use the unpadded base/top altitudes.
-    float layerSupportGuard = clamp(uVolumeHeight * 0.015, 0.50, 1.50);
-    float layerSupportBase = max(layerBaseAltitude - layerSupportGuard, 0.001);
-    float layerSupportTop = layerTopAltitude + layerSupportGuard;
-
-    vec2 slabSeg = vcsIntersectAltitudeSlab(
-        uCameraPos,
-        rd,
-        uGroundWorldY,
-        layerSupportBase,
-        layerSupportTop,
-        CLOUD_MAX_TRACE_DISTANCE);
-    // Opaque scene depth remains hard. A distance fade affects only slabs whose entry
-    // approaches the finite continuous-world trace boundary.
+    VcCloudAltitudeStack altitudeStack = vcBuildCloudAltitudeStack(
+        layerBaseAltitude,
+        uVolumeHeight,
+        uCumulusLayerCount,
+        uInterDeckGap,
+        uHeightVariance,
+        uUpperThicknessScale,
+        uCirrusGap,
+        uCirrusThickness,
+        uCirrusStrength);
+    // Opaque scene depth remains hard. March each cumulus deck as its own altitude
+    // slab so large inter-deck gaps do not inflate the step lattice.
     float sceneT = cloudSceneDistance(rd);
-    float tEnter = slabSeg.x;
-    float tExit = min(slabSeg.y, sceneT);
-    float slabDistanceVisibility = vcsDistanceVisibility(
-        tEnter, CLOUD_MAX_TRACE_DISTANCE, CLOUD_DISTANCE_FADE_FRACTION);
-    bool slabHit = tExit > tEnter && slabDistanceVisibility > 1e-3;
+    vec2 deckSegs[CLOUD_LAYER_ENVELOPE_MAX_DECKS];
+    float deckThicknesses[CLOUD_LAYER_ENVELOPE_MAX_DECKS];
+    float deckDistanceVisibility[CLOUD_LAYER_ENVELOPE_MAX_DECKS];
+    int deckIds[CLOUD_LAYER_ENVELOPE_MAX_DECKS];
+    int deckHitCount = 0;
+    float tEnter = 0.0;
+    float tExit = 0.0;
+    float slabDistanceVisibility = 0.0;
+    for (int deckIndex = 0; deckIndex < CLOUD_LAYER_ENVELOPE_MAX_DECKS; ++deckIndex)
+    {
+        float supportBase;
+        float supportTop;
+        float deckThickness;
+        if (!vcTryGetCumulusDeckSupportBand(
+                deckIndex,
+                layerBaseAltitude,
+                uVolumeHeight,
+                supportBase,
+                supportTop,
+                deckThickness))
+        {
+            continue;
+        }
 
-    float cirrusAltitude = layerTopAltitude + max(uVolumeHeight * 1.5, 18.0);
-    float cirrusThickness = max(uVolumeHeight * 0.035, 0.75);
-    float cirrusSupportGuard = clamp(cirrusThickness * 0.20, 0.25, 0.75);
+        vec2 deckSeg = vcsIntersectAltitudeSlab(
+            uCameraPos,
+            rd,
+            uGroundWorldY,
+            supportBase,
+            supportTop,
+            CLOUD_MAX_TRACE_DISTANCE);
+        deckSeg.y = min(deckSeg.y, sceneT);
+        float deckVis = vcsDistanceVisibility(
+            deckSeg.x, CLOUD_MAX_TRACE_DISTANCE, CLOUD_DISTANCE_FADE_FRACTION);
+        if (deckSeg.y > deckSeg.x && deckVis > 1e-3)
+        {
+            deckSegs[deckHitCount] = deckSeg;
+            deckThicknesses[deckHitCount] = deckThickness;
+            deckDistanceVisibility[deckHitCount] = deckVis;
+            deckIds[deckHitCount] = deckIndex;
+            if (deckHitCount == 0 || deckSeg.x < tEnter)
+            {
+                tEnter = deckSeg.x;
+                slabDistanceVisibility = deckVis;
+            }
+            if (deckHitCount == 0 || deckSeg.y > tExit)
+            {
+                tExit = deckSeg.y;
+            }
+            deckHitCount++;
+        }
+    }
+
+    // Front-to-back order so transmittance accumulates correctly for any camera height.
+    for (int i = 0; i < CLOUD_LAYER_ENVELOPE_MAX_DECKS; ++i)
+    {
+        if (i >= deckHitCount)
+        {
+            break;
+        }
+        for (int j = i + 1; j < CLOUD_LAYER_ENVELOPE_MAX_DECKS; ++j)
+        {
+            if (j >= deckHitCount)
+            {
+                break;
+            }
+            if (deckSegs[j].x < deckSegs[i].x)
+            {
+                vec2 swapSeg = deckSegs[i];
+                deckSegs[i] = deckSegs[j];
+                deckSegs[j] = swapSeg;
+                float swapThickness = deckThicknesses[i];
+                deckThicknesses[i] = deckThicknesses[j];
+                deckThicknesses[j] = swapThickness;
+                float swapVis = deckDistanceVisibility[i];
+                deckDistanceVisibility[i] = deckDistanceVisibility[j];
+                deckDistanceVisibility[j] = swapVis;
+                int swapId = deckIds[i];
+                deckIds[i] = deckIds[j];
+                deckIds[j] = swapId;
+            }
+        }
+    }
+
+    bool slabHit = deckHitCount > 0;
+
+    float cirrusAltitude = altitudeStack.cirrusBase;
+    float cirrusThickness = max(altitudeStack.cirrusThickness, 0.0);
+    float cirrusSupportGuard = clamp(max(cirrusThickness, 0.1) * 0.20, 0.25, 0.75);
     vec2 cirrusSeg = vcsIntersectAltitudeSlab(
         uCameraPos,
         rd,
@@ -431,7 +554,10 @@ void main()
     cirrusSeg.y = min(cirrusSeg.y, sceneT);
     float cirrusDistanceVisibility = vcsDistanceVisibility(
         cirrusSeg.x, CLOUD_MAX_TRACE_DISTANCE, CLOUD_DISTANCE_FADE_FRACTION);
-    bool cirrusHit = cirrusSeg.y > cirrusSeg.x && cirrusDistanceVisibility > 1e-3;
+    bool cirrusHit =
+        cirrusThickness > 1e-4 &&
+        cirrusSeg.y > cirrusSeg.x &&
+        cirrusDistanceVisibility > 1e-3;
 
     if (!slabHit && (!cirrusHit || uCirrusStrength <= 0.0))
     {
@@ -626,6 +752,7 @@ void main()
                 uCoverageMap,
                 uHasCoverageMap,
                 uWindOffset,
+                uCirrusWindDir,
                 0.0,
                 0.0,
                 CLOUD_QUALITY,
@@ -636,6 +763,123 @@ void main()
             scalarView = false;
             cloudCol = cloudDebugAssetProfileColor(
                 uDensityAssetProfileCode);
+        }
+        else if (uDebugView >= CLOUD_DEBUG_SPARSE_CLIPMAP_LEVEL &&
+            uDebugView <= CLOUD_DEBUG_SPARSE_CASCADE_BLEND)
+        {
+            scalarView = false;
+            if (uHasSparseCloudTraversal < 1)
+            {
+                cloudCol = vec3(0.15, 0.15, 0.18);
+            }
+            else
+            {
+                Cq45ResolvedBase sparseBase =
+                    cq45ResolveBaseDensity(pos, 0.0);
+                Cq45LevelSample level0 = cq45SampleLevel(0, pos);
+                Cq45LevelSample level1 = cq45SampleLevel(1, pos);
+                Cq45LevelSample level2 = cq45SampleLevel(2, pos);
+                Cq45LevelSample finest =
+                    level0.resident > 0.5
+                        ? level0
+                        : (level1.resident > 0.5
+                            ? level1
+                            : level2);
+                if (uDebugView == CLOUD_DEBUG_SPARSE_CLIPMAP_LEVEL)
+                {
+                    float level = max(sparseBase.selectedLevel, 0.0);
+                    cloudCol = level < 0.5
+                        ? vec3(0.15, 0.85, 0.35)
+                        : (level < 1.5
+                            ? vec3(0.95, 0.75, 0.15)
+                            : vec3(0.95, 0.35, 0.15));
+                    if (sparseBase.shellWeight > 0.5)
+                    {
+                        cloudCol = mix(cloudCol, vec3(0.35, 0.55, 0.95), 0.65);
+                    }
+                }
+                else if (uDebugView == CLOUD_DEBUG_SPARSE_PAGE_STATE)
+                {
+                    uint page = finest.pageValue;
+                    if (finest.resident > 0.5)
+                    {
+                        cloudCol = vec3(0.20, 0.85, 0.35);
+                    }
+                    else if (page == CQ45_REQUESTED_PAGE)
+                    {
+                        cloudCol = vec3(0.95, 0.75, 0.15);
+                    }
+                    else
+                    {
+                        cloudCol = vec3(0.25, 0.30, 0.40);
+                    }
+                }
+                else if (uDebugView == CLOUD_DEBUG_SPARSE_PHYSICAL_BRICK)
+                {
+                    float util = finest.resident > 0.5
+                        ? float((finest.pageValue - 1u) % 64u) / 63.0
+                        : 0.0;
+                    cloudCol = finest.resident > 0.5
+                        ? vec3(util, 1.0 - util, 0.35 + 0.45 * util)
+                        : vec3(0.12, 0.12, 0.14);
+                }
+                else if (uDebugView == CLOUD_DEBUG_SPARSE_BASE_DENSITY)
+                {
+                    scalarView = true;
+                    debugValue = sparseBase.density;
+                }
+                else if (uDebugView == CLOUD_DEBUG_SPARSE_CONSERVATIVE_DISTANCE)
+                {
+                    scalarView = true;
+                    float voxel = max(finest.voxelWorldSize, 0.001);
+                    debugValue = saturate1(
+                        finest.distanceWorld / (voxel * 32.0));
+                }
+                else if (uDebugView == CLOUD_DEBUG_SPARSE_TRAVERSAL_STEPS)
+                {
+                    Cq45TraversalResult steps =
+                        cq45TraverseToCandidate(
+                            uCameraPos,
+                            rd,
+                            tEnter,
+                            tExit,
+                            max(uVolumeSize, 8.0) * 0.02);
+                    float pageN = saturate1(float(steps.pageSteps) / 16.0);
+                    float distN = saturate1(float(steps.distanceSteps) / 32.0);
+                    float fineN = saturate1(float(steps.fineSteps) / 16.0);
+                    cloudCol = vec3(pageN, distN, fineN);
+                }
+                else if (uDebugView == CLOUD_DEBUG_SPARSE_FALLBACK)
+                {
+                    float fallback =
+                        saturate1(
+                            sparseBase.shellWeight +
+                            (1.0 - sparseBase.resident));
+                    cloudCol = mix(
+                        vec3(0.20, 0.85, 0.35),
+                        vec3(0.95, 0.35, 0.85),
+                        fallback);
+                }
+                else if (uDebugView == CLOUD_DEBUG_SPARSE_TEMPLATE_FAMILY)
+                {
+                    // Weather G approximates the CQ4.1 family selector used by brick generation.
+                    float family = saturate1(weather.g);
+                    cloudCol = family < 0.25
+                        ? vec3(0.55, 0.85, 0.35)
+                        : (family < 0.50
+                            ? vec3(0.35, 0.75, 0.95)
+                            : (family < 0.75
+                                ? vec3(0.95, 0.55, 0.25)
+                                : vec3(0.75, 0.75, 0.80)));
+                }
+                else
+                {
+                    cloudCol = vec3(
+                        saturate1((sparseBase.selectedLevel + 1.0) / 3.0),
+                        saturate1(1.0 - sparseBase.shellWeight),
+                        saturate1(sparseBase.shellWeight));
+                }
+            }
         }
 
         if (scalarView)
@@ -670,264 +914,350 @@ void main()
 
         if (slabHit)
         {
-            // A few weather-map taps reject wholly clear rays before any 3D texture access.
-            // Near taps keep local banks visible across eye-height; full-interval taps keep
-            // distant inside-layer formations from being early-out'd by the march-span cap.
-            float covMax = 0.0;
-            float interval = max(tExit - tEnter, 0.0);
-            float nearSpan = min(
-                interval,
-                vcsMarchSpanLimit(uVolumeSize, uVolumeHeight));
-            for (int i = 0; i < 4; ++i)
+            int totalSteps = uMarchSteps > 0
+                ? clamp(uMarchSteps, 1, CLOUD_MAX_STEPS)
+                : (CLOUD_QUALITY <= 0
+                    ? 16
+                    : (CLOUD_QUALITY >= 3
+                        ? 48
+                        : (CLOUD_QUALITY >= 2 ? 32 : 24)));
+            int remainingDeckPasses = deckHitCount;
+            for (int deckPass = 0; deckPass < CLOUD_LAYER_ENVELOPE_MAX_DECKS; ++deckPass)
             {
-                float tCov = i < 2
-                    ? tEnter + nearSpan * ((float(i) + 0.5) / 2.0)
-                    : mix(tEnter, tExit, (float(i - 2) + 0.5) / 2.0);
-                vec3 covPos = uCameraPos + rd * tCov;
-                float coverageFootprint = max(
-                    (i < 2 ? nearSpan : interval) / 2.0,
-                    tCov * uPixelAngularSize);
-                covMax = max(covMax,
-                    vcSampleWeather(
-                        uCoverageMap,
-                        uHasCoverageMap,
-                        covPos,
-                        uVolumeSize,
-                        uWindOffset.xz,
-                        coverageFootprint,
-                        uDensityAssetVersion).x);
-            }
-
-            bool hasCumulus = covMax * uCoverageScale > 1e-3;
-            if (hasCumulus)
-            {
-                int steps = uMarchSteps > 0
-                    ? clamp(uMarchSteps, 1, CLOUD_MAX_STEPS)
-                    : (CLOUD_QUALITY <= 0
-                        ? 16
-                        : (CLOUD_QUALITY >= 3
-                            ? 48
-                            : (CLOUD_QUALITY >= 2 ? 32 : 24)));
-                // Short and long intervals share one camera-region-independent policy. Long
-                // grazing rays keep a bounded near step, then grow across their actual interval
-                // so crossing into the slab cannot select a different integrator.
-                float marchInterval = max(tExit - tEnter, 0.0);
-                float marchSpanLimit =
-                    vcsMarchSpanLimit(uVolumeSize, uVolumeHeight);
-                float baseStep = vcsMarchStepLength(
-                    tEnter,
-                    tExit,
-                    steps,
-                    uVolumeSize,
-                    uVolumeHeight);
-                float maxStep = max(
-                    marchInterval / float(steps),
-                    baseStep);
-                bool longSlabMarch = marchInterval > marchSpanLimit + 1e-3;
-                int lightSteps = CLOUD_QUALITY >= 2 ? 4 : (CLOUD_QUALITY <= 0 ? 2 : 3);
-                float detailLodBias = CLOUD_QUALITY >= 3 ? -0.35 : 0.0;
-                float jitter01 = cacheDepthJitter;
-                // Anchor the first cell to ray distance instead of shell entry. A grazing
-                // entry can move tens of units while the camera crosses only centimeters.
-                float phaseDistance = jitter01 * baseStep;
-                float t = tEnter + mod(phaseDistance - tEnter, baseStep);
-                int densitySteps = 0;
-
-                for (int i = 0; i < CLOUD_MAX_STEPS; ++i)
+                if (deckPass >= deckHitCount || transmittance < 0.03)
                 {
-                    if (densitySteps >= steps || t >= tExit)
-                    {
-                        break;
-                    }
+                    break;
+                }
 
-                    float localMarchDistance = max(t - tEnter, 0.0);
-                    float stepLen = longSlabMarch
-                        ? mix(
-                            baseStep,
-                            maxStep,
-                            saturate1(localMarchDistance / max(marchInterval, 0.01)))
-                        : baseStep;
-                    float emptyLen = max(
-                        stepLen * (CLOUD_QUALITY <= 0 ? 4.0 : 3.0),
-                        CLOUD_MAX_TRACE_DISTANCE / float(CLOUD_MAX_STEPS));
-                    float sampleT = min(t + stepLen * 0.5, tExit);
-                    vec3 worldPos = uCameraPos + rd * sampleT;
-                    float pixelFootprint = sampleT * uPixelAngularSize;
-                    float sampleFootprint = max(stepLen, pixelFootprint);
-                    float conservativeFootprint = max(emptyLen, pixelFootprint);
-                    float conservative = vcCloudConservativeDensity(worldPos, planetCenter, planetRadius,
-                        layerBaseAltitude, layerTopAltitude, uCoverageScale, uVolumeSize,
-                        uCoverageMap, uHasCoverageMap, uWindOffset, conservativeFootprint,
-                        uDensityAssetVersion);
-                    if (conservative <= 1e-4)
-                    {
-                        t += emptyLen;
-                        continue;
-                    }
+                tEnter = deckSegs[deckPass].x;
+                tExit = deckSegs[deckPass].y;
+                slabDistanceVisibility = deckDistanceVisibility[deckPass];
+                float activeDeckHeight = max(deckThicknesses[deckPass], 0.01);
+                bool allowSparseDeck = deckIds[deckPass] == 0 && uHasSparseCloudTraversal > 0;
+                int steps = clamp(
+                    max(totalSteps / max(remainingDeckPasses, 1), CLOUD_QUALITY <= 0 ? 12 : 16),
+                    1,
+                    CLOUD_MAX_STEPS);
+                remainingDeckPasses = max(remainingDeckPasses - 1, 0);
+                float deckTransmittanceStart = transmittance;
+                vec3 deckAccumStart = accum;
 
-                    vec4 weather = vcSampleWeather(
-                        uCoverageMap,
-                        uHasCoverageMap,
-                        worldPos,
-                        uVolumeSize,
-                        uWindOffset.xz,
-                        sampleFootprint,
-                        uDensityAssetVersion);
-                    float baseShape = vcCloudBaseDensityFromWeather(
-                        worldPos,
-                        planetCenter,
-                        planetRadius,
-                        layerBaseAltitude,
-                        layerTopAltitude,
-                        uCoverageScale,
-                        uVolumeSize,
-                        uCloudNoise,
-                        uHasCloudNoise,
-                        uWindOffset,
-                        sampleFootprint,
-                        weather,
-                        uDensityAssetVersion);
-                    if (baseShape <= 1e-5)
-                    {
-                        t += stepLen;
-                        continue;
-                    }
 
-                    float density = vcCloudDensityFromBase(baseShape, worldPos, planetCenter, planetRadius,
-                        layerBaseAltitude, layerTopAltitude, uDensity, uVolumeSize,
-                        uDetailNoise, uHasDetailNoise, uWindOffset,
-                        sampleFootprint, detailLodBias, CLOUD_QUALITY,
-                        weather.z, weather.w, uDensityAssetVersion);
-                    if (density > 1e-5)
-                    {
-                        densitySteps += 1;
-                        float segmentLength = min(stepLen, tExit - t);
-                        vec3 cloudLightWeights;
-                        vec3 cachedLighting = CLOUD_QUALITY >= 2
-                            ? cloudResolveCachedLighting(
-                                worldPos,
-                                cloudLightWeights)
-                            : vec3(0.0, 1.0, 0.0);
-                        bool useCachedLighting = cachedLighting.z > 0.5;
-                        float lightOd = useCachedLighting
-                            ? cachedLighting.x
-                            : vcLightOpticalDepthFromBase(baseShape,
-                                worldPos,
-                                sunToward,
-                                planetCenter,
-                                planetRadius,
-                                layerBaseAltitude,
-                                layerTopAltitude,
-                                uDensity,
-                                uCoverageScale,
-                                uVolumeSize,
-                                lightSteps,
-                                uCloudNoise,
-                                uHasCloudNoise,
-                                uCoverageMap,
-                                uHasCoverageMap,
-                                uWindOffset,
-                                sampleFootprint,
-                                uDensityAssetVersion);
-                        float localConeOpticalDepth = 0.0;
-                        float boundaryWeight =
-                            1.0 - smoothstep(0.18, 0.62, baseShape);
-                        if (useCachedLighting &&
-                            CLOUD_QUALITY >= 3 &&
-                            boundaryWeight > 1e-3)
+                        // A few weather-map taps reject wholly clear rays before any 3D texture access.
+                        // Near taps keep local banks visible across eye-height; full-interval taps keep
+                        // distant inside-layer formations from being early-out'd by the march-span cap.
+                        float covMax = 0.0;
+                        float interval = max(tExit - tEnter, 0.0);
+                        float nearSpan = min(
+                            interval,
+                            vcsMarchSpanLimit(uVolumeSize, activeDeckHeight));
+                        for (int i = 0; i < 4; ++i)
                         {
-                            localConeOpticalDepth =
-                                cloudCinematicLocalConeOpticalDepth(
+                            float tCov = i < 2
+                                ? tEnter + nearSpan * ((float(i) + 0.5) / 2.0)
+                                : mix(tEnter, tExit, (float(i - 2) + 0.5) / 2.0);
+                            vec3 covPos = uCameraPos + rd * tCov;
+                            float coverageFootprint = max(
+                                (i < 2 ? nearSpan : interval) / 2.0,
+                                tCov * uPixelAngularSize);
+                            covMax = max(covMax,
+                                vcSampleWeather(
+                                    uCoverageMap,
+                                    uHasCoverageMap,
+                                    covPos,
+                                    uVolumeSize,
+                                    uWindOffset.xz,
+                                    coverageFootprint,
+                                    uDensityAssetVersion).x);
+                        }
+
+                        bool hasCumulus = covMax * uCoverageScale > 1e-3;
+                        if (hasCumulus)
+                        {
+                            // steps already split across hit decks in the outer pass.
+                            // Short and long intervals share one camera-region-independent policy. Long
+                            // grazing rays keep a bounded near step, then grow across their actual interval
+                            // so crossing into the slab cannot select a different integrator.
+                            float marchInterval = max(tExit - tEnter, 0.0);
+                            float marchSpanLimit =
+                                vcsMarchSpanLimit(uVolumeSize, activeDeckHeight);
+                            // Near-horizontal rays spend many samples at nearly constant
+                            // altitude; tighten the near lattice so depth banding does not
+                            // read as horizontal slices on cloud faces.
+                            float grazingTighten = mix(
+                                0.48,
+                                1.0,
+                                smoothstep(0.025, 0.20, abs(rd.y)));
+                            float sizedSpan = min(marchInterval, marchSpanLimit) * grazingTighten;
+                            float baseStep = max(sizedSpan / float(max(steps, 1)), 0.01);
+                            // Cover the full interval with an arithmetic ramp. Cap growth so
+                            // far samples stay dense enough to avoid slice banding, and bump
+                            // the local step count when the cap would otherwise undersample.
+                            float maxFarStep = max(baseStep * 2.75, activeDeckHeight * 0.28);
+                            float farStepIdeal = max(
+                                baseStep,
+                                marchInterval * 2.0 / float(max(steps, 1)) - baseStep);
+                            bool longSlabMarch = marchInterval > marchSpanLimit + 1e-3;
+                            float farStep = farStepIdeal;
+                            if (longSlabMarch && farStepIdeal > maxFarStep + 1e-4)
+                            {
+                                float avgNeeded = 0.5 * (baseStep + maxFarStep);
+                                steps = clamp(
+                                    int(ceil(marchInterval / max(avgNeeded, 0.01))),
+                                    steps,
+                                    CLOUD_MAX_STEPS);
+                                farStep = min(
+                                    maxFarStep,
+                                    max(
+                                        baseStep,
+                                        marchInterval * 2.0 / float(max(steps, 1)) - baseStep));
+                            }
+                            int lightSteps = CLOUD_QUALITY >= 2 ? 4 : (CLOUD_QUALITY <= 0 ? 2 : 3);
+                            float detailLodBias = CLOUD_QUALITY >= 3 ? -0.35 : 0.0;
+                            float jitter01 = cacheDepthJitter;
+                            // Anchor the first cell to ray distance instead of shell entry. A grazing
+                            // entry can move tens of units while the camera crosses only centimeters.
+                            float phaseDistance = jitter01 * baseStep;
+                            float t = tEnter + mod(phaseDistance - tEnter, baseStep);
+
+                            for (int i = 0; i < CLOUD_MAX_STEPS; ++i)
+                            {
+                                if (i >= steps || t >= tExit)
+                                {
+                                    break;
+                                }
+
+                                float stepLen = longSlabMarch
+                                    ? mix(
+                                        baseStep,
+                                        farStep,
+                                        float(i) / float(max(steps - 1, 1)))
+                                    : baseStep;
+                                if (allowSparseDeck)
+                                {
+                                    Cq45TraversalResult sparseTraversal =
+                                        cq45TraverseToCandidate(
+                                            uCameraPos,
+                                            rd,
+                                            t,
+                                            tExit,
+                                            stepLen);
+                                    if (sparseTraversal.found < 0.5)
+                                    {
+                                        break;
+                                    }
+
+                                    // CQ4.6 enables this only after CQ1 history and both CQ3 lighting
+                                    // cascades commit the same published sparse-density identity.
+                                    t = max(t, sparseTraversal.t);
+                                }
+
+                                float emptyLen = max(
+                                    stepLen * (CLOUD_QUALITY <= 0 ? 4.0 : 3.0),
+                                    CLOUD_MAX_TRACE_DISTANCE / float(CLOUD_MAX_STEPS));
+                                float sampleT = min(t + stepLen * 0.5, tExit);
+                                vec3 worldPos = uCameraPos + rd * sampleT;
+                                float pixelFootprint = sampleT * uPixelAngularSize;
+                                float sampleFootprint = max(stepLen, pixelFootprint);
+                                float conservativeFootprint = max(emptyLen, pixelFootprint);
+                                float conservative = vcCloudConservativeDensity(worldPos, planetCenter, planetRadius,
+                                    layerBaseAltitude, layerTopAltitude, uCoverageScale, uVolumeSize,
+                                    uCoverageMap, uHasCoverageMap, uWindOffset, conservativeFootprint,
+                                    uDensityAssetVersion);
+                                if (allowSparseDeck)
+                                {
+                                    // Sparse page/SDF traversal has already performed the conservative
+                                    // rejection. Do not let the procedural weather upper bound erase a
+                                    // valid resident envelope before cascade blending.
+                                    conservative = 1.0;
+                                }
+                                if (conservative <= 1e-4)
+                                {
+                                    t += emptyLen;
+                                    continue;
+                                }
+
+                                vec4 weather = vcSampleWeather(
+                                    uCoverageMap,
+                                    uHasCoverageMap,
                                     worldPos,
-                                    sunToward,
+                                    uVolumeSize,
+                                    uWindOffset.xz,
+                                    sampleFootprint,
+                                    uDensityAssetVersion);
+                                float baseShape = vcCloudBaseDensityFromWeather(
+                                    worldPos,
                                     planetCenter,
                                     planetRadius,
                                     layerBaseAltitude,
                                     layerTopAltitude,
-                                    sampleFootprint) *
-                                boundaryWeight *
-                                uCloudLocalConeOpticalDepthScale;
-                        }
-                        float altitude = vcsAltitude(worldPos, uGroundWorldY);
-                        float hSample = saturate1(
-                            (altitude - layerBaseAltitude) /
-                            max(uVolumeHeight, 0.001));
-                        float skyVisibility = useCachedLighting
-                            ? cachedLighting.y
-                            : exp(-lightOd * 0.32);
-                        vec3 radiance = useCachedLighting
-                            ? vcSunScatterCq34(
-                                sunColor,
-                                cq34PhaseTerms,
-                                lightOd,
-                                skyVisibility,
-                                localConeOpticalDepth,
-                                uCloudScatterOctave1,
-                                uCloudScatterOctave2,
-                                uCloudScatterEnergyClamp)
-                            : vcSunScatter(
-                                sunColor,
-                                cosTheta,
-                                lightOd);
-                        float ambientVisibility = useCachedLighting
-                            ? mix(
-                                uCloudCachedSkyVisibilityFloor,
-                                1.0,
-                                skyVisibility)
-                            : mix(
-                                0.38,
-                                1.0,
-                                skyVisibility);
-                        // The shared condensation level stays comparatively shaded while
-                        // the cauliflower tops receive progressively more skylight.
-                        radiance +=
-                            skyAmbient *
-                            mix(0.22, 0.82, hSample) *
-                            0.62 *
-                            ambientVisibility;
-                        if (useCachedLighting)
-                        {
-                            vec3 localUp = vec3(0.0, 1.0, 0.0);
-                            float upwardHemisphereWeight = smoothstep(
-                                -0.15,
-                                0.65,
-                                dot(rd, localUp));
-                            float lowerAltitudeProfile =
-                                1.0 - smoothstep(0.28, 0.67, hSample);
-                            radiance +=
-                                uCloudGroundBounceColor *
-                                uCloudGroundBounceStrength *
-                                upwardHemisphereWeight *
-                                lowerAltitudeProfile *
-                                skyVisibility;
-                        }
-                        float inscatterW = vmSegmentInscatterWeight(density, segmentLength, 1.1);
-                        accum += transmittance * radiance * inscatterW;
-                        transmittance *= vmSegmentTransmittance(density, segmentLength, 1.1);
-                        if (!representativeFound || sampleT < representativeT)
-                        {
-                            representativeT = sampleT;
-                            representativeKind = 0.5;
-                            representativeFound = true;
-                        }
-                        if (transmittance < 0.03)
-                        {
-                            break;
-                        }
-                    }
+                                    uCoverageScale,
+                                    uVolumeSize,
+                                    uCloudNoise,
+                                    uHasCloudNoise,
+                                    uWindOffset,
+                                    sampleFootprint,
+                                    weather,
+                                    uDensityAssetVersion);
+                                if (allowSparseDeck)
+                                {
+                                    Cq45ResolvedBase sparseBase =
+                                        cq45ResolveBaseDensity(worldPos, baseShape);
+                                    baseShape = sparseBase.density;
+                                }
+                                if (baseShape <= 1e-5)
+                                {
+                                    t += stepLen;
+                                    continue;
+                                }
 
-                    t += stepLen;
-                }
-            }
+                                float density = vcCloudDensityFromBase(baseShape, worldPos, planetCenter, planetRadius,
+                                    layerBaseAltitude, layerTopAltitude, uDensity, uVolumeSize,
+                                    uDetailNoise, uHasDetailNoise, uWindOffset, uCirrusWindDir,
+                                    sampleFootprint, detailLodBias, CLOUD_QUALITY,
+                                    weather.z, weather.w, uDensityAssetVersion);
+                                if (density > 1e-5)
+                                {
+                                    float segmentLength = min(stepLen, tExit - t);
+                                    vec3 cloudLightWeights;
+                                    vec3 cachedLighting = CLOUD_QUALITY >= 2
+                                        ? cloudResolveCachedLighting(
+                                            worldPos,
+                                            cloudLightWeights)
+                                        : vec3(0.0, 1.0, 0.0);
+                                    bool useCachedLighting = cachedLighting.z > 0.5;
+                                    float lightOd = useCachedLighting
+                                        ? cachedLighting.x
+                                        : vcLightOpticalDepthFromBase(baseShape,
+                                            worldPos,
+                                            sunToward,
+                                            planetCenter,
+                                            planetRadius,
+                                            layerBaseAltitude,
+                                            layerTopAltitude,
+                                            uDensity,
+                                            uCoverageScale,
+                                            uVolumeSize,
+                                            lightSteps,
+                                            uCloudNoise,
+                                            uHasCloudNoise,
+                                            uCoverageMap,
+                                            uHasCoverageMap,
+                                            uWindOffset,
+                                            sampleFootprint,
+                                            uDensityAssetVersion);
+                                    float localConeOpticalDepth = 0.0;
+                                    // Sparse CQ4 envelopes are harder isosurfaces than the procedural
+                                    // shell. The original 0.18..0.62 cone gate stayed open across a thick
+                                    // shell and, with Cinematic local taps, inked every lobe like cell
+                                    // shading. Keep a thinner rim while sparse density is active.
+                                    float boundaryWeight = allowSparseDeck
+                                        ? (1.0 - smoothstep(0.05, 0.26, baseShape))
+                                        : (1.0 - smoothstep(0.18, 0.62, baseShape));
+                                    if (useCachedLighting &&
+                                        CLOUD_QUALITY >= 3 &&
+                                        boundaryWeight > 1e-3)
+                                    {
+                                        float coneScale = uCloudLocalConeOpticalDepthScale;
+                                        if (allowSparseDeck)
+                                        {
+                                            coneScale *= 0.42;
+                                        }
+                                        localConeOpticalDepth =
+                                            cloudCinematicLocalConeOpticalDepth(
+                                                worldPos,
+                                                sunToward,
+                                                planetCenter,
+                                                planetRadius,
+                                                layerBaseAltitude,
+                                                layerTopAltitude,
+                                                sampleFootprint) *
+                                            boundaryWeight *
+                                            coneScale;
+                                    }
+                                    float altitude = vcsAltitude(worldPos, uGroundWorldY);
+                                    float hSample = saturate1(
+                                        (altitude - layerBaseAltitude) /
+                                        max(uVolumeHeight, 0.001));
+                                    float skyVisibility = useCachedLighting
+                                        ? cachedLighting.y
+                                        : exp(-lightOd * 0.32);
+                                    vec3 radiance = useCachedLighting
+                                        ? vcSunScatterCq34(
+                                            sunColor,
+                                            cq34PhaseTerms,
+                                            lightOd,
+                                            skyVisibility,
+                                            localConeOpticalDepth,
+                                            uCloudScatterOctave1,
+                                            uCloudScatterOctave2,
+                                            uCloudScatterEnergyClamp)
+                                        : vcSunScatter(
+                                            sunColor,
+                                            cosTheta,
+                                            lightOd);
+                                    float ambientVisibility = useCachedLighting
+                                        ? mix(
+                                            uCloudCachedSkyVisibilityFloor,
+                                            1.0,
+                                            skyVisibility)
+                                        : mix(
+                                            0.20,
+                                            1.0,
+                                            skyVisibility);
+                                    // Condensation bases stay darker grey; tops pick up more neutral skylight.
+                                    radiance +=
+                                        skyAmbient *
+                                        mix(0.10, 0.78, hSample) *
+                                        0.52 *
+                                        ambientVisibility;
+                                    if (useCachedLighting)
+                                    {
+                                        vec3 localUp = vec3(0.0, 1.0, 0.0);
+                                        float upwardHemisphereWeight = smoothstep(
+                                            -0.15,
+                                            0.65,
+                                            dot(rd, localUp));
+                                        float lowerAltitudeProfile =
+                                            1.0 - smoothstep(0.28, 0.67, hSample);
+                                        radiance +=
+                                            uCloudGroundBounceColor *
+                                            uCloudGroundBounceStrength *
+                                            upwardHemisphereWeight *
+                                            lowerAltitudeProfile *
+                                            skyVisibility;
+                                    }
+                                    float inscatterW = vmSegmentInscatterWeight(density, segmentLength, 1.1);
+                                    accum += transmittance * radiance * inscatterW;
+                                    transmittance *= vmSegmentTransmittance(density, segmentLength, 1.1);
+                                    if (!representativeFound || sampleT < representativeT)
+                                    {
+                                        representativeT = sampleT;
+                                        representativeKind = 0.5;
+                                        representativeFound = true;
+                                    }
+                                    if (transmittance < 0.03)
+                                    {
+                                        break;
+                                    }
+                                }
 
-            // Fade the integrated premultiplied layer, not its input density. Scaling density
-            // before Beer-Lambert integration leaves thick clouds opaque through most of the
-            // transition and then collapses them into a visible horizontal cutoff.
-            if (slabDistanceVisibility < 1.0)
-            {
-                float cumulusAlpha = saturate1(1.0 - transmittance);
-                accum *= slabDistanceVisibility;
-                transmittance = 1.0 - cumulusAlpha * slabDistanceVisibility;
+                                t += stepLen;
+                            }
+                        }
+
+                        // Fade only this deck's contribution when near the distance cutoff.
+                        if (slabDistanceVisibility < 1.0 &&
+                            deckTransmittanceStart > transmittance + 1e-5)
+                        {
+                            vec3 deckDelta = accum - deckAccumStart;
+                            accum = deckAccumStart + deckDelta * slabDistanceVisibility;
+                            float deckFactor =
+                                transmittance / max(deckTransmittanceStart, 1e-4);
+                            float fadedFactor = mix(1.0, deckFactor, slabDistanceVisibility);
+                            transmittance = deckTransmittanceStart * fadedFactor;
+                        }
+
             }
         }
 
@@ -1033,7 +1363,7 @@ void main()
                         cirrusSkyVisibility)
                     : 1.0;
                 vec3 cirrusRad = cirrusSun * 0.42 +
-                    skyAmbient * 0.54 * cirrusAmbientVisibility;
+                    skyAmbient * 0.42 * cirrusAmbientVisibility;
                 accum += transmittance * cirrusRad * cirrusAlpha;
                 transmittance *= 1.0 - cirrusAlpha;
                 if (!representativeFound || tCirrus < representativeT)
@@ -1045,7 +1375,7 @@ void main()
             }
         }
 
-        float clearAmt = (1.0 - transmittance) * mix(0.35, 0.55, dayAmt);
+        float clearAmt = (1.0 - transmittance) * mix(0.22, 0.38, dayAmt);
         accum += skyAmbient * clearAmt;
         alpha = saturate1(1.0 - transmittance);
         // CQ1.4: retain scene-referred linear premultiplied radiance through trace,

@@ -19,6 +19,8 @@ float cdoDirectDiscOcclusionAlpha(
     // Direct solar radiance is far brighter than diffuse sky radiance. A stronger
     // direct-beam response lets thin cloud soften the disc and seals its core once
     // integrated cloud opacity reaches 0.6, without changing cloud opacity elsewhere.
+    // Callers that write premultiplied FragColor must rescale RGB with this alpha so
+    // ONE, ONE_MINUS_SRC_ALPHA seals with cloud radiance instead of a dark hole.
     float directOpacity = 1.0 - pow(max(1.0 - opacity, 0.0), 5.0);
     float denseSeal = smoothstep(0.45, 0.60, opacity);
     directOpacity = mix(directOpacity, 1.0, denseSeal);

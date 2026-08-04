@@ -23,23 +23,25 @@ internal enum GlGpuTimerScope
     CloudRepair = 14,
     CloudLightNear = 15,
     CloudLightFar = 16,
+    Ao = 17,
+    SparseBrickGen = 18,
 
     // CPU-only detail scopes (nest under a pass scope; not used by GL timer queries).
-    SetupBones = 17,
-    SetupBounds = 18,
-    ShadowTerrainCull = 19,
-    TerrainStream = 20,
-    TerrainDraw = 21,
-    SubjectDraw = 22,
+    SetupBones = 19,
+    SetupBounds = 20,
+    ShadowTerrainCull = 21,
+    TerrainStream = 22,
+    TerrainDraw = 23,
+    SubjectDraw = 24,
 }
 
 internal static class GlGpuTimerScopes
 {
     /// <summary>Pass scopes that own GPU <c>GL_TIME_ELAPSED</c> queries.</summary>
-    public const int PassScopeCount = 17;
+    public const int PassScopeCount = 19;
 
     /// <summary>Pass scopes plus CPU-only detail buckets.</summary>
-    public const int CpuScopeCount = 23;
+    public const int CpuScopeCount = 25;
 
     public static bool IsCpuDetail(GlGpuTimerScope scope) => (int)scope >= PassScopeCount;
 }
@@ -67,7 +69,9 @@ internal readonly record struct GlGpuTimingSnapshot(
     double SubjectDrawMs = 0.0,
     double CloudRepairMs = 0.0,
     double CloudLightNearMs = 0.0,
-    double CloudLightFarMs = 0.0)
+    double CloudLightFarMs = 0.0,
+    double AoMs = 0.0,
+    double SparseBrickGenMs = 0.0)
 {
     public GlGpuTimingSnapshot(double SetupMs, double ShadowMs, double SceneMs, double PostMs, double OverlayMs)
         : this(SetupMs, ShadowMs, SceneMs, PostMs, OverlayMs, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
@@ -85,7 +89,9 @@ internal readonly record struct GlGpuTimingSnapshot(
         CloudRepairMs +
         CloudUpsampleMs +
         GodRaysMs +
-        TaaMs;
+        TaaMs +
+        AoMs +
+        SparseBrickGenMs;
 
     /// <summary>Wall-clock pass totals only; CPU detail scopes are subsets and excluded.</summary>
     public double TotalMs =>
@@ -124,6 +130,7 @@ internal readonly record struct GlGpuTimingSnapshot(
         AppendHudPass(lines, "  Subject", SubjectDrawMs, (int)GlGpuTimerScope.SubjectDraw, linger, nowSeconds);
         AppendHudPass(lines, "Cloud Light Near", CloudLightNearMs, (int)GlGpuTimerScope.CloudLightNear, linger, nowSeconds);
         AppendHudPass(lines, "Cloud Light Far", CloudLightFarMs, (int)GlGpuTimerScope.CloudLightFar, linger, nowSeconds);
+        AppendHudPass(lines, "Sparse Brick Gen", SparseBrickGenMs, (int)GlGpuTimerScope.SparseBrickGen, linger, nowSeconds);
         AppendHudPass(lines, "Cloud Trace", CloudTraceMs, (int)GlGpuTimerScope.CloudTrace, linger, nowSeconds);
         AppendHudPass(lines, "Cloud Temporal", CloudTemporalMs, (int)GlGpuTimerScope.CloudTemporal, linger, nowSeconds);
         AppendHudPass(lines, "Cloud Repair", CloudRepairMs, (int)GlGpuTimerScope.CloudRepair, linger, nowSeconds);
@@ -131,6 +138,7 @@ internal readonly record struct GlGpuTimingSnapshot(
         AppendHudPass(lines, "God Ray Integrate", GodRayIntegrateMs, (int)GlGpuTimerScope.GodRayIntegrate, linger, nowSeconds);
         AppendHudPass(lines, "God Ray Resolve", GodRayResolveMs, (int)GlGpuTimerScope.GodRayResolve, linger, nowSeconds);
         AppendHudPass(lines, "Cloud Upsample", CloudUpsampleMs, (int)GlGpuTimerScope.CloudUpsample, linger, nowSeconds);
+        AppendHudPass(lines, "AO", AoMs, (int)GlGpuTimerScope.Ao, linger, nowSeconds);
         AppendHudPass(lines, "TAA", TaaMs, (int)GlGpuTimerScope.Taa, linger, nowSeconds);
         AppendHudPass(lines, "Post", PostMs, (int)GlGpuTimerScope.Post, linger, nowSeconds);
         AppendHudPass(lines, "Overlay", OverlayMs, (int)GlGpuTimerScope.Overlay, linger, nowSeconds);
@@ -161,7 +169,7 @@ internal readonly record struct GlGpuTimingSnapshot(
             "cloudLightNear={5:0.###}ms, cloudLightFar={6:0.###}ms, cloudTrace={7:0.###}ms, " +
             "cloudTemporal={8:0.###}ms, cloudRepair={9:0.###}ms, cloudUpsample={10:0.###}ms, " +
             "godRayInject={11:0.###}ms, godRayIntegrate={12:0.###}ms, godRayResolve={13:0.###}ms, " +
-            "taa={14:0.###}ms, post={16:0.###}ms, postOther={15:0.###}ms, overlay={17:0.###}ms, total={18:0.###}ms",
+            "ao={14:0.###}ms, sparseBrickGen={15:0.###}ms, taa={16:0.###}ms, post={18:0.###}ms, postOther={17:0.###}ms, overlay={19:0.###}ms, total={20:0.###}ms",
             SetupMs,
             ShadowMs,
             DepthPrepassMs,
@@ -176,6 +184,8 @@ internal readonly record struct GlGpuTimingSnapshot(
             GodRayInjectMs,
             GodRayIntegrateMs,
             GodRayResolveMs,
+            AoMs,
+            SparseBrickGenMs,
             TaaMs,
             PostMs,
             PostTotalMs,
@@ -395,7 +405,9 @@ internal sealed class GlGpuTimerProfiler : IDisposable
                 elapsed[(int)GlGpuTimerScope.HiZ] * NanosecondsToMilliseconds,
                 CloudRepairMs: elapsed[(int)GlGpuTimerScope.CloudRepair] * NanosecondsToMilliseconds,
                 CloudLightNearMs: elapsed[(int)GlGpuTimerScope.CloudLightNear] * NanosecondsToMilliseconds,
-                CloudLightFarMs: elapsed[(int)GlGpuTimerScope.CloudLightFar] * NanosecondsToMilliseconds));
+                CloudLightFarMs: elapsed[(int)GlGpuTimerScope.CloudLightFar] * NanosecondsToMilliseconds,
+                AoMs: elapsed[(int)GlGpuTimerScope.Ao] * NanosecondsToMilliseconds,
+                SparseBrickGenMs: elapsed[(int)GlGpuTimerScope.SparseBrickGen] * NanosecondsToMilliseconds));
         }
     }
 

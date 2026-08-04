@@ -1,18 +1,259 @@
 # Volumetric cloud implementation handoff
 
-**Status:** Active  
-**Last updated:** 2026-07-30
+**Status:** Complete — CQ4 accepted
+**Last updated:** 2026-07-31
 **Branch/base:** `main` at `434a3627` before the CQ3.8 working-tree changes
 **Roadmap:** [Volumetric cloud quality roadmap](volumetric-cloud-quality-roadmap.md)  
-**Active specification:** [CQ4 sparse voxel/SDF backend](volumetric-cloud-cq4-sparse-voxel-sdf.md)
+**Active specification:** [Volumetric cloud art-direction roadmap](volumetric-cloud-art-direction-roadmap.md)
 
 ## Current checkpoint
 
+CQ1–CQ4 are complete. Post-roadmap cloud art direction is now tracked as
+CA1 → CA2 → CA3. CA1 has a provisional shader-only boundary-material pass:
+High/Cinematic v2 density uses the existing detail texture's B/A channels for a
+wind-aligned, height-sheared evaporating boundary and R/G for finer upper billows.
+The coherent core is more protected while dry lower/side edges may erode more
+strongly. Low/Medium, GLES/ANGLE, v1 assets, sparse template bytes, march counts,
+and texture-fetch count are unchanged. Camera trace, full-resolution repair,
+sparse post-base density, and CQ3 light-cache generation share the same function.
+CA1.7 locks this material as the High+Cinematic default with no public
+`Wispiness` control unless later visual acceptance requires user-selectable
+character. CA2.0–CA2.2 add deterministic dual-scale parent/satellite population
+to the v2 procedural shell and sparse brick generator. CA2.3 decided template v2
+is required (live Cinematic sparse captures still read as smooth/blob v1
+envelopes after calibration-2 deformation), and CA2.4 landed a parallel
+`cq4-envelope-v2` template ABI: twelve deterministic asymmetric envelopes with
+baked offset mass, a skirt notch, lobe lean, and an asymmetric cumulus base,
+pinned SHA-256 hashes, and a transactional loader that prefers v2 and falls
+back to v1 only on a missing/corrupt asset. The frozen v1 bytes/hashes and the
+CQ4 atlas/page-table/brick/residency ABI are unchanged. CA3.0–CA3.3 are
+implemented: first-use thin-feature diagnostics, reactive low-alpha temporal
+weighting, the CA3.2 repair classifier retune, and cloud-light contrast
+calibration. Live visual, sparse/procedural convergence (CA2.5–CA2.6),
+occlusion coupling (CA3.4), and performance acceptance (CA3.5) remain open;
+consult the
+[art-direction roadmap](volumetric-cloud-art-direction-roadmap.md) before tuning.
+
+**2026-07-31 Cinematic regression:** live Cinematic captures looked noisier/blockier
+than High while Cloud Repair cost ballooned (~2.4 ms at the accepted 862×683
+viewport). CA1/CA2 high-frequency opacity variation across the 2/3-res tap
+footprint was tripping the CQ1.8 `0.08` alpha classifier on occupied-cloud
+interiors, so the bounded eight-step retrace replaced temporal reconstruction.
+Repair classification now requires a silhouette tap (`alphaMin ≤ 0.18`), a strong
+opacity jump (`> 0.36`), or the existing distance/kind/validity/weight failures,
+with the base alpha threshold raised to `0.24`. This is CA3.2, landed early under
+CA2 because Cinematic was unusable relative to High.
+
 CQ1 and CQ2 are complete and accepted as of 2026-07-28. CQ2.0 froze the v2 density-asset ABI, CQ2.1 implemented deterministic generators, detailed CQ2.2 bundled the pinned payloads, CQ2.3 added strict transactional profile selection, CQ2.4 added explicit ray-footprint LOD, CQ2.5 implemented versioned weather/material shaping, CQ2.6 added expanded weather addressing plus edge-only rotated detail, CQ2.7 completed debug inspection and automated asset/shader coverage, and CQ2.8 completed fixed-scene visual and GPU performance acceptance. Validated desktop contexts select v2; GLES/ANGLE and any v2 load/upload failure retain one coherent v1 profile. CQ3.0 through CQ3.9 are complete and accepted as of 2026-07-30: the light-cache ABI/generation/consumption path includes controlled multiple scattering, local hemispherical sky visibility, restrained terrain-material ground bounce, cached cirrus/cumulus lighting, Cinematic two-tap boundary refinement, transactional terrain/fog transmittance, bounded scheduling, exact-static reuse, flat continuous-world layers, and camera-region-independent level-view marching. Live GL 3.3, compute/fragment/short-march failure paths, DDA/resident terrain, opaque depth ordering, and all 16 High/Cinematic temporal boundary combinations remain green. Low/Medium/GLES and invalid or out-of-range cloud-body cache samples retain the accepted short march; ground-transmittance consumers use full sunlight when their publication is unavailable or invalid.
 
-Commit `434a3627` contains the accepted CQ1–CQ3.7 implementation. The current working tree contains the accepted CQ3.8 continuous-altitude stabilization and CQ3.9 flat continuous-world conversion. CQ4.0 capability/backend selection is the next roadmap task; the CQ3.9 procedural flat-layer path is its mandatory High and unsupported-Cinematic fallback.
+Commit `73407b81` contains the accepted CQ1–CQ3.9 implementation. The current working tree completes CQ4.0 capability/backend selection through CQ4.8 acceptance. Eligible Cinematic contexts allocate the sparse atlas/page tables, generate deterministic weather-selected bordered density and exact local conservative distance, publish only completed physical mappings, and derive one sampling identity from the atlas generation, active table generation, matching residency-plan revision, snapped origins, and resident count. A candidate remains on the procedural shell until both CQ3 near/far light caches commit that exact identity; only then does the view trace, CQ1 history/edge repair, local cone refinement, and derived ground transmittance switch together. CQ4.7 recycles bricks retired while generating after their fence completes, retires published mappings only after active-table references clear, reports bounded overflow without wrapping indices, exposes nine sparse debug views, publishes residency/identity counters, times SparseBrickGen, and demotes on injectable dispatch/barrier/fence/status/publication/context-loss faults. High, GLES/ANGLE, unsupported Cinematic, incomplete publication, and runtime-fault paths retain the accepted CQ3.9 procedural flat layer.
 
 ## Completed
+
+### CA2.5 partial — Cinematic fast-motion hitch amortisation — 2026-08-01
+
+- Fast camera motion on Cinematic was hitching while High stayed smooth. Cause
+  stack: clipmap origin snaps rebuilt a 49k-entry pending queue and submitted up
+  to 96 bricks; each published batch changed the sparse sampling identity;
+  Prepare demoted to procedural; CQ3 light caches fully invalidated; Cinematic
+  near+far regenerated together.
+- Fixes: camera-centered pending rebuild radii; teleport/origin entering caps
+  (12/24); soft-hold of the active sparse identity across same-origin residency
+  growth; amortized prepared-identity light chases; Cinematic large-camera
+  invalidation spreads to one cascade per frame.
+- Follow-up: the spread path originally invalidated both cascades before a
+  Near-only refresh, leaving `hasFar=0` and a hard dark half-screen at the near
+  footprint edge. Invalidation now clears only the cascades selected for
+  regeneration so the other cascade stays sampleable.
+- Cold residency gate (≥480) from earlier the same day remains in place.
+
+### CA2.5 partial — cold Cinematic residency gate — 2026-08-01
+
+- First-compile Cinematic was activating CQ4.6 after the initial `resident-96`
+  entering batch. Incomplete sparse residency mixed a few template bricks into the
+  procedural shell and read as cubish cells / a different cloud pattern from High.
+- High→Cinematic looked correct because the view stayed on High-equivalent
+  procedural density (plus Cinematic repair/temporal) while sparse lighting
+  rematched — a quality uplift without a pattern replacement.
+- `PreviewSparseCloudActivationPolicy` now requires ≥480 published residents,
+  ≥90% requested coverage, and no in-flight brick generation before sparse view
+  sampling or CQ3 light-cache sparse bindings are enabled. Diagnostics report
+  `warming-residency/{n}-of-{m}/need-480` until the gate opens.
+- Full sparse↔procedural population convergence remains open under CA2.5.
+
+### CA3.0–CA3.3 — thin-feature preservation and lighting contrast — 2026-07-31
+
+- CA3.0 first-use diagnostics report
+  `thinFeaturePreservation=ca3.1-low-alpha(...);ca3.2-repair(...);ca3.3-shading(...)`
+  and document the three thin-feature loss modes that followed CA1/CA2.
+- CA3.1: `PreviewCloudTemporalLowAlphaWeight` + `genesis_clouds_temporal.frag`
+  reactive low-alpha history weighting (`0.28..0.55` thinness, `0.06..0.28`
+  disagreement, motion floor `0.58`, idle floor `0.86` via eased
+  `uTemporalStability`).
+- CA3.2: repair classifier alpha `0.24` with silhouette/strong-jump gating;
+  idle freeze + motion ramp for the post-temporal 8-step STBN retrace
+  (`uRepairStability` / `idleFreeze>=0.85`, `retraceRamp=0.20..0.85`).
+- CA3.3: shading defaults sky floor `0.14`, ground bounce `0.13`, local-cone OD
+  `0.38`, powder `0.70..0.88`, higher-order sky mixes `0.22/0.10`.
+- CA1.7: High+Cinematic default locked; no public `Wispiness` yet.
+- Population first-use token updated to
+  `cloudPopulation=ca2-dual-scale-asymmetric-v2-templates`.
+
+### CA2.3–CA2.4 — asymmetric sparse cloud template v2 — 2026-07-31
+
+- CA2.3 decision: template v2 is necessary. Live Cinematic sparse captures still
+  read as smooth/blob v1 envelopes after the CA2 calibration-2
+  rotation/aspect/lean/apron deformation; asymmetry has to be baked into the
+  template density itself rather than applied only at runtime.
+- Added `PreviewSparseCloudTemplateAssetContractV2` beside the frozen
+  `PreviewSparseCloudTemplateAssetContract` (v1): identical `32×24×32` RG8
+  layout and 12-asset (4 families × 3 variants) shape, `AssetVersion = 2`,
+  `GenerationAbi = "cq4-envelope-v2"`, filenames
+  `cloud_envelope_{family}_{variant}_32x24x32_rg8_v2.bin`, and new,
+  non-overlapping seed bands (humilis `51011/17/23`, mediocris `52013/19/43`,
+  congestus `53003/19/37`, stratus `54017/21/27`).
+- `PreviewSparseCloudTemplateAssetGenerator` gained v2 morphology that bakes an
+  offset primary-mass center, height-dependent lean of upper lobe centers, an
+  angular skirt notch (with a protected core so connectivity survives), and an
+  asymmetric base ellipse for cumulus families directly into the density.
+  Largest-connected-component selection and exact Chebyshev `G` distance are
+  unchanged from v1. Generation and payload validation both dispatch on
+  `PreviewSparseCloudTemplateAssetDescriptor.Version`.
+- `AutoPBR.Tools.GeneratePreviewCloudAssets` now writes both v1 and v2 sets. All
+  twelve v2 `.bin` files were generated under
+  `src/AutoPBR.App/Assets/Preview`, hashed, and pinned into
+  `PreviewSparseCloudTemplateAssetContractV2`; `AutoPBR.App.csproj` bundles all
+  24 template files (12 v1 + 12 v2) via `_PreviewCloudAssetOutput`.
+- `PreviewSparseCloudTemplateAssetLoader` is transactional: it attempts a
+  complete, hash-valid v2 set first and falls back to a complete v1 set only if
+  any v2 asset is missing or fails validation; the two versions are never
+  mixed in one loaded set. `GlSparseCloudBrickGenerator.TryCreate` accepts
+  either an all-v1 or all-v2 template set once dimensions/count/byte-length
+  match, via the extracted `IsTemplateSetAcceptable` helper.
+- New coverage: v2 contract freeze and hash pinning, byte-identical
+  regeneration, connectivity, flat cumulus base at `y = 2`, measurable
+  center-of-mass asymmetry, presence of a missing skirt sector (notch),
+  transactional loader fallback, and template-set acceptance for both
+  versions. All existing v1-specific tests remain green (isolated from v2
+  preference by hiding v2 filenames in the reader).
+- No changes to v1 bytes/hashes, CQ4 atlas size, page tables, brick layout, or
+  residency budgets, and no changes to runtime UV-space calibration-2
+  deformation; v2 asymmetry is additive at the source-density level.
+- Focused Release coverage for the template/loader/population/brick-generation
+  suites is green. Full Release `AutoPBR.App.Tests` coverage is
+  `714/717` passed; the 3 failures are pre-existing, unrelated
+  scene-capture/TAA and CQ1.6 shader source-string assertions from other
+  in-progress work already present in the tree before this change (confirmed
+  present with this change stashed).
+
+### Cloud diagnostic flood regression — 2026-07-31
+
+- The long first-use cloud profile report was being re-armed whenever CQ4 sparse
+  resource readiness changed. CQ4.6 also emitted one transactional-activation
+  report for every promoted sampling generation. During live sparse residency
+  convergence these render-thread messages could flood the UI log and stall the
+  preview.
+- Cloud profile and backend lifecycle reports now pass through independent,
+  session-bounded semantic-state gates. A profile/backend state is reported only
+  once, oscillation back to an already observed state is silent, and hard caps of
+  8 profile identities and 16 lifecycle identities prevent unexpected identity
+  churn from growing the UI queue.
+- Sparse activation now reports the first successful session activation rather
+  than each atlas/page-table generation. Runtime faults remain unconditional
+  diagnostics.
+- Focused diagnostic and CQ4 acceptance coverage passes `6/6`; the broader cloud
+  and god-ray coordinator suite passes `135/135`.
+
+### Cinematic edge-repair overfire — 2026-07-31
+
+- Live Cinematic looked noisier and more blocky than High while Cloud Repair
+  consumed ~2.4 ms at the accepted `862×683` viewport.
+- CA1/CA2 boundary opacity variation across the 2/3-res four-tap footprint tripped
+  the CQ1.8 `0.08` alpha classifier inside occupied cloud, so the eight-step
+  retrace replaced temporal reconstruction.
+- `PreviewCloudEdgeRepairClassifier` and `genesis_clouds_repair.frag` now use
+  alpha threshold `0.24`, require a silhouette tap (`alphaMin ≤ 0.18`) or strong
+  opacity jump (`> 0.36`) for alpha-only repair, and retain structural
+  distance/kind/validity/weight triggers.
+- Recorded as an early CA3.2 correction under the active CA2 checkpoint.
+
+### Cinematic sparse cell-shade outlines — 2026-07-31
+
+- With CQ4.6 sparse active, Cinematic drew cartoon ink borders on cloud lobes.
+  Cause stack: hard v1 envelope isosurfaces, Cinematic local-cone boundary gate
+  open across that thick shell, L0↔L1 residency seams at brick faces, and LINEAR
+  atlas reads that could bleed into the next packed brick.
+- Softened brick density shaping to `smoothstep(0.06, 0.80)`, thinned/scaled the
+  sparse-aware cone rim, faded fine contribution near missing neighbor pages,
+  and clamped atlas samples inside each physical brick.
+
+### CA2.0–CA2.2 — dual-scale population foundation — 2026-07-30
+
+- Added a shared CA2 population contract with a `max(1.10 × volumeSize, 160)`
+  parent span, `0.38 ×` satellite span, stable world-cell hashes, `±0.18` cell
+  jitter, separate parent/satellite scale bands, weather admission, parent
+  attachment, and probabilistic soft union.
+- The procedural v2 shell uses a four-corner dual-scale population approximation;
+  v1/GLES remains unchanged. Sparse generation evaluates neighboring jittered v1
+  envelope cells and varies horizontal and vertical scale without changing the
+  CQ4 atlas, brick, page-table, residency, or template ABI.
+- Satellites favor moist humilis/mediocris and convection; they require parent
+  support and cannot form an unbounded independent foam layer. A missing weather
+  texture uses a coherent conservative fallback rather than stochastic clear sky.
+- First-use diagnostics identify
+  `cloudPopulation=ca2-dual-scale-asymmetric-v2-templates` after CA2.4
+  (earlier CA2.0–CA2.2 builds reported
+  `ca2-dual-scale-deformed-v1-templates-cal2`).
+- Focused CPU/source coverage passes `92/92`; enabled hidden-WGL flat-cloud
+  compilation plus conservative bordered sparse generation pass `2/2`.
+- Full Release app coverage passes `696/698`; the only failures are the same two
+  unrelated scene-capture/TAA source-string assertions already recorded under CA1.
+- CA2.3–CA2.4 were later resolved the same day: template v2 is required and
+  asymmetric `cq4-envelope-v2` assets landed. CA2.5–CA2.6 remain open for live
+  sparse/procedural convergence and the population visual matrix.
+- The 2026-07-31 level-view regression came from an under-spanning long-ray step
+  ramp: using `interval / steps` as its maximum made the average step too short,
+  allowing dense rays to exhaust the sample budget partway through the slab. The
+  far endpoint is now solved so the ramp sums to the full interval in exactly the
+  preset sample count. Focused coverage passes `99/99`; enabled hidden-WGL
+  procedural/sparse compilation, generation, and traversal pass `3/3`.
+- Full Release app coverage passes `697/699`; only the two previously documented
+  scene-capture/TAA source-string assertions fail.
+- Sparse v1 envelopes now receive deterministic rotation, anisotropic aspect,
+  height-dependent lean, and an evaporation apron before soft union. The
+  procedural non-parent coverage floor is `0.055` instead of `0.28`. These are
+  calibration-2 changes awaiting new live captures; persistent blob silhouettes
+  are the decision evidence for CA2.4 template v2.
+
+### CA1.0–CA1.3 — directional boundary material — 2026-07-30
+
+- High/Cinematic v2 cloud density now separates lower/side evaporation from upper
+  growth. The former blends the existing broad and finer B-channel erosion in a
+  wind-aligned, height-sheared coordinate frame; the latter blends R/G billow
+  structure. A-channel curl bends the material without adding a texture fetch.
+- High uses a `0.46 × detailScale` boundary period with `0.31/0.27` lower/upper
+  maximum erosion. Cinematic uses `0.38 × detailScale` with `0.38/0.32`. Weather
+  density potential and convection modulate those limits; the coherent-core
+  erosion floor is reduced to `0.07`.
+- Low/Medium, GLES/ANGLE, v1 density, sparse template assets, march counts, and
+  High/Cinematic detail-fetch count are unchanged.
+- Trace, repair, sparse post-base density, and CQ3 light-cache generation share the
+  same CA1 function and flow direction. First-use diagnostics identify
+  `ca1-broad-boundary-high-cinematic`.
+- The focused Release source suite passes `83/83`. The enabled hidden-WGL flat-cloud
+  matrix passes generic/High trace, repair, fragment-cache, compute-cache,
+  packed/direct metadata, and sparse variants.
+- Full Release app tests pass `692/694`. The two failures are unrelated existing
+  source-string assertions for the parallel scene-capture/TAA/AO changes; CA1
+  touches neither failed source area. Live visual, temporal, and performance
+  acceptance remain open as CA1.4–CA1.6 (CA1.7 locked High+Cinematic default).
+- The first CA1 runtime captures were visually rejected for fine edge stipple and
+  an unchanged smooth macro envelope. Calibration 2 replaces the `0.38/0.46`
+  boundary scales with `0.68/0.82`, lowers coordinate frequencies, adds
+  anisotropic footprint filtering, widens the affected base-density band to
+  `0.12..0.70`, lowers core erosion to `0.055`, and reduces maximum edge erosion.
+  Its focused suite passes `83/83` and the enabled hidden-WGL cloud shader matrix
+  passes. It is awaiting repeat visual capture. Mixed cloud population remains CA2.
 
 ### P5.4 DDA initialization correction — 2026-07-29
 
@@ -424,7 +665,7 @@ The live run initially exposed an STBN asset-loader dependency on Avalonia appli
 |-------|--------|
 | App solution build | Pass |
 | CQ1.8 terrain/rendering/repair focused tests | Pass |
-| Complete app test assembly | 604/604 pass in Release with the CQ3.9 interval-policy reconciliation |
+| Complete app test assembly | 653/653 pass with CQ4.0 capability/backend policy, CQ4.1 template-library coverage, CQ4.2 ABI/allocator coverage, CQ4.3 clipmap/publication coverage, and CQ4.4 generation ABI/backpressure/distance/fence coverage |
 | Hidden-WGL CQ3.9 shader/target/depth smoke | 19/19 pass; generic/High/temporal/repair/upsample/cache programs compile and opaque-depth ordering remains green |
 | Hidden-WGL CQ3.9 altitude matrix | Pass: all 16 High/Cinematic × temporal on/off × cumulus/cirrus base/top combinations pass; valid uniform clear-sky frames remain in the delta sequence while near-black startup captures are rejected |
 | Hidden-WGL CQ3.9 full-HD visual/depth matrix | Pass: 13 captures and 3,120 retained GPU samples cover below/inside/above layers, grazing distance, cirrus, terrain/depth ordering, moving shadows, and sun transitions |
@@ -439,17 +680,107 @@ The live run initially exposed an STBN asset-loader dependency on Avalonia appli
 | Hidden-WGL CQ3.7 1080p lighting/cache matrix | 1/1 pass; 13 captures; 3,120 retained GPU samples; High `0.671 ms` / `1.215×` CQ2 gate result |
 | Hidden-WGL CQ3.7 failure and GL 3.3 paths | 2/2 pass; compute→fragment→short-march demotion, stale-publication rejection, and real fragment generation verified |
 | CQ3.0–CQ3.7 profile/coordinate/bounds/blend/capability/fallback/consumer/lifecycle focused tests | Pass |
+| CQ4.0 capability/backend selection | Pass: 18 focused capability/policy tests; real desktop GL smoke confirms sparse eligibility while CQ3.9 remains active pending resources |
+| CQ4.1 deterministic template library | Pass: 9 focused ABI/generator/hash/bundle/connectivity/morphology/distance/loader/build-output tests; hidden desktop GL smoke loads all 12 pinned templates |
+| CQ4.2 bounded resource ownership | Pass: 16 focused ABI/addressing/sentinel/allocator/residency/memory tests; hidden desktop GL smoke verifies injected partial-allocation rollback and successful allocation of the atlas plus six page tables while sampling stays disabled |
+| CQ4.3 clipmap request/publication control | Pass: 7 focused coverage/addressing/snapping/priority/cap/teleport/overlap-mapping tests; hidden desktop GL readback verifies requested and mapped page values, fence completion, atomic active/build handle swap, origin publication, and generation increment while sampling stays disabled |
+| CQ4.4 compute brick generation | Pass: 5 focused std430/determinism/backpressure/conservative-distance/fence-classification tests; hidden desktop GL compiles and dispatches the production compute shader, reads back occupied and empty RG8 bricks, verifies adjacent one-voxel borders byte-for-byte, and validates conservative distance while sampling stays disabled |
+| CQ4.5 sparse traversal/blending | Pass: 6 focused CPU-oracle tests plus hidden OpenGL 4.6 fixed-ray SSBO readback; active-page decode, requested/coarse/shell fallback, negative coordinates, 10% cascade transitions, conservative no-skip stepping, iteration-budget continuation, and fine-boundary arrival are verified while visible activation stays gated |
+| CQ4.6 reconstruction/lighting identity | Pass: 9 focused identity/activation cases; stable publication, in-flight requested fallback, preservation across a newer pending publication, regressed-plan rejection, generation/origin discontinuity, and exact two-cascade agreement are covered. The full app suite passes `685/685`; all three explicitly enabled cloud live-GL tests compile and execute the sparse brick, traversal, trace, edge-repair, fragment-cache, and compute-cache paths |
 | `git diff --check` | Pass |
 | Initial fixed-camera cloud capture | Accepted user capture |
 | Initial displayed GPU timing | `1.1 ms` total; `0.3 ms` cloud trace |
 
-The broader solution run completed the app and preview suites but is not green: a separate Core test host hit a native ONNX Runtime access violation, and three existing rabbit hierarchy assertions failed in `AutoPBR.GeometryCompiler.Tests`. Neither failure touches the renderer files in this correction. The CQ2.7 Release app solution build succeeds; its non-incremental rebuild reports 37 existing analyzer warnings in unrelated HDR, terrain, desktop-WGL and test code. The prior transient Enterprise-signing denial no longer reproduces: both the full app test assembly and native WGL smoke now launch and pass.
+The broader solution run completed the app and preview suites but is not green: a separate Core test host hit a native ONNX Runtime access violation, and three existing rabbit hierarchy assertions failed in `AutoPBR.GeometryCompiler.Tests`. Neither failure touches the renderer files in this correction. The CQ2.7 Release app solution build succeeds; its non-incremental rebuild reports existing analyzer warnings in unrelated HDR, terrain, desktop-WGL and test code. The prior transient Enterprise-signing denial no longer reproduces: both the full app test assembly and native cloud WGL smoke now launch and pass. Concurrent, unrelated screen-space-AO work in the dirty tree currently leaves `HiddenWglContext_CompilesScreenSpaceAoShaders` failing because `ssaoUnpackViewNormal` uses GLSL abstract/out-parameter syntax rejected by the NVIDIA compiler; the three cloud live-GL tests pass independently and CQ4.6 does not modify the AO shaders.
+
+## CQ4.0 implementation state
+
+- `PreviewGlCapabilities.CanUseSparseCloudVolumes` requires desktop compute shaders, image load/store, and SSBO support.
+- `PreviewSparseCloudBackendPolicy` keeps requested, capability-eligible, and active backend state distinct. Low/Medium/High request the procedural layer. Cinematic requests sparse density, but CQ4.0 keeps the active backend procedural until all later sparse resources are ready.
+- Fallback diagnostics distinguish GLES/ANGLE, missing compute/image-store/SSBO, unavailable capabilities, CQ4.0 resource readiness, debug force-procedural, and session runtime faults.
+- The debug-only `AutoPBR.Preview.ForceProceduralCloudLayer` `AppContext` switch is intentionally not persisted.
+- Active-backend identity participates in CQ1 history hashing. A future active transition also invalidates CQ1 history and generated CQ3 cloud-light cascades before sparse pixels can become visible.
+- CQ4.0 allocates no atlas/page table, compiles no sparse shader, and leaves the accepted CQ3.9 pixels and cost intact.
+
+## CQ4.1 implementation state
+
+- The shared v1 envelope ABI contains twelve `32×24×32 RG8` blobs: three variants each for cumulus humilis, mediocris, congestus, and stratus.
+- R stores deterministic low-frequency envelope density. G stores an exact conservative Chebyshev empty-space distance in template voxels, with zero on occupied voxels and a maximum encoded distance of 31.
+- Integer seeded lobe growth, cellular merging, boundary erosion, vertical family shaping, and largest-component cleanup produce connected volumes. Cumulus variants share condensation base layer 2.
+- Filenames, dimensions, seeds, byte counts, and all twelve SHA-256 values are immutable in `PreviewSparseCloudTemplateAssetContract`.
+- The asset tool and app build target emit the complete 589,824-byte library. The loader publishes only a fully length/hash-valid set; one missing or corrupt blob retains the procedural fallback.
+- Capable runtime contexts load and diagnose the CPU template library before CQ4.2 considers GPU allocation. Template readiness alone never changes backend selection, so CQ4.1 leaves cloud pixels and cost unchanged.
+
+## CQ4.2 implementation state
+
+- `PreviewSparseCloudVolumeContract` is the shared authority for the `8³` logical interior, one-voxel border, `10³` physical brick, `16³` atlas layout, three `32×16×32` clipmaps, page sentinels, 96-brick future update cap, and density-residency memory budget.
+- Physical brick 4095 is permanently reserved as the cleared fallback. The allocator owns indices `0..4094`, encoded as page values `1..4095`; zero is unmapped and `65535` is requested.
+- `GlSparseCloudVolumeResources` transactionally allocates and clears one `160³ RG8` atlas plus active/build `R16UI` page tables for all three levels. Capability, maximum-3D-size, memory, GL-error, and exception failures dispose every partial allocation and retain CQ3.9.
+- `PreviewSparseCloudBrickAllocator` deduplicates logical requests, tracks the documented residency lifecycle, rejects retirement while an active page table references a brick, reports bounded overflow, and never allocates the fallback slot.
+- CQ4.2's base accounted density-residency state is 9,407,452 bytes, including the CQ4.1 template library and conservative managed allocator reserves. CQ4.3 adds its separately reported control-state reserve while retaining the same 16 MiB ceiling.
+- Allocation occurs only for eligible Cinematic desktop contexts after the template library is ready. CQ4.4 generates atlas bricks and advances page-table publication generations; CQ4.5 prepares and binds those resources for traversal. `IsSamplingReady` and `_sparseCloudResourcesReady` remain false, and the CQ3.9 pixel path is unchanged until CQ4.6 completes reconstruction/lighting identity integration.
+
+## CQ4.3 implementation state
+
+- `PreviewSparseCloudClipmapController` centers the three logical footprints on the camera in XZ and on the configured cloud envelope in Y. Origins snap independently to the documented L0/L1/L2 brick sizes of 16, 64, and 256 world units.
+- Pending pages use stable camera-containing, frustum-visible, level, squared-distance, and logical-coordinate ordering. View changes beyond 15 degrees reprioritize remaining work; every update admits at most 96 previously unrequested pages.
+- One-brick recentering retains overlapping requested and resident mappings. Teleports retire pages outside the new footprints but still admit only 96 replacements that frame. Resident physical-index-plus-one mappings survive overlapping recentering.
+- Each revision rebuilds complete CPU tables with `0` unmapped, `1..4095` resident mappings, and `65535` requested pages. It never mutates the active GPU tables.
+- CQ4.2 resources upload all three complete tables into the inactive handles, place a GPU fence, poll it without blocking on later frames, then atomically swap all active/build handles and origins. Each completed publication increments its generation ID; newer CPU revisions may supersede an older in-flight revision after that fence completes.
+- Worst-case pending/requested/resident controller state has a conservative 3,276,768-byte reserve. CQ4.3's total density-residency accounting was 12,684,220 bytes under the 16 MiB ceiling.
+- Publication errors fault only the sparse session and retain CQ3.9. High and other non-Cinematic presets perform no CQ4.3 control work. Publication does not set `IsSamplingReady`, activate the sparse backend, invalidate CQ1/CQ3, or change pixels.
+
+## CQ4.4 implementation state
+
+- `PreviewSparseCloudBrickGenerationRecord` is a fixed 32-byte std430 ABI containing logical coordinates, clipmap level, physical index, and deterministic seed. The controller admits at most 96 requests and admits zero new pages while a generation fence is pending, so queue storage and work remain bounded.
+- `GlSparseCloudBrickGenerator` uploads the validated twelve-template CQ4.1 library as 384 `RG8` array layers, then releases the CPU payload reference. Each compute workgroup covers one complete `10³` physical brick with a fixed `5×5×5` local size.
+- Generation selects template family from weather cloud type, variant from a stable world-cell hash, and uses coverage, density, convection, altitude, and wind inputs. Physical apron texels evaluate the same world voxel as neighboring interiors, producing bit-identical borders.
+- Atlas R stores quantized base density. CQ4.5 upgrades atlas G to an exact shared-memory Chebyshev transform within each bordered physical brick: occupied texels store zero, empty texels store a distance capped at 32 voxels. Traversal never carries that local distance across a logical-brick boundary, so data outside the apron cannot be skipped.
+- Image-access, texture-fetch, and SSBO barriers precede a GPU fence. Every workgroup writes a completion magic after its image stores. Fence completion alone is insufficient: the CPU verifies every status before transitioning allocator records from generating to resident and replacing `65535` requested pages with physical-index-plus-one mappings.
+- Dispatch, barrier, fence, status-read, and residency failures fault only the sparse session and retain CQ3.9. CQ4.7 recycles bricks that the clipmap retires while generation is still in flight once their fence completes, and retires published mappings only after active-table references clear.
+- Bundled CQ1/CQ2/CQ4 asset `Exists`/`Open` operations are serialized around the shared Avalonia loader. This removes a headless/full-suite race that could transiently report a valid CQ4.1 template as missing while another cloud asset stream was opening.
+- The persistent completion SSBO adds 384 bytes. Exact CQ4 density-residency accounting is now 12,684,604 bytes under the 16 MiB ceiling. `IsSamplingReady` remains false, so CQ4.4 does not alter pixels, CQ1 histories, CQ3 lighting, or High/GLES behavior.
+
+## CQ4.5 implementation state
+
+- `common/sparse_cloud_traversal.glsl` owns the page-table and atlas ABI shared by the cloud trace and fixed-ray validation compute shader. It samples only active published tables, decodes mapped values `1..4095`, and treats unmapped, requested, invalid, and out-of-footprint entries as an immediate coarser/shell fallback.
+- The three cascades resolve from L2 to L0 so the finest resident sample wins. Each cascade uses the outer 10% of its logical footprint as a smooth transition; L2 uses the same rule for the final CQ3 procedural-shell fallback while residency converges.
+- Empty-space traversal uses the exact local G field with `max(0.5 voxel, G×0.8)` stepping, switches to fine evaluation at one voxel, and clips every advance to the current logical-brick boundary plus a small forward epsilon. This prevents interpolated distance or a missing adjacent page from skipping unknown density. If the bounded 64-iteration inner walk is exhausted, it yields its current point to the outer marcher instead of discarding the remaining ray.
+- Sparse base density feeds the existing CQ2 fine-detail function only after traversal reaches a resident boundary candidate. High/Cinematic rotated boundary erosion therefore remains the detail source and is not baked redundantly into the atlas.
+- Runtime binds the atlas, all three active tables and their snapped origins on fixed units 8–11 once generation/publication are prepared. `uHasSparseCloudTraversal` is intentionally forced to zero, so CQ4.5 introduces no visible backend transition or history mismatch before CQ4.6.
+- `PreviewSparseCloudTraversalReference` mirrors lookup, fallback, cascade weights, trilinear RG8 sampling, brick clipping and counters. Six focused CPU tests cover finest/coarse/shell resolution, requested pages, negative logical coordinates, 10% transitions, no-skip fixed rays, and fail-open continuation after the inner budget.
+- `genesis_sparse_cloud_traversal_validate.comp` drives an SSBO readback on the hidden OpenGL 4.6 context. The fixed ray takes at least one conservative-distance step, reaches fine evaluation before the occupied plane, selects L0, and performs no fallback query. The full app suite passes `660/660`; all three explicitly enabled cloud live-GL tests pass.
+
+## CQ4.6 implementation state
+
+- `PreviewSparseCloudSamplingIdentity` is the single publication contract for all sparse consumers. It hashes completed atlas generation, active page-table generation, matching controller plan revision, all three snapped origins, and resident count into a stable nonzero signature.
+- An in-flight brick batch does not invalidate the current identity because its pages remain `65535` requested entries and cannot reference the atlas writes. Page staging captures atlas generation and resident count alongside the plan revision and origins. A newer pending fence therefore preserves the current active identity; missing initial generation/residency or a regressed publication suppresses activation and keeps the procedural shell.
+- `PrepareSparseCloudActivationCq46` demotes a stale active identity before cache generation. CQ3 then builds both near and far cascades with the prepared sparse bindings and records the signature on each cascade target. `FinalizeSparseCloudActivationCq46` enables sparse pixels only when both generated cascade identities match exactly.
+- Active-backend and sparse-generation identity participate in CQ1 history hashing. Promotion invalidates temporal confidence before the first sparse trace; recenter/publication/generation discontinuities demote and invalidate before another frame can mix old history with new pages.
+- The main trace, CQ2 detail boundary evaluation, both Cinematic local cone taps, and full-resolution eight-step repair resolve the same sparse base density. CQ3 compute and GL 3.3 fragment-slice generators bind the same atlas, active tables, and origins; their sky probes and the ground-transmittance publisher therefore describe the same density seen by the camera.
+- Sparse failure, unsupported capabilities, force-procedural debug mode, incomplete publication, or failed CQ3 generation keeps `uHasSparseCloudTraversal=0`. Low/Medium/High and GLES/ANGLE remain unchanged.
+- Nine focused identity/activation cases and the complete `685/685` app suite pass. The three explicit cloud live-GL tests pass and compile the modified generic/High trace, edge repair, fragment cache, and compute cache shaders on desktop GL 4.6.
+
+## CQ4.7 implementation state
+
+- Orphaned in-flight bricks recycle through `TryRecycleOrphanedGeneration` after their generation fence completes when the clipmap has already dropped the logical page.
+- Publication captures the staged resident physical indices; `SyncActiveReferences` plus pending-retire recycling release bricks only after active page tables no longer reference them.
+- Atlas overflow increments a bounded counter, skips lower-priority allocations, and never wraps or overwrites resident indices.
+- Nine sparse debug views (`PreviewCloudDebugView` 17–25) colorize clipmap level, page state, physical brick utilization, sparse base density, conservative distance, traversal step classes, shell/coarse fallback, weather-family proxy, and cascade/shell blend weights.
+- `PreviewSparseCloudDiagnosticsCounters` publishes requested/resident/generating/free/utilization/overflow/recycle, orphan recycle, pending retire, identity promote/demote, and CQ3 preparation stalls into the sparse resource diagnostic.
+- `GlGpuTimerScope.SparseBrickGen` times compute brick generation; the cloud timing window reports its p50/p95 beside view trace and CQ3 lighting.
+- `InjectSparseCloudFaultForTests` covers dispatch, barrier, fence, status, publication, and context-loss demotion onto the CQ3.9 shell.
+
+## CQ4.8 implementation state
+
+- Always-on CPU gates prove density-residency memory stays under 16 MiB, overflow recovery recycles slots without wrapping physical indices, and teleports retain the 96-entering-page cap while retiring outside pages.
+- Focused CQ4.7 recovery, counter, and debug-view tests pass with the broader sparse contract suite.
+- Opt-in `AUTOPBR_RUN_CQ4_ACCEPTANCE=1` hidden-WGL harness flies the Cinematic camera through the layer, asserts residency diagnostics remain healthy, injects context-loss shell recovery, and confirms High remains on the procedural path.
 
 ## Next implementation task
 
-Start CQ4.0 capability/backend selection while preserving the accepted flat CQ3.9 procedural layer as the mandatory fallback:
+CQ4 is complete. Prefer follow-on polish only when evidence demands it:
 
-1. Add the planned `CanUseSparseCloudVolumes` desktop capability contract.
-2. Add an internal backend-selection profile without allocating sparse resources or changing cloud pixels.
-3. Select sparse volumes only for Cinematic on compute/image-store/SSBO-capable desktop GL.
-4. Keep High, GLES/ANGLE, and unsupported Cinematic systems on the accepted CQ3.9 procedural flat layer with explicit diagnostics.
+1. Expand the opt-in CQ4.8 harness to a full 1080p multi-fixture visual/performance matrix when a controlled GPU window is available.
+2. Keep the unrelated AO live-GL compile failure quarantined from cloud acceptance unless that concurrent work is intentionally brought into scope.
+3. Otherwise leave the accepted CQ1–CQ4 path alone and treat further cloud work as a new roadmap phase.

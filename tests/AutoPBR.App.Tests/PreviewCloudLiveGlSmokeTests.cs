@@ -15,6 +15,250 @@ namespace AutoPBR.App.Tests;
 public sealed class PreviewCloudLiveGlSmokeTests
 {
     [Fact]
+    public void HiddenWglContext_GeneratesConservativeBorderedSparseCloudBricks()
+    {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable("AUTOPBR_RUN_LIVE_GL_SMOKE"),
+                "1",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var diagnostics = new List<string>();
+        using var context = PreviewDesktopWglContext.TryCreate(
+            [new GlVersion(GlProfileType.OpenGL, 4, 6)],
+            IntPtr.Zero,
+            diagnostics.Add,
+            probePresentationAdapter: false);
+        Assert.NotNull(context);
+
+        context!.Invoke(() =>
+        {
+            using (context.BindOnOwnerThread())
+            {
+                var gl = context.Gl;
+                var caps = PreviewGlCapabilities.FromGl(
+                    gl,
+                    useOpenGlEs: false,
+                    context.VersionString);
+                if (!caps.CanUseSparseCloudVolumes)
+                {
+                    return;
+                }
+
+                var compile = new GlShaderCompileContext(
+                    gl,
+                    useOpenGlEs: false,
+                    caps.Vendor,
+                    caps.Renderer);
+                using var program = compile.CreateComputeProgram(
+                    "genesis_sparse_cloud_brick_generate.comp",
+                    out var shaderError,
+                    "cq4.4-sparse-brick-live-smoke");
+                Assert.True(
+                    program.IsValid,
+                    "CQ4.4 sparse brick compute shader failed: " + shaderError);
+                Assert.True(
+                    PreviewSparseCloudTemplateAssetLoader.TryLoad(
+                        out var templates,
+                        out var templateReason),
+                    templateReason);
+                Assert.True(
+                    GlSparseCloudVolumeResources.TryCreate(
+                        gl,
+                        caps,
+                        out var resources,
+                        out var resourceReason),
+                    resourceReason);
+                Assert.NotNull(resources);
+                using (resources)
+                {
+                    Assert.True(
+                        GlSparseCloudBrickGenerator.TryCreate(
+                            gl,
+                            program,
+                            templates,
+                            out var generator,
+                            out var generatorReason),
+                        generatorReason);
+                    Assert.NotNull(generator);
+                    using (generator)
+                    {
+                        var allocator =
+                            new PreviewSparseCloudBrickAllocator();
+                        PreviewSparseCloudLogicalBrickKey[] adjacent =
+                        [
+                            new(0, 2, 2, 4),
+                            new(0, 3, 2, 4),
+                            new(0, 2, 100, 4),
+                        ];
+                        var inputs =
+                            new PreviewSparseCloudBrickGenerationInputs(
+                                Frame: 7,
+                                CloudBaseWorldY: 0f,
+                                CloudTopWorldY: 128f,
+                                Density: 1.5f,
+                                CoverageScale: 1.5f,
+                                VolumeSize: 178f,
+                                WindOffset: Vector3.Zero,
+                                WeatherTexture: 0);
+                        Assert.True(
+                            generator.TryDispatch(
+                                resources!,
+                                allocator,
+                                adjacent,
+                                inputs,
+                                out var dispatched,
+                                out var dispatchReason),
+                            dispatchReason);
+                        Assert.Equal(3, dispatched);
+                        Assert.True(generator.HasPendingGeneration);
+
+                        gl.Finish();
+                        Assert.True(
+                            generator.TryCollectCompleted(
+                                out var completed,
+                                out var completionReason),
+                            completionReason);
+                        Assert.Equal(3, completed.Count);
+                        Assert.False(generator.HasPendingGeneration);
+                        foreach (var record in completed)
+                        {
+                            Assert.True(
+                                allocator.MarkResident(
+                                    record.Key,
+                                    generator.GenerationId,
+                                    visibleFrame: 8));
+                        }
+
+                        var atlas = ReadRg8Texture3D(
+                            gl,
+                            resources!.AtlasTextureHandle,
+                            PreviewSparseCloudVolumeContract.AtlasTexelSize);
+                        var first = ExtractSparseBrick(
+                            atlas,
+                            completed[0].PhysicalBrickIndex);
+                        var second = ExtractSparseBrick(
+                            atlas,
+                            completed[1].PhysicalBrickIndex);
+                        var empty = ExtractSparseBrick(
+                            atlas,
+                            completed[2].PhysicalBrickIndex);
+                        Assert.True(
+                            PreviewSparseCloudBrickGenerationContract
+                                .ValidateConservativeBrick(
+                                    first,
+                                    out var firstReason),
+                            firstReason);
+                        Assert.True(
+                            PreviewSparseCloudBrickGenerationContract
+                                .ValidateConservativeBrick(
+                                    second,
+                                    out var secondReason),
+                            secondReason);
+                        AssertSparseBrickSharedXBorderMatches(first, second);
+                        Assert.Contains(
+                            first.Where((_, index) => index % 2 == 0),
+                            density => density != 0);
+                        Assert.True(
+                            PreviewSparseCloudBrickGenerationContract
+                                .ValidateConservativeBrick(
+                                    empty,
+                                    out var emptyReason),
+                            emptyReason);
+                        Assert.Equal("valid-empty", emptyReason);
+                        Assert.All(
+                            empty.Where((_, index) => index % 2 == 0),
+                            density => Assert.Equal(0, density));
+                    }
+                }
+
+                Assert.Equal(GLEnum.NoError, gl.GetError());
+            }
+        });
+    }
+
+    [Fact]
+    public void HiddenWglContext_TraversesSparseCloudPagesWithoutSkippingDensity()
+    {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable("AUTOPBR_RUN_LIVE_GL_SMOKE"),
+                "1",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var diagnostics = new List<string>();
+        using var context = PreviewDesktopWglContext.TryCreate(
+            [new GlVersion(GlProfileType.OpenGL, 4, 6)],
+            IntPtr.Zero,
+            diagnostics.Add,
+            probePresentationAdapter: false);
+        Assert.NotNull(context);
+
+        context!.Invoke(() =>
+        {
+            using (context.BindOnOwnerThread())
+            {
+                var gl = context.Gl;
+                var caps = PreviewGlCapabilities.FromGl(
+                    gl,
+                    useOpenGlEs: false,
+                    context.VersionString);
+                if (!caps.CanUseSparseCloudVolumes)
+                {
+                    return;
+                }
+
+                var compile = new GlShaderCompileContext(
+                    gl,
+                    useOpenGlEs: false,
+                    caps.Vendor,
+                    caps.Renderer);
+                using var program = compile.CreateComputeProgram(
+                    "genesis_sparse_cloud_traversal_validate.comp",
+                    out var shaderError,
+                    "cq4.5-sparse-traversal-live-smoke");
+                Assert.True(
+                    program.IsValid,
+                    "CQ4.5 sparse traversal compute shader failed: " +
+                    shaderError);
+                Assert.True(
+                    GlSparseCloudVolumeResources.TryCreate(
+                        gl,
+                        caps,
+                        out var resources,
+                        out var resourceReason),
+                    resourceReason);
+                Assert.NotNull(resources);
+                using (resources)
+                {
+                    UploadSparseTraversalFixture(gl, resources!);
+                    var output = DispatchSparseTraversalFixture(
+                        gl,
+                        program,
+                        resources);
+                    Assert.InRange(output[0], 0f, 10f);
+                    Assert.InRange(output[1], 0f, 1f);
+                    Assert.Equal(0f, output[2]);
+                    Assert.Equal(1f, output[3]);
+                    Assert.True(
+                        output[5] > 0f,
+                        "The fixed ray did not take a conservative-distance step.");
+                    Assert.True(
+                        output[6] > 0f,
+                        "The fixed ray did not enter boundary/fine evaluation.");
+                    Assert.Equal(0f, output[7]);
+                }
+
+                Assert.Equal(GLEnum.NoError, gl.GetError());
+            }
+        });
+    }
+
+    [Fact]
     public void HiddenWglContext_CompilesFlatContinuousWorldCloudShaders()
     {
         if (!string.Equals(Environment.GetEnvironmentVariable("AUTOPBR_RUN_LIVE_GL_SMOKE"), "1",
@@ -37,6 +281,178 @@ public sealed class PreviewCloudLiveGlSmokeTests
             {
                 var gl = context.Gl;
                 var caps = PreviewGlCapabilities.FromGl(gl, useOpenGlEs: false, context.VersionString);
+                var cq40Backend = PreviewSparseCloudBackendPolicy.Select(
+                    PreviewVolumetricQuality.Cinematic,
+                    caps,
+                    forceProceduralLayer: false,
+                    sparseResourcesReady: false,
+                    sparseRuntimeFaulted: false);
+                Assert.Equal(
+                    PreviewCloudDensityBackend.SparseVoxel,
+                    cq40Backend.RequestedBackend);
+                Assert.Equal(
+                    PreviewCloudDensityBackend.ProceduralLayer,
+                    cq40Backend.ActiveBackend);
+                Assert.Equal(
+                    caps.CanUseSparseCloudVolumes,
+                    cq40Backend.CapabilityEligible);
+                if (caps.CanUseSparseCloudVolumes)
+                {
+                    Assert.Equal(
+                        PreviewSparseCloudFallbackReason.SparseResourcesNotReady,
+                        cq40Backend.FallbackReason);
+                    Assert.True(
+                        PreviewSparseCloudTemplateAssetLoader.TryLoad(
+                            out var sparseTemplates,
+                            out var sparseTemplateReason),
+                        sparseTemplateReason);
+                    Assert.Equal(12, sparseTemplates.Templates.Count);
+
+                    Assert.False(
+                        GlSparseCloudVolumeResources.TryCreate(
+                            gl,
+                            caps,
+                            failAfterTextureAllocation: 2,
+                            out var failedSparseResources,
+                            out var injectedAllocationReason));
+                    Assert.Null(failedSparseResources);
+                    Assert.Contains(
+                        "injected-failure-after-2-textures",
+                        injectedAllocationReason,
+                        StringComparison.Ordinal);
+
+                    Assert.True(
+                        GlSparseCloudVolumeResources.TryCreate(
+                            gl,
+                            caps,
+                            out var sparseResources,
+                            out var sparseAllocationReason),
+                        sparseAllocationReason);
+                    Assert.NotNull(sparseResources);
+                    using (sparseResources)
+                    {
+                        Assert.True(sparseResources.IsAllocated);
+                        Assert.False(sparseResources.IsSamplingReady);
+                        Assert.Equal(0, sparseResources.PublishedGenerationId);
+                        Assert.NotEqual(0u, sparseResources.AtlasTextureHandle);
+                        var textureHandles = new HashSet<uint>
+                        {
+                            sparseResources.AtlasTextureHandle,
+                        };
+                        for (var level = 0;
+                             level <
+                             PreviewSparseCloudVolumeContract.ClipmapCount;
+                             level++)
+                        {
+                            Assert.True(
+                                textureHandles.Add(
+                                    sparseResources
+                                        .GetActivePageTableHandle(level)));
+                            Assert.True(
+                                textureHandles.Add(
+                                    sparseResources
+                                        .GetBuildPageTableHandle(level)));
+                        }
+
+                        Assert.Equal(7, textureHandles.Count);
+                        Assert.True(
+                            sparseResources.MemoryAccounting.IsWithinBudget);
+
+                        var activeBefore =
+                            sparseResources.GetActivePageTableHandle(0);
+                        var buildBefore =
+                            sparseResources.GetBuildPageTableHandle(0);
+                        var clipmaps =
+                            new PreviewSparseCloudClipmapController();
+                        var clipmapUpdate = clipmaps.Update(
+                            new Vector3(4f, 24f, -8f),
+                            Vector3.UnitZ,
+                            cloudVerticalCenterWorldY: 30f,
+                            ReadOnlySpan<Vector4>.Empty,
+                            frame: 0);
+                        Assert.Equal(
+                            PreviewSparseCloudVolumeContract
+                                .MaximumEnteringBricksPerFrame,
+                            clipmapUpdate.Entering.Count);
+                        Assert.True(
+                            clipmaps.TryMarkResident(
+                                clipmapUpdate.Entering[0],
+                                physicalBrickIndex: 7));
+                        Assert.True(
+                            sparseResources.TryStagePageTables(
+                                clipmaps,
+                                atlasGenerationId: 7,
+                                out var stagingReason),
+                            stagingReason);
+                        Assert.True(sparseResources.HasPendingPublication);
+                        Assert.False(
+                            sparseResources.TryStagePageTables(
+                                clipmaps,
+                                out var duplicateStagingReason));
+                        Assert.Equal(
+                            "publication-pending",
+                            duplicateStagingReason);
+
+                        gl.Finish();
+                        Assert.True(
+                            sparseResources.TryPublishCompleted(
+                                out var published,
+                                out var publicationReason),
+                            publicationReason);
+                        Assert.True(published);
+                        Assert.False(sparseResources.HasPendingPublication);
+                        Assert.Equal(
+                            1,
+                            sparseResources.PublishedGenerationId);
+                        Assert.Equal(
+                            clipmaps.TableRevision,
+                            sparseResources.PublishedPlanRevision);
+                        Assert.Equal(
+                            7,
+                            sparseResources.PublishedAtlasGenerationId);
+                        Assert.Equal(
+                            clipmaps.ResidentCount,
+                            sparseResources.PublishedResidentCount);
+                        Assert.Equal(
+                            buildBefore,
+                            sparseResources.GetActivePageTableHandle(0));
+                        Assert.Equal(
+                            activeBefore,
+                            sparseResources.GetBuildPageTableHandle(0));
+                        Assert.Equal(
+                            clipmaps.GetOrigin(0),
+                            sparseResources.GetActiveOrigin(0));
+                        Assert.False(sparseResources.IsSamplingReady);
+
+                        var activePages = ReadR16UiTexture3D(
+                            gl,
+                            sparseResources.GetActivePageTableHandle(0));
+                        var firstEntering = clipmapUpdate.Entering[0];
+                        var firstLocal = new Int3(
+                            firstEntering.X - clipmaps.GetOrigin(0).X,
+                            firstEntering.Y - clipmaps.GetOrigin(0).Y,
+                            firstEntering.Z - clipmaps.GetOrigin(0).Z);
+                        Assert.Equal(
+                            PreviewSparseCloudVolumeContract
+                                .EncodePhysicalBrickIndex(7),
+                            activePages[
+                                PreviewSparseCloudVolumeContract
+                                    .PageTableLinearIndex(firstLocal)]);
+                        var secondEntering = clipmapUpdate.Entering[1];
+                        var secondLocal = new Int3(
+                            secondEntering.X - clipmaps.GetOrigin(0).X,
+                            secondEntering.Y - clipmaps.GetOrigin(0).Y,
+                            secondEntering.Z - clipmaps.GetOrigin(0).Z);
+                        Assert.Equal(
+                            PreviewSparseCloudVolumeContract.RequestedPage,
+                            activePages[
+                                PreviewSparseCloudVolumeContract
+                                    .PageTableLinearIndex(secondLocal)]);
+                    }
+
+                    Assert.Equal(GLEnum.NoError, gl.GetError());
+                }
+
                 var compile = new GlShaderCompileContext(gl, useOpenGlEs: false, caps.Vendor, caps.Renderer);
                 using var clouds = compile.CreateProgram(
                     "genesis_godrays.vert",
@@ -234,6 +650,193 @@ public sealed class PreviewCloudLiveGlSmokeTests
 
             return true;
         }, TimeSpan.FromSeconds(30));
+    }
+
+    private static unsafe void UploadSparseTraversalFixture(
+        GL gl,
+        GlSparseCloudVolumeResources resources)
+    {
+        var pageTable = new ushort[
+            PreviewSparseCloudVolumeContract.PageTableEntryCount];
+        var localPage = new Int3(16, 8, 16);
+        pageTable[
+            PreviewSparseCloudVolumeContract.PageTableLinearIndex(
+                localPage)] =
+            PreviewSparseCloudVolumeContract.EncodePhysicalBrickIndex(0);
+        gl.PixelStore(PixelStoreParameter.UnpackAlignment, 2);
+        gl.BindTexture(
+            TextureTarget.Texture3D,
+            resources.GetActivePageTableHandle(0));
+        fixed (ushort* pages = pageTable)
+        {
+            gl.TexSubImage3D(
+                TextureTarget.Texture3D,
+                0,
+                0,
+                0,
+                0,
+                PreviewSparseCloudVolumeContract.PageTableWidth,
+                PreviewSparseCloudVolumeContract.PageTableHeight,
+                PreviewSparseCloudVolumeContract.PageTableDepth,
+                PixelFormat.RedInteger,
+                PixelType.UnsignedShort,
+                pages);
+        }
+
+        var size = PreviewSparseCloudVolumeContract.PhysicalBrickSize;
+        var brick = new byte[size * size * size * 2];
+        const int densityPlaneX = 6;
+        for (var z = 0; z < size; z++)
+        {
+            for (var y = 0; y < size; y++)
+            {
+                for (var x = 0; x < size; x++)
+                {
+                    var index = ((z * size + y) * size + x) * 2;
+                    brick[index] =
+                        x == densityPlaneX ? (byte)255 : (byte)0;
+                    brick[index + 1] =
+                        checked((byte)Math.Abs(x - densityPlaneX));
+                }
+            }
+        }
+
+        gl.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+        gl.BindTexture(
+            TextureTarget.Texture3D,
+            resources.AtlasTextureHandle);
+        fixed (byte* texels = brick)
+        {
+            gl.TexSubImage3D(
+                TextureTarget.Texture3D,
+                0,
+                0,
+                0,
+                0,
+                (uint)size,
+                (uint)size,
+                (uint)size,
+                PixelFormat.RG,
+                PixelType.UnsignedByte,
+                texels);
+        }
+
+        gl.BindTexture(TextureTarget.Texture3D, 0);
+        gl.MemoryBarrier(
+            (uint)MemoryBarrierMask.TextureUpdateBarrierBit |
+            (uint)MemoryBarrierMask.TextureFetchBarrierBit);
+    }
+
+    private static float[] DispatchSparseTraversalFixture(
+        GL gl,
+        GlShaderProgram program,
+        GlSparseCloudVolumeResources resources)
+    {
+        var outputBuffer = gl.GenBuffer();
+        try
+        {
+            var zero = new float[8];
+            gl.BindBuffer(
+                BufferTargetARB.ShaderStorageBuffer,
+                outputBuffer);
+            gl.BufferData<float>(
+                BufferTargetARB.ShaderStorageBuffer,
+                zero,
+                BufferUsageARB.DynamicRead);
+            gl.BindBufferBase(
+                BufferTargetARB.ShaderStorageBuffer,
+                0,
+                outputBuffer);
+
+            program.Use();
+            gl.ActiveTexture(TextureUnit.Texture0);
+            gl.BindTexture(
+                TextureTarget.Texture3D,
+                resources.AtlasTextureHandle);
+            gl.ActiveTexture(TextureUnit.Texture1);
+            gl.BindTexture(
+                TextureTarget.Texture3D,
+                resources.GetActivePageTableHandle(0));
+            gl.ActiveTexture(TextureUnit.Texture2);
+            gl.BindTexture(
+                TextureTarget.Texture3D,
+                resources.GetActivePageTableHandle(1));
+            gl.ActiveTexture(TextureUnit.Texture3);
+            gl.BindTexture(
+                TextureTarget.Texture3D,
+                resources.GetActivePageTableHandle(2));
+            gl.Uniform1(program.GetUniformLocation("uSparseCloudAtlas"), 0);
+            gl.Uniform1(program.GetUniformLocation("uSparseCloudPageL0"), 1);
+            gl.Uniform1(program.GetUniformLocation("uSparseCloudPageL1"), 2);
+            gl.Uniform1(program.GetUniformLocation("uSparseCloudPageL2"), 3);
+            gl.Uniform3(
+                program.GetUniformLocation("uSparseCloudOriginL0"),
+                0,
+                0,
+                0);
+            gl.Uniform3(
+                program.GetUniformLocation("uSparseCloudOriginL1"),
+                0,
+                0,
+                0);
+            gl.Uniform3(
+                program.GetUniformLocation("uSparseCloudOriginL2"),
+                0,
+                0,
+                0);
+            gl.Uniform3(
+                program.GetUniformLocation("uValidationRayOrigin"),
+                256f,
+                136f,
+                264f);
+            gl.Uniform3(
+                program.GetUniformLocation("uValidationRayDirection"),
+                1f,
+                0f,
+                0f);
+            gl.Uniform1(
+                program.GetUniformLocation("uValidationTStart"),
+                0f);
+            gl.Uniform1(
+                program.GetUniformLocation("uValidationTEnd"),
+                16f);
+            gl.Uniform1(
+                program.GetUniformLocation("uValidationFineStep"),
+                1f);
+
+            gl.DispatchCompute(1, 1, 1);
+            gl.MemoryBarrier(
+                (uint)MemoryBarrierMask.ShaderStorageBarrierBit);
+            gl.Finish();
+            var output = new float[8];
+            gl.BindBuffer(
+                BufferTargetARB.ShaderStorageBuffer,
+                outputBuffer);
+            gl.GetBufferSubData<float>(
+                BufferTargetARB.ShaderStorageBuffer,
+                0,
+                output);
+            return output;
+        }
+        finally
+        {
+            gl.BindBufferBase(
+                BufferTargetARB.ShaderStorageBuffer,
+                0,
+                0);
+            gl.BindBuffer(
+                BufferTargetARB.ShaderStorageBuffer,
+                0);
+            gl.UseProgram(0);
+            gl.DeleteBuffer(outputBuffer);
+            for (var unit = 0; unit < 4; unit++)
+            {
+                gl.ActiveTexture(TextureUnit.Texture0 + unit);
+                gl.BindTexture(TextureTarget.Texture3D, 0);
+            }
+
+            gl.ActiveTexture(TextureUnit.Texture0);
+        }
     }
 
     private static void ValidateCloudLightFragmentReference(
@@ -968,8 +1571,11 @@ public sealed class PreviewCloudLiveGlSmokeTests
 
             var hdrRed = hdr.GetRgbaSpan()[0];
             var sdrRed = sdr.GetRgbaSpan()[0];
-            Assert.InRange(hdrRed, (byte)240, (byte)252);
-            Assert.InRange(sdrRed, (byte)(hdrRed + 1), (byte)254);
+            // HDR uses presentEncodeScRgb (ACES + headroom); SDR uses soft-knee + sRGB.
+            // Hot linear input (2.5) should land near display white on both paths.
+            Assert.InRange(hdrRed, (byte)230, (byte)255);
+            Assert.InRange(sdrRed, (byte)230, (byte)254);
+            Assert.NotEqual(hdrRed, sdrRed);
         }
         finally
         {
@@ -1042,10 +1648,18 @@ public sealed class PreviewCloudLiveGlSmokeTests
                 output.ColorTextureHandle,
                 outputSize,
                 outputSize);
-            var centerAlpha = pixels[((3 * outputSize + 3) * 4) + 3];
+            var centerIndex = (3 * outputSize + 3) * 4;
+            var centerAlpha = pixels[centerIndex + 3];
             var cornerAlpha = pixels[3];
             Assert.InRange(centerAlpha, 0.995f, 1.001f);
             Assert.InRange(cornerAlpha, 0.58f, 0.62f);
+            // Sealed disc alpha must keep matching premultiplied RGB so the sun is
+            // covered by cloud radiance, not a dark cookie-cutter hole.
+            Assert.True(
+                pixels[centerIndex] > pixels[0] * 1.4f &&
+                pixels[centerIndex + 1] > pixels[1] * 1.4f &&
+                pixels[centerIndex + 2] > pixels[2] * 1.4f,
+                "Direct-disc seal must rescale premultiplied RGB with composite alpha.");
 
             SetUniform1(gl, upsample, "uSunDiscVisibility", 0f);
             output.Clear();
@@ -1369,6 +1983,8 @@ public sealed class PreviewCloudLiveGlSmokeTests
         SetUniform1(gl, program, "uCloudDataDirect", directMetadata ? 1 : 0);
         SetUniform1(gl, program, "uCloudExposure", 1f);
         SetUniform1(gl, program, "uHdrPresent", hdrPresent ? 1 : 0);
+        SetUniform1(gl, program, "uHdrPaperWhiteNits", 80f);
+        SetUniform1(gl, program, "uHdrPeakNits", 400f);
         SetUniform1(gl, program, "uApplyCloudEncoding", applyCloudEncoding ? 1 : 0);
         SetUniform1(gl, program, "uCloudSourceFullResolution", 0);
         SetUniform2(gl, program, "uCloudTexelSize", 1f / cloudSize, 1f / cloudSize);
@@ -1606,6 +2222,115 @@ public sealed class PreviewCloudLiveGlSmokeTests
         return pixels;
     }
 
+    private static unsafe ushort[] ReadR16UiTexture3D(
+        GL gl,
+        uint texture)
+    {
+        var previous =
+            (uint)Math.Max(0, gl.GetInteger(GetPName.TextureBinding3D));
+        var values = new ushort[
+            PreviewSparseCloudVolumeContract.PageTableEntryCount];
+        try
+        {
+            gl.BindTexture(TextureTarget.Texture3D, texture);
+            fixed (ushort* pointer = values)
+            {
+                gl.GetTexImage(
+                    TextureTarget.Texture3D,
+                    0,
+                    PixelFormat.RedInteger,
+                    PixelType.UnsignedShort,
+                    pointer);
+            }
+
+            Assert.Equal(GLEnum.NoError, gl.GetError());
+            return values;
+        }
+        finally
+        {
+            gl.BindTexture(TextureTarget.Texture3D, previous);
+        }
+    }
+
+    private static unsafe byte[] ReadRg8Texture3D(
+        GL gl,
+        uint texture,
+        int size)
+    {
+        var previous =
+            (uint)Math.Max(0, gl.GetInteger(GetPName.TextureBinding3D));
+        var values = new byte[checked(size * size * size * 2)];
+        try
+        {
+            gl.BindTexture(TextureTarget.Texture3D, texture);
+            fixed (byte* pointer = values)
+            {
+                gl.GetTexImage(
+                    TextureTarget.Texture3D,
+                    0,
+                    PixelFormat.RG,
+                    PixelType.UnsignedByte,
+                    pointer);
+            }
+
+            Assert.Equal(GLEnum.NoError, gl.GetError());
+            return values;
+        }
+        finally
+        {
+            gl.BindTexture(TextureTarget.Texture3D, previous);
+        }
+    }
+
+    private static byte[] ExtractSparseBrick(
+        ReadOnlySpan<byte> atlas,
+        int physicalBrickIndex)
+    {
+        var atlasSize = PreviewSparseCloudVolumeContract.AtlasTexelSize;
+        var brickSize = PreviewSparseCloudVolumeContract.PhysicalBrickSize;
+        var brickCoordinate =
+            PreviewSparseCloudVolumeContract.PhysicalBrickAtlasCoordinate(
+                physicalBrickIndex);
+        var result = new byte[brickSize * brickSize * brickSize * 2];
+        for (var z = 0; z < brickSize; z++)
+        {
+            for (var y = 0; y < brickSize; y++)
+            {
+                for (var x = 0; x < brickSize; x++)
+                {
+                    var atlasX = brickCoordinate.X * brickSize + x;
+                    var atlasY = brickCoordinate.Y * brickSize + y;
+                    var atlasZ = brickCoordinate.Z * brickSize + z;
+                    var source =
+                        ((atlasZ * atlasSize + atlasY) * atlasSize + atlasX) *
+                        2;
+                    var destination = ((z * brickSize + y) * brickSize + x) * 2;
+                    result[destination] = atlas[source];
+                    result[destination + 1] = atlas[source + 1];
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private static void AssertSparseBrickSharedXBorderMatches(
+        ReadOnlySpan<byte> left,
+        ReadOnlySpan<byte> right)
+    {
+        var size = PreviewSparseCloudVolumeContract.PhysicalBrickSize;
+        for (var z = 0; z < size; z++)
+        {
+            for (var y = 0; y < size; y++)
+            {
+                var leftIndex = ((z * size + y) * size + (size - 1)) * 2;
+                var rightIndex = ((z * size + y) * size + 1) * 2;
+                Assert.Equal(left[leftIndex], right[rightIndex]);
+                Assert.Equal(left[leftIndex + 1], right[rightIndex + 1]);
+            }
+        }
+    }
+
     private static uint CreateFullscreenQuad(GL gl, out uint vbo)
     {
         var vao = gl.GenVertexArray();
@@ -1626,6 +2351,63 @@ public sealed class PreviewCloudLiveGlSmokeTests
 
         gl.BindVertexArray(0);
         return vao;
+    }
+
+    [Fact]
+    public void HiddenWglContext_CompilesScreenSpaceAoShaders()
+    {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable("AUTOPBR_RUN_LIVE_GL_SMOKE"),
+                "1",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var diagnostics = new List<string>();
+        using var context = PreviewDesktopWglContext.TryCreate(
+            [new GlVersion(GlProfileType.OpenGL, 4, 6)],
+            IntPtr.Zero,
+            diagnostics.Add,
+            probePresentationAdapter: false);
+        Assert.NotNull(context);
+
+        context!.Invoke(() =>
+        {
+            using (context.BindOnOwnerThread())
+            {
+                var gl = context.Gl;
+                var caps = PreviewGlCapabilities.FromGl(gl, useOpenGlEs: false, context.VersionString);
+                Assert.True(caps.CanUseScreenSpaceAo);
+
+                var compile = new GlShaderCompileContext(gl, useOpenGlEs: false, caps.Vendor, caps.Renderer);
+                string? err;
+                using var ssao = compile.CreateProgram(
+                    "genesis_godrays.vert", "genesis_ssao.frag", out err, "ssao-live-smoke");
+                Assert.True(ssao.IsValid, err ?? "SSAO link failed");
+
+                using var gtao = compile.CreateProgram(
+                    "genesis_godrays.vert", "genesis_gtao.frag", out err, "gtao-live-smoke");
+                Assert.True(gtao.IsValid, err ?? "GTAO link failed");
+
+                using var blur = compile.CreateProgram(
+                    "genesis_godrays.vert", "genesis_ao_bilateral.frag", out err, "ao-blur-live-smoke");
+                Assert.True(blur.IsValid, err ?? "AO bilateral link failed");
+
+                using var temporal = compile.CreateProgram(
+                    "genesis_godrays.vert", "genesis_ao_temporal.frag", out err, "ao-temporal-live-smoke");
+                Assert.True(temporal.IsValid, err ?? "AO temporal link failed");
+
+                using var composite = compile.CreateProgram(
+                    "genesis_godrays.vert", "genesis_ao_composite.frag", out err, "ao-composite-live-smoke");
+                Assert.True(composite.IsValid, err ?? "AO composite link failed");
+
+                using var capture = new GlSceneCaptureTarget(gl, useOpenGlEs: false);
+                Assert.True(capture.EnsureSize(64, 64));
+                Assert.True(capture.HasViewNormals);
+                Assert.True(capture.IsValid);
+            }
+        });
     }
 
     private static void SetUniform1(GL gl, GlShaderProgram program, string name, int value)

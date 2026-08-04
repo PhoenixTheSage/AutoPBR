@@ -221,8 +221,8 @@ public sealed class UserSettings
     /// <summary>Hard Full-detail terrain chunk radius (Chebyshev).</summary>
     public int Preview3DChunkViewDistance { get; set; } = 8;
 
-    /// <summary>Extra distant LOD chunk ring beyond hard view distance.</summary>
-    public int Preview3DLodRingChunks { get; set; } = 16;
+    /// <summary>Extra distant LOD chunk ring beyond hard view distance (up to 1024).</summary>
+    public int Preview3DLodRingChunks { get; set; } = 128;
 
     /// <summary>Deterministic seed for streamed preview terrain.</summary>
     public int Preview3DWorldSeed { get; set; } = 0x41504252;
@@ -377,6 +377,9 @@ public sealed class UserSettings
 
     public bool Preview3DEnableGodRays { get; set; } = true;
 
+    /// <summary>Layer screen-space / shadow-map beams for fine leaf gaps over froxel fog.</summary>
+    public bool Preview3DEnableScreenSpaceGodRays { get; set; } = true;
+
     public bool Preview3DEnableVolumetricClouds { get; set; }
 
     /// <summary>0 = low, 1 = medium, 2 = high volumetric cost preset.</summary>
@@ -384,11 +387,22 @@ public sealed class UserSettings
 
     public double Preview3DGodRayStrength { get; set; } = 0.45;
 
-    /// <summary>Debug: froxel god-ray inscatter gain (shader default 3.4).</summary>
-    public double Preview3DGodRayScatterGain { get; set; } = 3.4;
+    public double Preview3DScreenSpaceGodRayStrength { get; set; } = 0.85;
 
-    /// <summary>Debug: froxel god-ray Beer-Lambert extinction coefficient (shader default 1.15).</summary>
-    public double Preview3DGodRayExtinction { get; set; } = 1.15;
+    /// <summary>Screen-space beam cone width multiplier (1 = default).</summary>
+    public double Preview3DGodRayConeScale { get; set; } = 1.25;
+
+    /// <summary>Multiplier on fog/god-ray froxel XY/slice resolution (1 = quality preset).</summary>
+    public double Preview3DGodRayFroxelResolution { get; set; } = 1.35;
+
+    /// <summary>0 = lit fog from any angle, 1 = Mie shafts only when looking toward the sun.</summary>
+    public double Preview3DGodRayPhaseDirectivity { get; set; } = 0.42;
+
+    /// <summary>Debug: froxel god-ray inscatter gain (default 3.6; shafts only, not ambient fill).</summary>
+    public double Preview3DGodRayScatterGain { get; set; } = 3.6;
+
+    /// <summary>Debug: froxel god-ray Beer-Lambert extinction coefficient (default 0.70 with atmospheric fill).</summary>
+    public double Preview3DGodRayExtinction { get; set; } = 0.70;
 
     /// <summary>Debug: uniform froxel medium density so god rays show without fog/clouds (0 = off).</summary>
     public double Preview3DGodRayDebugDensity { get; set; }
@@ -415,6 +429,36 @@ public sealed class UserSettings
     /// <summary>High thin cirrus sheet opacity (0 = off).</summary>
     public double Preview3DCloudCirrusStrength { get; set; } = 0.45;
 
+    /// <summary>Number of stacked cumulus altitude decks (1–3).</summary>
+    public double Preview3DCloudCumulusLayerCount { get; set; } = 2;
+
+    /// <summary>Clear-air gap between successive cumulus decks.</summary>
+    public double Preview3DCloudInterDeckGap { get; set; } = 12.0;
+
+    /// <summary>Procedural XZ base-height variance amplitude inside each cumulus deck.</summary>
+    public double Preview3DCloudLayerHeightVariance { get; set; } = 6.0;
+
+    /// <summary>Thickness scale for upper cumulus decks relative to the primary deck.</summary>
+    public double Preview3DCloudUpperThicknessScale { get; set; } = 0.65;
+
+    /// <summary>Coverage scale multiplier for upper cumulus decks.</summary>
+    public double Preview3DCloudUpperCoverageScale { get; set; } = 0.70;
+
+    /// <summary>Density scale multiplier for upper cumulus decks.</summary>
+    public double Preview3DCloudUpperDensityScale { get; set; } = 0.85;
+
+    /// <summary>Wind speed scale for upper cumulus decks.</summary>
+    public double Preview3DCloudUpperWindSpeedScale { get; set; } = 1.35;
+
+    /// <summary>Clear-air gap from the top cumulus deck to the cirrus sheet.</summary>
+    public double Preview3DCloudCirrusGap { get; set; } = 120.0;
+
+    /// <summary>Thickness of the cirrus sheet.</summary>
+    public double Preview3DCloudCirrusThickness { get; set; } = 2.5;
+
+    /// <summary>0 = Auto, 1 = Humilis, 2 = Mediocris, 3 = Congestus, 4 = Stratus.</summary>
+    public int Preview3DCloudStyleBias { get; set; }
+
     /// <summary>0 = off, 1 = coverage map, 2 = mid-layer density slice.</summary>
     public int Preview3DCloudDebugView { get; set; }
 
@@ -427,6 +471,18 @@ public sealed class UserSettings
 
     /// <summary>Final preview TAA on the composited RGB frame.</summary>
     public bool Preview3DEnablePreviewTaa { get; set; } = true;
+
+    /// <summary>Screen-space AO (SSAO / GTAO) on lit opaque scene color.</summary>
+    public bool Preview3DEnableScreenSpaceAo { get; set; }
+
+    /// <summary>0 = Auto, 1 = SSAO, 2 = GTAO.</summary>
+    public int Preview3DAoMode { get; set; }
+
+    public double Preview3DAoStrength { get; set; } = 0.85;
+
+    public double Preview3DAoRadius { get; set; } = 0.55;
+
+    public double Preview3DAoPower { get; set; } = 1.15;
 
     /// <summary>Final preview TAA tuning preset: 0 = less jitter, 1 = stable, 2 = edge AA, 3 = sharp, 4 = no projection jitter.</summary>
     public int? Preview3DTaaMode { get; set; }
@@ -465,6 +521,12 @@ public sealed class UserSettings
     /// <summary>Max world-space radius for directional shadow casting/receiving (32..256).</summary>
     public double Preview3DShadowDistance { get; set; } = 128;
 
+    /// <summary>
+    /// Directional shadow tone (0 = no darkening, 1 = map as sampled, up to 3 = deeper umbra via ambient).
+    /// Does not change shadow footprint/size.
+    /// </summary>
+    public double Preview3DShadowStrength { get; set; } = 1.0;
+
     /// <summary>Number of crossed sprite planes to build for 2D Sprite flagged textures in 3D preview.</summary>
     public int Preview3DSpritePlaneCount { get; set; } = 1;
 
@@ -479,6 +541,9 @@ public sealed class UserSettings
 
     /// <summary>3D preview: mouse wheel zoom step strength.</summary>
     public double Preview3DCameraZoomSensitivity { get; set; } = 0.12;
+
+    /// <summary>3D preview: FOV magnification while holding C (1.25–4×).</summary>
+    public double Preview3DCameraHoldZoomLevel { get; set; } = 2.0;
 
     /// <summary>3D preview: orbit boom arm length (world units), pivot-to-eye distance for default framing.</summary>
     public double Preview3DCameraOrbitBoomDistance { get; set; } = PreviewCamera.DefaultOrbitBoomArmDistance;

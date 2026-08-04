@@ -19,7 +19,16 @@ public enum PreviewCloudDebugView
     DetailCurlDistortion = 13,
     SelectedLod = 14,
     BaseDensity = 15,
-    AssetProfile = 16
+    AssetProfile = 16,
+    SparseClipmapLevel = 17,
+    SparsePageState = 18,
+    SparsePhysicalBrick = 19,
+    SparseBaseDensity = 20,
+    SparseConservativeDistance = 21,
+    SparseTraversalSteps = 22,
+    SparseFallbackContribution = 23,
+    SparseTemplateFamily = 24,
+    SparseCascadeBlend = 25
 }
 
 public sealed class PreviewRenderSettings
@@ -81,9 +90,10 @@ public sealed class PreviewRenderSettings
     public int ChunkViewDistance { get; init; } = 8;
 
     /// <summary>
-    /// Extra Chebyshev chunks beyond <see cref="ChunkViewDistance"/> kept as distant LOD meshes.
+    /// Extra Chebyshev chunks beyond <see cref="ChunkViewDistance"/> kept as combined distant LOD
+    /// sections (up to 1024 for extreme horizon ranges).
     /// </summary>
-    public int LodRingChunks { get; init; } = 16;
+    public int LodRingChunks { get; init; } = 128;
 
     /// <summary>Deterministic world seed for streamed terrain (pad under subject stays flat).</summary>
     public int TerrainWorldSeed { get; init; } = 0x41504252;
@@ -255,6 +265,12 @@ public sealed class PreviewRenderSettings
     public float ShadowDistance { get; init; } = 128f;
 
     /// <summary>
+    /// Shadow tone lightness/darkness (0 = none, 1 = as sampled, &gt;1 deeper umbra via ambient).
+    /// Preserves sampled footprint; clamped 0..3 in the preview settings snapshot.
+    /// </summary>
+    public float ShadowStrength { get; init; } = 1f;
+
+    /// <summary>
     /// Cascaded directional shadows (near/mid/far distance LODs with stepped map resolutions).
     /// </summary>
     public bool EnableShadowCascades { get; init; }
@@ -272,13 +288,32 @@ public sealed class PreviewRenderSettings
     public int VolumetricQuality { get; init; } = 1;
 
     public float GodRayStrength { get; init; } = 0.45f;
-    public float GodRayConeScale { get; init; } = 1f;
+    public float GodRayConeScale { get; init; } = 1.25f;
 
-    /// <summary>Debug: inscatter accumulation gain in the froxel integrate march (shader constant was 3.4).</summary>
-    public float GodRayScatterGain { get; init; } = 3.4f;
+    /// <summary>
+    /// Layer shadow-aware / screen-space god rays for fine beams (leaf gaps) the froxel grid misses.
+    /// When froxel volumetric fog is off, this is the standalone shaft path.
+    /// </summary>
+    public bool EnableScreenSpaceGodRays { get; init; } = true;
 
-    /// <summary>Debug: extinction coefficient for Beer-Lambert transmittance in the integrate march (was 1.15).</summary>
-    public float GodRayExtinction { get; init; } = 1.15f;
+    /// <summary>Intensity of the screen-space / shadow-map god-ray layer.</summary>
+    public float ScreenSpaceGodRayStrength { get; init; } = 0.85f;
+
+    /// <summary>
+    /// Multiplier on froxel XY/slice resolution (1 = quality preset, higher = finer less-blocky shafts).
+    /// </summary>
+    public float GodRayFroxelResolution { get; init; } = 1.35f;
+
+    /// <summary>
+    /// 0 = sun-lit fog visible from any camera angle (isotropic), 1 = pure Mie shafts only when looking toward the sun.
+    /// </summary>
+    public float GodRayPhaseDirectivity { get; init; } = 0.42f;
+
+    /// <summary>Debug: inscatter accumulation gain in the froxel integrate march (sun shafts only).</summary>
+    public float GodRayScatterGain { get; init; } = 3.6f;
+
+    /// <summary>Debug: extinction coefficient for Beer-Lambert transmittance in the integrate march.</summary>
+    public float GodRayExtinction { get; init; } = 0.70f;
 
     /// <summary>Debug: uniform participating-medium density injected into the froxel volume so god rays are
     /// visible without height fog or clouds (0 = off / production behaviour).</summary>
@@ -307,6 +342,39 @@ public sealed class PreviewRenderSettings
 
     /// <summary>Opacity of the high thin cirrus sheet above the main cloud layer (0 = disabled).</summary>
     public float CloudCirrusStrength { get; init; } = 0.45f;
+
+    /// <summary>Number of stacked cumulus altitude decks (1–3).</summary>
+    public int CloudCumulusLayerCount { get; init; } = 2;
+
+    /// <summary>Clear-air gap between successive cumulus decks.</summary>
+    public float CloudInterDeckGap { get; init; } = 12f;
+
+    /// <summary>Procedural XZ base-height variance amplitude inside each cumulus deck.</summary>
+    public float CloudLayerHeightVariance { get; init; } = 6f;
+
+    /// <summary>Thickness scale applied to upper cumulus decks relative to the primary deck.</summary>
+    public float CloudUpperThicknessScale { get; init; } = 0.65f;
+
+    /// <summary>Coverage scale multiplier for upper cumulus decks.</summary>
+    public float CloudUpperCoverageScale { get; init; } = 0.70f;
+
+    /// <summary>Density scale multiplier for upper cumulus decks.</summary>
+    public float CloudUpperDensityScale { get; init; } = 0.85f;
+
+    /// <summary>Wind speed scale for upper cumulus decks relative to the primary deck.</summary>
+    public float CloudUpperWindSpeedScale { get; init; } = 1.35f;
+
+    /// <summary>Clear-air gap from the top cumulus deck to the cirrus sheet.</summary>
+    public float CloudCirrusGap { get; init; } = 120f;
+
+    /// <summary>Thickness of the cirrus sheet.</summary>
+    public float CloudCirrusThickness { get; init; } = 2.5f;
+
+    /// <summary>
+    /// Cloud style bias: 0 = Auto (weather-driven), 1 = Humilis, 2 = Mediocris,
+    /// 3 = Congestus, 4 = Stratus.
+    /// </summary>
+    public int CloudStyleBias { get; init; }
 
     /// <summary>Debug overlay replacing the lit cloud composite (coverage map or mid-layer density slice).</summary>
     public PreviewCloudDebugView CloudDebugView { get; init; }
@@ -340,6 +408,24 @@ public sealed class PreviewRenderSettings
 
     /// <summary>Final full-res TAA on the composited preview frame (uses shared temporal reprojection).</summary>
     public bool EnablePreviewTaa { get; init; } = true;
+
+    /// <summary>Screen-space ambient occlusion (SSAO / GTAO) on lit opaque scene color.</summary>
+    public bool EnableScreenSpaceAo { get; init; }
+
+    /// <summary><see cref="PreviewAoMode"/>: Auto / SSAO / GTAO.</summary>
+    public int PreviewAoMode { get; init; }
+
+    /// <summary>How strongly AO multiplies lit opaque color (0 = off, 1 = full).</summary>
+    public float AoStrength { get; init; } = 0.85f;
+
+    /// <summary>AO sample radius in view-space units.</summary>
+    public float AoRadius { get; init; } = 0.55f;
+
+    /// <summary>Power curve applied to occlusion visibility.</summary>
+    public float AoPower { get; init; } = 1.15f;
+
+    /// <summary>0 = off, 1 = raw AO, 2 = strength-applied AO.</summary>
+    public int AoDebugView { get; init; }
 
     /// <summary>Final preview TAA tuning preset: 0 = less jitter, 1 = stable, 2 = edge AA, 3 = sharp, 4 = no projection jitter.</summary>
     public int PreviewTaaMode { get; init; }

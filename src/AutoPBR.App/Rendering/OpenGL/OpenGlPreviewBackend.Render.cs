@@ -191,6 +191,7 @@ public sealed partial class OpenGlPreviewBackend
         float orbitYaw;
         float orbitPitch;
         float orbitDistance;
+        float holdFovZoomMagnification;
         bool drawBootstrapOnly;
         int previewPixelWidth;
         int previewPixelHeight;
@@ -271,6 +272,7 @@ public sealed partial class OpenGlPreviewBackend
                 orbitYaw = 0;
                 orbitPitch = 0;
                 orbitDistance = 0;
+                holdFovZoomMagnification = 1f;
             }
             else if (_program is null || !_program.IsValid || _albedo is null ||
                      _normal is null || _spec is null || _height is null || _mesh is null || _groundMesh is null ||
@@ -302,6 +304,9 @@ public sealed partial class OpenGlPreviewBackend
                 orbitYaw = _orbitYaw;
                 orbitPitch = _orbitPitch;
                 orbitDistance = _orbitDistance;
+                holdFovZoomMagnification = _holdFovZoomActive
+                    ? Math.Max(_holdFovZoomLevel, 1f)
+                    : 1f;
             }
         }
 
@@ -363,6 +368,7 @@ public sealed partial class OpenGlPreviewBackend
             OrbitYaw = orbitYaw,
             OrbitPitch = orbitPitch,
             OrbitDistance = orbitDistance,
+            HoldFovZoomMagnification = holdFovZoomMagnification,
             MeshDirty = meshDirty,
             MaterialDirty = materialDirty,
         };

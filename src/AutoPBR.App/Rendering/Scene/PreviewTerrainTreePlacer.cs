@@ -16,6 +16,10 @@ public static class PreviewTerrainTreePlacer
         int TrunkHeight,
         int VariantSalt);
 
+    /// <param name="placementStep">
+    /// Candidate grid step in meters. Full chunks use 1; combined LOD sections pass their
+    /// sample step so coarse rings stay tractable while still carrying vegetation.
+    /// </param>
     public static List<Placement> CollectForChunk(
         int cx0,
         int cz0,
@@ -24,7 +28,8 @@ public static class PreviewTerrainTreePlacer
         Func<int, int, PreviewTerrainColumnSample> columnAt,
         in PreviewTerrainWorldGenSettings worldGen,
         PreviewTerrainVegetationBakePlan plan,
-        int flatPadHalfExtent = PreviewStageConstants.TerrainFlatPadHalfExtent)
+        int flatPadHalfExtent = PreviewStageConstants.TerrainFlatPadHalfExtent,
+        int placementStep = 1)
     {
         var result = new List<Placement>(8);
         if (!plan.HasAny)
@@ -32,13 +37,14 @@ public static class PreviewTerrainTreePlacer
             return result;
         }
 
+        placementStep = Math.Max(1, placementStep);
         var gen = PreviewTerrainWorldGenSettings.Resolve(worldGen);
         var occupied = new HashSet<long>();
         flatPadHalfExtent = Math.Max(0, flatPadHalfExtent);
 
-        for (var z = cz0; z < cz1; z++)
+        for (var z = cz0; z < cz1; z += placementStep)
         {
-            for (var x = cx0; x < cx1; x++)
+            for (var x = cx0; x < cx1; x += placementStep)
             {
                 var chebyshev = Math.Max(Math.Abs(x), Math.Abs(z));
                 if (chebyshev <= flatPadHalfExtent)
@@ -59,7 +65,13 @@ public static class PreviewTerrainTreePlacer
                     continue;
                 }
 
+                // Coarse candidate grids keep world spacing at least one cell apart.
                 var spacing = PreviewTerrainTreeSpeciesRules.MinSpacing(species);
+                if (placementStep > 1)
+                {
+                    spacing = Math.Max(spacing, placementStep);
+                }
+
                 if (IsTooClose(occupied, x, z, spacing))
                 {
                     continue;

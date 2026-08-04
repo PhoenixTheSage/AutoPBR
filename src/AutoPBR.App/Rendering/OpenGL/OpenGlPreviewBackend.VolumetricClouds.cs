@@ -45,7 +45,10 @@ public sealed partial class OpenGlPreviewBackend
     private int _cloudHistoryH;
     private int _cloudHistoryViewportW;
     private int _cloudHistoryViewportH;
-    private bool _loggedCloudDraw;
+    private readonly PreviewCloudDiagnosticGate _cloudProfileDiagnosticGate =
+        new(capacity: 8);
+    private readonly PreviewCloudDiagnosticGate _cloudLifecycleDiagnosticGate =
+        new(capacity: 16);
     private int _cloudDeferredCompositeRetries;
     private int _loggedCloudDeferredCompositeMiss;
     private int _cloudTierReadyWarmupDraws;
@@ -57,6 +60,15 @@ public sealed partial class OpenGlPreviewBackend
     private bool _cloudEdgeRepairFaulted;
     private bool _loggedCloudEdgeRepairFallback;
     private int _cloudHistoryConfidenceFrames;
+    private int _cloudHistoryLowConfidenceFrames;
+    private bool _cloudHistoryConfidenceFullLogged;
+    private bool _cloudHistoryCopyFailureLogged;
+    /// <summary>
+    /// Last CA3.1 stability factor (camera/confidence). Consumed by CQ1.8 repair so
+    /// the post-temporal STBN retrace does not undo idle denoise on soft edges.
+    /// </summary>
+    private float _cloudTemporalStability;
+    private bool _cloudIdleDenoiseLatched;
     private string _cloudStbnDiagnostic = "not-initialized";
     private string _cloudMomentsDiagnostic = "not-initialized";
     private string _cloudEdgeRepairDiagnostic = "not-initialized";
@@ -68,6 +80,32 @@ public sealed partial class OpenGlPreviewBackend
     private string _cloudDensityGenerationLoadReason = "not-started";
     private bool _cloudDensityGenerationFailureLogged;
     private int _lastCloudDebugViewDiagnostic = -1;
+    private PreviewSparseCloudBackendSelection _cloudDensityBackendSelection;
+    private bool _sparseCloudResourcesReady;
+    private bool _sparseCloudRuntimeFaulted;
+    private bool _cloudDensityBackendSelectionInitialized;
+    private PreviewSparseCloudTemplateAssetSet? _sparseCloudTemplateAssets;
+    private string _sparseCloudTemplateDiagnostic = "not-initialized";
+    private GlSparseCloudVolumeResources? _sparseCloudVolumeResources;
+    private PreviewSparseCloudBrickAllocator? _sparseCloudBrickAllocator;
+    private PreviewSparseCloudClipmapController? _sparseCloudClipmapController;
+    private GlShaderProgram? _sparseCloudBrickGenerationProgram;
+    private GlSparseCloudBrickGenerator? _sparseCloudBrickGenerator;
+    private bool _sparseCloudResourceAllocationAttempted;
+    private string _sparseCloudResourceDiagnostic = "not-initialized";
+    private bool _sparseCloudTraversalPrepared;
+    private string _sparseCloudTraversalDiagnostic = "not-initialized";
+    private PreviewSparseCloudSamplingIdentity _sparseCloudPreparedIdentity;
+    private PreviewSparseCloudSamplingIdentity _sparseCloudActiveIdentity;
+    private string _sparseCloudActivationDiagnostic = "not-initialized";
+    private int _sparseCloudControlFrame;
+    private int _sparseCloudPreparedLightingChaseCooldown;
+    private readonly HashSet<PreviewSparseCloudLogicalBrickKey>
+        _sparseCloudPendingRetire = [];
+    private readonly PreviewSparseCloudDiagnosticsCounters
+        _sparseCloudCounters = new();
+    private PreviewSparseCloudFaultInjectPoint _sparseCloudFaultInject =
+        PreviewSparseCloudFaultInjectPoint.None;
     private PreviewCloudLightingCachePlan _cloudLightingCachePlan;
     private GlShaderProgram? _cloudLightSliceProgram;
     private GlShaderProgram? _cloudLightComputeProgram;
@@ -241,6 +279,9 @@ public sealed partial class OpenGlPreviewBackend
 
         gl.BindVertexArray(0);
         TryInitCloudLightingCacheCq33(gl, useOpenGlEs, volumetricQuality);
+        TryInitSparseCloudTemplateAssetsCq41();
+        TryInitSparseCloudResourcesCq42(gl, volumetricQuality);
+        UpdateCloudDensityBackendSelectionCq40(volumetricQuality);
         EmitDiagnostic(
             "[3D preview] CQ3.3 cloud-light froxel cache contract: " +
             _cloudLightingCachePlan.FormatDiagnostic(
@@ -265,6 +306,15 @@ public sealed partial class OpenGlPreviewBackend
         _cloudGroundTransmittanceTarget = null;
         _cloudLightCache?.Dispose();
         _cloudLightCache = null;
+        _sparseCloudVolumeResources?.Dispose();
+        _sparseCloudVolumeResources = null;
+        _sparseCloudBrickGenerator?.Dispose();
+        _sparseCloudBrickGenerator = null;
+        _sparseCloudBrickGenerationProgram?.Dispose();
+        _sparseCloudBrickGenerationProgram = null;
+        _sparseCloudBrickAllocator = null;
+        _sparseCloudClipmapController = null;
+        _sparseCloudPendingRetire.Clear();
         _cloudLightBasis = null;
         _cloudLightCacheReadyLogged = false;
         _cloudLightGenerationFailureLogged = false;
@@ -503,7 +553,13 @@ public sealed partial class OpenGlPreviewBackend
                 layerWorldY,
                 frame.Settings.CloudVolumeHeight,
                 frame.Settings.CloudVolumeSize,
-                frame.Settings.CloudCirrusStrength);
+                frame.Settings.CloudCirrusStrength,
+                frame.Settings.CloudCumulusLayerCount,
+                frame.Settings.CloudInterDeckGap,
+                frame.Settings.CloudLayerHeightVariance,
+                frame.Settings.CloudUpperThicknessScale,
+                frame.Settings.CloudCirrusGap,
+                frame.Settings.CloudCirrusThickness);
             var candidateBasis = PreviewCloudLightBasisBuilder.Build(
                 frame.LightDir,
                 _cloudLightBasis);
@@ -541,15 +597,30 @@ public sealed partial class OpenGlPreviewBackend
                     materialSettingsChanged,
                     largeCameraMovement,
                     materialSunDirectionChanged,
-                    lightBasisChanged));
+                    lightBasisChanged,
+                    SpreadHeavyInvalidation:
+                        PreviewVolumetricQuality.Clamp(
+                            frame.Settings.VolumetricQuality) ==
+                        PreviewVolumetricQuality.Cinematic));
             _cloudLightLifecycleInitialized = true;
             _cloudLightMaterialSettingsHash = materialSettingsHash;
             _cloudLightObservedSunDirection = frame.LightDir;
 
             if (decision.InvalidateBeforeGeneration)
             {
-                cache.Near.InvalidateGeneration();
-                cache.Far.InvalidateGeneration();
+                // Only wipe cascades that this decision will regenerate. The Cinematic
+                // large-camera amortisation may request Near alone; invalidating Far
+                // anyway left hasFar=0 and produced a hard dark half-screen where the
+                // near footprint ended and short-march/missing-far lighting took over.
+                if (decision.UpdatesNear)
+                {
+                    cache.Near.InvalidateGeneration();
+                }
+
+                if (decision.UpdatesFar)
+                {
+                    cache.Far.InvalidateGeneration();
+                }
             }
 
             if (decision.Cascades == PreviewCloudLightCascadeSelection.None)
@@ -610,6 +681,9 @@ public sealed partial class OpenGlPreviewBackend
                 cameraGround,
                 farInterval.Minimum,
                 farInterval.Maximum);
+            var upperWindOffset = ComputeUpperCloudWindOffset(
+                frame.Settings.CloudFreezeWind ? 0.0 : frame.RenderTime,
+                frame.Settings);
             var inputs = new GlCloudLightSliceGenerationInputs(
                 nearTransform,
                 farTransform,
@@ -631,7 +705,18 @@ public sealed partial class OpenGlPreviewBackend
                 _cloudDensityAssetVersion,
                 _cloudNoiseTex?.Id ?? 0,
                 _cloudDetailTex?.Id ?? 0,
-                _cloudCoverageTex?.Id ?? 0);
+                _cloudCoverageTex?.Id ?? 0,
+                SparseCloud: CreatePreparedSparseCloudBindingsCq46(),
+                CumulusLayerCount: frame.Settings.CloudCumulusLayerCount,
+                InterDeckGap: frame.Settings.CloudInterDeckGap,
+                HeightVariance: frame.Settings.CloudLayerHeightVariance,
+                UpperThicknessScale: frame.Settings.CloudUpperThicknessScale,
+                UpperCoverageScale: frame.Settings.CloudUpperCoverageScale,
+                UpperDensityScale: frame.Settings.CloudUpperDensityScale,
+                UpperWindOffset: upperWindOffset,
+                CirrusGap: frame.Settings.CloudCirrusGap,
+                CirrusThickness: frame.Settings.CloudCirrusThickness,
+                StyleBias: frame.Settings.CloudStyleBias);
 
             var nearScroll = cache.Near.IsGenerated
                 ? PreviewCloudLightScrollPlan.Create(
@@ -656,6 +741,7 @@ public sealed partial class OpenGlPreviewBackend
                     nearTransform,
                     windOffset,
                     lifecycleFrame,
+                    inputs.DensityIdentity,
                     out var nearDiagnostic);
                 var nearPath =
                     PreviewCloudLightingCacheGenerationPath.CacheSampling;
@@ -686,6 +772,7 @@ public sealed partial class OpenGlPreviewBackend
                     farTransform,
                     windOffset,
                     lifecycleFrame,
+                    inputs.DensityIdentity,
                     out var farDiagnostic);
                 var farPath =
                     PreviewCloudLightingCacheGenerationPath.CacheSampling;
@@ -831,11 +918,18 @@ public sealed partial class OpenGlPreviewBackend
         in PreviewCloudLightCascadeTransform desiredTransform,
         Vector3 currentWindOffset,
         int generationFrame,
+        int densityIdentity,
         out string diagnostic)
     {
         if (!target.IsGenerated)
         {
             diagnostic = "not-generated";
+            return false;
+        }
+
+        if (target.DensityIdentity != densityIdentity)
+        {
+            diagnostic = "density-identity-changed";
             return false;
         }
 
@@ -865,7 +959,8 @@ public sealed partial class OpenGlPreviewBackend
         target.CommitGeneration(
             desiredTransform,
             generationFrame,
-            currentWindOffset);
+            currentWindOffset,
+            densityIdentity);
         diagnostic = "exact-static-reuse-cq3.7";
         return true;
     }
@@ -941,13 +1036,62 @@ public sealed partial class OpenGlPreviewBackend
         hash.Add(settings.CloudVolumeHeight);
         hash.Add(settings.CloudVolumeSize);
         hash.Add(settings.CloudCirrusStrength);
+        hash.Add(settings.CloudCumulusLayerCount);
+        hash.Add(settings.CloudInterDeckGap);
+        hash.Add(settings.CloudLayerHeightVariance);
+        hash.Add(settings.CloudUpperThicknessScale);
+        hash.Add(settings.CloudUpperCoverageScale);
+        hash.Add(settings.CloudUpperDensityScale);
+        hash.Add(settings.CloudUpperWindSpeedScale);
+        hash.Add(settings.CloudCirrusGap);
+        hash.Add(settings.CloudCirrusThickness);
+        hash.Add(settings.CloudStyleBias);
         hash.Add(settings.CloudWindSpeed);
         hash.Add(settings.CloudWindHeadingDegrees);
         hash.Add(settings.CloudFreezeWind);
         hash.Add(settings.CloudDebugView);
         hash.Add(_cloudDensityAssetVersion);
         hash.Add(_cloudDensityAssetProfileCode);
+        // Stick to the actively sampleable sparse identity while a newer prepared
+        // candidate warms. Hashing every residency revision forces a full Cinematic
+        // light-cache rebuild on each brick batch during fast camera motion.
+        hash.Add(ResolveSparseCloudLightingDensityIdentity());
         return hash.ToHashCode();
+    }
+
+    private int ResolveSparseCloudLightingDensityIdentity()
+    {
+        if (!IsSparseCloudResidencyReadyForActivation() ||
+            !_sparseCloudPreparedIdentity.IsValid)
+        {
+            return 0;
+        }
+
+        return ResolveSparseCloudLightingTargetIdentity().Signature;
+    }
+
+    private PreviewSparseCloudSamplingIdentity
+        ResolveSparseCloudLightingTargetIdentity()
+    {
+        if (_sparseCloudResourcesReady &&
+            _sparseCloudActiveIdentity.IsValid &&
+            _sparseCloudPreparedIdentity != _sparseCloudActiveIdentity &&
+            PreviewSparseCloudActivationPolicy.CanSoftHold(
+                _sparseCloudActiveIdentity,
+                _sparseCloudPreparedIdentity))
+        {
+            var hasPendingGeneration =
+                _sparseCloudBrickGenerator?.HasPendingGeneration ?? false;
+            if (hasPendingGeneration ||
+                _sparseCloudPreparedLightingChaseCooldown > 0)
+            {
+                return _sparseCloudActiveIdentity;
+            }
+
+            return _sparseCloudPreparedIdentity;
+        }
+
+        return _sparseCloudPreparedIdentity;
     }
 
     private void UpdateCloudLightingLifecycleDiagnosticCq36(
@@ -1425,7 +1569,6 @@ public sealed partial class OpenGlPreviewBackend
         CreateCloudRenderTargets(gl, requested);
         UpdateCloudMomentDiagnostic(volumetricQuality);
         InvalidateCloudTemporalHistory();
-        _loggedCloudDraw = false;
         EmitDiagnostic(
             $"[3D preview] CQ1 cloud render format changed with volumetric preset: " +
             $"{_cloudRenderFormatProfile.DiagnosticLabel}.");
@@ -1539,6 +1682,15 @@ public sealed partial class OpenGlPreviewBackend
         _cloudGroundTransmittanceTarget = null;
         _cloudLightCache?.Dispose();
         _cloudLightCache = null;
+        _sparseCloudBrickGenerator?.Dispose();
+        _sparseCloudBrickGenerator = null;
+        _sparseCloudBrickGenerationProgram?.Dispose();
+        _sparseCloudBrickGenerationProgram = null;
+        _sparseCloudVolumeResources?.Dispose();
+        _sparseCloudVolumeResources = null;
+        _sparseCloudBrickAllocator = null;
+        _sparseCloudClipmapController = null;
+        _sparseCloudPendingRetire.Clear();
         _cloudNoiseTex?.Dispose();
         _cloudNoiseTex = null;
         _cloudDetailTex?.Dispose();
@@ -1557,7 +1709,6 @@ public sealed partial class OpenGlPreviewBackend
         _cloudRepairTarget = null;
         _cloudCompositeTarget = null;
         InvalidateCloudTemporalHistory();
-        _loggedCloudDraw = false;
         _cloudDeferredCompositeRetries = 0;
         _loggedCloudDeferredCompositeMiss = 0;
         _cloudTierReadyWarmupDraws = 0;
@@ -1570,6 +1721,7 @@ public sealed partial class OpenGlPreviewBackend
         _cloudEdgeRepairFaulted = false;
         _loggedCloudEdgeRepairFallback = false;
         _cloudHistoryConfidenceFrames = 0;
+        _cloudHistoryConfidenceFullLogged = false;
         _cloudHistoryW = 0;
         _cloudHistoryH = 0;
         _cloudHistoryViewportW = 0;
@@ -1583,6 +1735,22 @@ public sealed partial class OpenGlPreviewBackend
         _cloudDensityGenerationLoadReason = "not-started";
         _cloudDensityGenerationFailureLogged = false;
         _lastCloudDebugViewDiagnostic = -1;
+        _cloudDensityBackendSelection = default;
+        _sparseCloudResourcesReady = false;
+        _sparseCloudRuntimeFaulted = false;
+        _cloudDensityBackendSelectionInitialized = false;
+        _sparseCloudTemplateAssets = null;
+        _sparseCloudTemplateDiagnostic = "not-initialized";
+        _sparseCloudResourceAllocationAttempted = false;
+        _sparseCloudResourceDiagnostic = "not-initialized";
+        _sparseCloudTraversalPrepared = false;
+        _sparseCloudTraversalDiagnostic = "not-initialized";
+        _sparseCloudPreparedIdentity = default;
+        _sparseCloudActiveIdentity = default;
+        _sparseCloudActivationDiagnostic = "not-initialized";
+        _sparseCloudControlFrame = 0;
+        _sparseCloudPreparedLightingChaseCooldown = 0;
+        _sparseCloudPendingRetire.Clear();
         _cloudLightingCachePlan = default;
         _cloudLightBasis = null;
         _cloudLightCacheReadyLogged = false;
@@ -1632,6 +1800,59 @@ public sealed partial class OpenGlPreviewBackend
     {
         _cloudHistoryValid = false;
         _cloudHistoryConfidenceFrames = 0;
+        _cloudHistoryLowConfidenceFrames = 0;
+        // Keep _cloudHistoryConfidenceFullLogged: the 8/8 success line is once per
+        // GPU session. Resetting it here re-spammed the log on every history rebuild.
+        _cloudTemporalStability = 0f;
+        _cloudIdleDenoiseLatched = false;
+    }
+
+    private void NoteCloudTemporalConfidenceProgress()
+    {
+        if (_cloudHistoryConfidenceFrames >=
+            PreviewCloudTemporalMoments.ConfidenceFrameCount)
+        {
+            _cloudHistoryLowConfidenceFrames = 0;
+            if (!_cloudHistoryConfidenceFullLogged)
+            {
+                _cloudHistoryConfidenceFullLogged = true;
+                EmitDiagnostic(
+                    "[3D preview] CQ1 cloud temporal history confidence reached " +
+                    $"{PreviewCloudTemporalMoments.ConfidenceFrameCount}/" +
+                    $"{PreviewCloudTemporalMoments.ConfidenceFrameCount}.");
+            }
+
+            return;
+        }
+
+        _cloudHistoryLowConfidenceFrames++;
+        // ~1s at 60 FPS with confidence stuck in the first accepted bucket.
+        if (_cloudHistoryLowConfidenceFrames == 60 &&
+            _cloudHistoryConfidenceFrames <= 1)
+        {
+            EmitDiagnostic(
+                "[3D preview] CQ1 cloud temporal confidence is not ramping " +
+                $"(live={_cloudHistoryConfidenceFrames}/" +
+                $"{PreviewCloudTemporalMoments.ConfidenceFrameCount}, historyValid=" +
+                $"{_cloudHistoryValid}). Check history invalidation or copy failures; " +
+                "the first-use profile log is not a live confidence meter.");
+        }
+    }
+
+    /// <summary>
+    /// Live CQ1 temporal confidence for HUD/debug. The first-use cloud profile log
+    /// freezes whatever value was current at first report and must not be read as a
+    /// stuck-confidence signal.
+    /// </summary>
+    public bool TryGetCloudTemporalHistoryDebug(
+        out int confidenceFrames,
+        out int confidenceFrameCount,
+        out bool historyValid)
+    {
+        confidenceFrames = _cloudHistoryConfidenceFrames;
+        confidenceFrameCount = PreviewCloudTemporalMoments.ConfidenceFrameCount;
+        historyValid = _cloudHistoryValid;
+        return ShouldUseCloudShaderTemporal(_settings);
     }
 
     private bool TryApplyCloudEdgeRepair(
@@ -1778,6 +1999,22 @@ public sealed partial class OpenGlPreviewBackend
                 program,
                 ru.CirrusWindDir,
                 ComputeCirrusWindDirection(frame.Settings));
+            ApplyCloudLayerEnvelopeUniforms(
+                program,
+                ru.CumulusLayerCount,
+                ru.InterDeckGap,
+                ru.HeightVariance,
+                ru.UpperThicknessScale,
+                ru.UpperCoverageScale,
+                ru.UpperDensityScale,
+                ru.UpperWindOffset,
+                ru.CirrusGap,
+                ru.CirrusThickness,
+                ru.StyleBias,
+                frame.Settings,
+                ComputeUpperCloudWindOffset(
+                    frame.Settings.CloudFreezeWind ? 0.0 : frame.RenderTime,
+                    frame.Settings));
             SetIntOnProgramLoc(
                 program,
                 ru.MarchSteps,
@@ -1808,6 +2045,8 @@ public sealed partial class OpenGlPreviewBackend
                 ru.DensityAssetVersion,
                 _cloudDensityAssetVersion);
             SetIntOnProgramLoc(program, ru.CloudFrameIndex, _cloudFrameIndex);
+            SetFloatOnProgramLoc(program, ru.RepairStability, _cloudTemporalStability);
+            BindSparseCloudRepairTraversalCq46(gl, program, ru);
 
             gl.BindVertexArray(_cloudQuadVao);
             gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
@@ -1820,8 +2059,12 @@ public sealed partial class OpenGlPreviewBackend
             }
 
             _cloudCompositeTarget = _cloudRepairTarget;
+            var retraceBlend = PreviewCloudEdgeRepairClassifier.EvaluateRetraceBlend(
+                _cloudTemporalStability);
             _cloudEdgeRepairDiagnostic =
-                $"active full-res {frame.Vw}x{frame.Vh}, {PreviewCloudEdgeRepairClassifier.RepairStepCount}-step";
+                $"active full-res {frame.Vw}x{frame.Vh}, " +
+                $"{PreviewCloudEdgeRepairClassifier.RepairStepCount}-step, " +
+                $"retraceBlend={retraceBlend:0.00}, stability={_cloudTemporalStability:0.00}";
             return true;
         }
         catch (Exception exception)
@@ -1890,16 +2133,23 @@ public sealed partial class OpenGlPreviewBackend
         in PreviewRenderSettingsSnapshot settings)
     {
         var groundY = PreviewStageConstants.GroundPlaneWorldY;
-        var layerBase =
-            PreviewStageConstants.CloudLayerBaseWorldY(settings.CloudLayerHeight) -
-            groundY;
-        var volumeHeight = Math.Max(settings.CloudVolumeHeight, 0.01f);
-        var layerTop = layerBase + volumeHeight;
-        var cirrusBase = layerTop + Math.Max(volumeHeight * 1.5f, 18f);
-        var cirrusTop = cirrusBase + Math.Max(volumeHeight * 0.035f, 0.75f);
+        var layerWorldY =
+            PreviewStageConstants.CloudLayerBaseWorldY(settings.CloudLayerHeight);
+        var stack = PreviewCloudLayerEnvelope.Build(
+            groundY,
+            layerWorldY,
+            settings.CloudVolumeHeight,
+            settings.CloudVolumeSize,
+            settings.CloudCirrusStrength,
+            settings.CloudCumulusLayerCount,
+            settings.CloudInterDeckGap,
+            settings.CloudLayerHeightVariance,
+            settings.CloudUpperThicknessScale,
+            settings.CloudCirrusGap,
+            settings.CloudCirrusThickness);
         var altitude = PreviewCloudLayerGeometry.Altitude(eye, groundY);
         return FormattableString.Invariant(
-            $"worldAltitude={altitude:F5}; cumulusSigned={altitude - layerBase:F5}/{altitude - layerTop:F5}; cirrusSigned={altitude - cirrusBase:F5}/{altitude - cirrusTop:F5}");
+            $"worldAltitude={altitude:F5}; cumulusSigned={altitude - stack.CumulusSupportBase:F5}/{altitude - stack.CumulusSupportTop:F5}; cirrusSigned={altitude - stack.CirrusBaseAltitude:F5}/{altitude - stack.CirrusTopAltitude:F5}; decks={stack.DeckCount}");
     }
 
     private void HandleCloudRuntimeFailure(ref GlRenderFrame frame, string stage, Exception exception)
@@ -2004,8 +2254,18 @@ public sealed partial class OpenGlPreviewBackend
 
         var gl = frame.Gl;
         var profile = PreviewVolumetricQuality.Resolve(settings.VolumetricQuality);
+        TryInitSparseCloudResourcesCq42(
+            gl,
+            settings.VolumetricQuality);
+        var layerWorldY =
+            PreviewStageConstants.CloudLayerBaseWorldY(
+                settings.CloudLayerHeight);
+        UpdateSparseCloudClipmapsCq43(
+            ref frame,
+            layerWorldY);
+        PrepareSparseCloudActivationCq46();
+        UpdateCloudDensityBackendSelectionCq40(settings.VolumetricQuality);
         EnsureCloudRenderFormatForQuality(gl, settings.VolumetricQuality);
-        var layerWorldY = PreviewStageConstants.CloudLayerBaseWorldY(settings.CloudLayerHeight);
         var useSceneDepth = frame.GodRayCaptureActive && _sceneCapture is { IsValid: true };
         var windTime = settings.CloudFreezeWind ? 0.0 : frame.RenderTime;
         var windOffset = ComputeCloudWindOffset(windTime, settings);
@@ -2016,6 +2276,8 @@ public sealed partial class OpenGlPreviewBackend
             windOffset,
             cirrusWindOffset,
             profile);
+        FinalizeSparseCloudActivationCq46(settings.VolumetricQuality);
+        UpdateCloudDensityBackendSelectionCq40(settings.VolumetricQuality);
         var settingsHash = ComputeCloudHistorySettingsHash(
             settings,
             frame.VerticalFieldOfViewRadians);
@@ -2171,11 +2433,26 @@ public sealed partial class OpenGlPreviewBackend
                         _cloudHistoryValid = true;
                         _cloudHistoryConfidenceFrames =
                             PreviewCloudTemporalMoments.AdvanceConfidence(_cloudHistoryConfidenceFrames);
+                        NoteCloudTemporalConfidenceProgress();
                     }
                     else if (updateHistory)
                     {
+                        if (!_cloudHistoryCopyFailureLogged)
+                        {
+                            _cloudHistoryCopyFailureLogged = true;
+                            EmitDiagnostic(
+                                "[3D preview] CQ1 cloud temporal history copy failed; " +
+                                "confidence was reset. Color/data blit is required; " +
+                                "moment blit failures are now non-fatal.");
+                        }
+
                         InvalidateCloudTemporalHistory();
                     }
+                }
+                else
+                {
+                    // Keep CQ1.8 retrace fully armed when temporal did not resolve.
+                    _cloudTemporalStability = 0f;
                 }
             }
             else
@@ -2214,9 +2491,14 @@ public sealed partial class OpenGlPreviewBackend
             BindDefaultFramebuffer(ref frame);
         }
 
-        if (!_loggedCloudDraw)
+        var cloudProfileDiagnosticIdentity =
+            $"{PreviewVolumetricQuality.Clamp(frame.Settings.VolumetricQuality)}|" +
+            $"{profile.CloudQuality}|{_cloudRenderFormatProfile.Name}|" +
+            $"density-v{_cloudDensityAssetVersion}|" +
+            $"{_cloudDensityBackendSelection.ActiveBackend}";
+        if (_cloudProfileDiagnosticGate.TryReport(
+                cloudProfileDiagnosticIdentity))
         {
-            _loggedCloudDraw = true;
             var godRays = frame.GodRayCaptureActive && _sceneCapture is { IsValid: true };
             EmitDiagnostic($"[3D preview] Flat continuous-world volumetric clouds active (sceneDepth={useSceneDepth}, " +
                 $"temporalResolve={useTemporalReproject}, cloudDepthHistory={useTemporalReproject}, godRays={godRays}, " +
@@ -2228,16 +2510,27 @@ public sealed partial class OpenGlPreviewBackend
                 $"pixelAngle={pixelAngularSize:0.000000}, " +
                 "cloudColor=linear-trace-history/final-composite-encode, " +
                 $"densityAssets={_cloudDensityAssetDiagnostic}, " +
+                $"densityBackend={_cloudDensityBackendSelection.FormatDiagnostic()}, " +
+                $"sparseTemplates={_sparseCloudTemplateDiagnostic}, " +
+                $"sparseResources={_sparseCloudResourceDiagnostic}, " +
+                $"sparseTraversal={_sparseCloudTraversalDiagnostic}, " +
+                $"sparseActivation={_sparseCloudActivationDiagnostic}, " +
                 $"densitySemantics=v{_cloudDensityAssetVersion}, " +
-                $"densityDetail={(_cloudDensityAssetVersion >= 2 ? "single-low-medium/rotated-edge-high-cinematic" : "legacy-single")}, " +
+                $"densityDetail={(_cloudDensityAssetVersion >= 2 ? "single-low-medium/ca1-broad-boundary-high-cinematic" : "legacy-single")}, " +
+                $"cloudPopulation={(_cloudDensityAssetVersion >= 2 ? "ca2-dual-scale-asymmetric-v2-templates" : "legacy-continuous")}, " +
                 $"weatherAddressing={(_cloudDensityAssetVersion >= 2 ? "dual-world" : "legacy")}, " +
                 "directDiscOcclusion=post-temporal-full-res, " +
                 $"stbn={_cloudStbnDiagnostic}, " +
                 $"stbnActive={CanUseCloudStbn(_useOpenGlEs, profile.CloudQuality, _cloudStbnTex is not null)}, " +
                 $"moments={_cloudMomentsDiagnostic}, " +
                 $"edgeRepair={_cloudEdgeRepairDiagnostic}, " +
+                $"thinFeaturePreservation={PreviewCloudTemporalLowAlphaWeight.FormatDiagnostic()};" +
+                $"{PreviewCloudEdgeRepairClassifier.FormatDiagnostic()};" +
+                $"{PreviewCloudLightingShadingProfiles.FormatDiagnostic()}, " +
                 $"cloudLightCache={_cloudLightingCachePlan.FormatDiagnostic(_cloudLightingCacheResourceDiagnostic)}, " +
-                $"historyConfidence={_cloudHistoryConfidenceFrames}/{PreviewCloudTemporalMoments.ConfidenceFrameCount}, " +
+                // First-use gate freezes this line; do not treat it as live confidence.
+                $"historyConfidence=live-via-overlay (first-report-snapshot=" +
+                $"{_cloudHistoryConfidenceFrames}/{PreviewCloudTemporalMoments.ConfidenceFrameCount}), " +
                 $"previewTaa={frame.Settings.EnablePreviewTaa}, warmupDraws={_cloudTierReadyWarmupDraws}, " +
                 $"noiseTex={_cloudNoiseTex is not null}, coverageMap={_cloudCoverageTex is not null}).");
         }
@@ -2288,6 +2581,10 @@ public sealed partial class OpenGlPreviewBackend
         SetIntOnProgramLoc(program, cu.SceneDepth, 5);
         SetIntOnProgramLoc(program, cu.CloudLightNear, 6);
         SetIntOnProgramLoc(program, cu.CloudLightFar, 7);
+        SetIntOnProgramLoc(program, cu.SparseCloudAtlas, 8);
+        SetIntOnProgramLoc(program, cu.SparseCloudPageL0, 9);
+        SetIntOnProgramLoc(program, cu.SparseCloudPageL1, 10);
+        SetIntOnProgramLoc(program, cu.SparseCloudPageL2, 11);
 
         SetFloatOnProgramLoc(program, cu.SunIntensity, settings.AtmosphereSunIntensity);
         SetFloatOnProgramLoc(program, cu.LayerHeight, layerWorldY);
@@ -2311,6 +2608,22 @@ public sealed partial class OpenGlPreviewBackend
         SetFloatOnProgramLoc(program, cu.CirrusStrength, settings.CloudCirrusStrength);
         SetVec2OnProgramLoc(program, cu.CirrusWindOffset, cirrusWindOffset);
         SetVec2OnProgramLoc(program, cu.CirrusWindDir, ComputeCirrusWindDirection(settings));
+        ApplyCloudLayerEnvelopeUniforms(
+            program,
+            cu.CumulusLayerCount,
+            cu.InterDeckGap,
+            cu.HeightVariance,
+            cu.UpperThicknessScale,
+            cu.UpperCoverageScale,
+            cu.UpperDensityScale,
+            cu.UpperWindOffset,
+            cu.CirrusGap,
+            cu.CirrusThickness,
+            cu.StyleBias,
+            settings,
+            ComputeUpperCloudWindOffset(
+                settings.CloudFreezeWind ? 0.0 : frame.RenderTime,
+                settings));
         SetIntOnProgramLoc(program, cu.HasSceneDepth, useSceneDepth ? 1 : 0);
         SetFloatOnProgramLoc(program, cu.FramePhase, jitterPhase);
         SetIntOnProgramLoc(program, cu.CloudFrameIndex, _cloudFrameIndex);
@@ -2332,6 +2645,7 @@ public sealed partial class OpenGlPreviewBackend
             program,
             cu.DensityAssetProfileCode,
             _cloudDensityAssetProfileCode);
+        BindSparseCloudTraversalCq45(gl, program, cu);
         BindCloudLightCacheUniforms(gl, program, cu, profile.CloudQuality);
 
         if (_cloudNoiseTex is not null)
@@ -2365,6 +2679,102 @@ public sealed partial class OpenGlPreviewBackend
             gl.ActiveTexture(TextureUnit.Texture5);
             gl.BindTexture(TextureTarget.Texture2D, _sceneCapture.DepthTextureHandle);
         }
+    }
+
+    private void BindSparseCloudTraversalCq45(
+        GL gl,
+        GlShaderProgram program,
+        in CloudUniformLocs cu)
+    {
+        var bindings = CreateActiveSparseCloudBindingsCq46();
+        var active = bindings is { IsValid: true };
+        var sparse = active ? bindings!.Value : default;
+        SetIntOnProgramLoc(
+            program,
+            cu.HasSparseCloudTraversal,
+            active ? 1 : 0);
+        for (var level = 0;
+             level < PreviewSparseCloudVolumeContract.ClipmapCount;
+             level++)
+        {
+            var origin = level switch
+            {
+                0 => sparse.OriginL0,
+                1 => sparse.OriginL1,
+                _ => sparse.OriginL2,
+            };
+            var location = level switch
+            {
+                0 => cu.SparseCloudOriginL0,
+                1 => cu.SparseCloudOriginL1,
+                _ => cu.SparseCloudOriginL2,
+            };
+            if (location >= 0)
+            {
+                gl.Uniform3(location, origin.X, origin.Y, origin.Z);
+            }
+        }
+
+        gl.ActiveTexture(TextureUnit.Texture8);
+        gl.BindTexture(
+            TextureTarget.Texture3D,
+            sparse.AtlasTexture);
+        gl.ActiveTexture(TextureUnit.Texture9);
+        gl.BindTexture(
+            TextureTarget.Texture3D,
+            sparse.PageTableL0);
+        gl.ActiveTexture(TextureUnit.Texture10);
+        gl.BindTexture(
+            TextureTarget.Texture3D,
+            sparse.PageTableL1);
+        gl.ActiveTexture(TextureUnit.Texture11);
+        gl.BindTexture(
+            TextureTarget.Texture3D,
+            sparse.PageTableL2);
+    }
+
+    private void BindSparseCloudRepairTraversalCq46(
+        GL gl,
+        GlShaderProgram program,
+        in CloudRepairUniformLocs ru)
+    {
+        var bindings = CreateActiveSparseCloudBindingsCq46();
+        var active = bindings is { IsValid: true };
+        var sparse = active ? bindings!.Value : default;
+        SetIntOnProgramLoc(
+            program,
+            ru.HasSparseCloudTraversal,
+            active ? 1 : 0);
+        SetIntOnProgramLoc(program, ru.SparseCloudAtlas, 8);
+        SetIntOnProgramLoc(program, ru.SparseCloudPageL0, 9);
+        SetIntOnProgramLoc(program, ru.SparseCloudPageL1, 10);
+        SetIntOnProgramLoc(program, ru.SparseCloudPageL2, 11);
+        SetInt3OnProgramLoc(
+            program,
+            ru.SparseCloudOriginL0,
+            sparse.OriginL0.X,
+            sparse.OriginL0.Y,
+            sparse.OriginL0.Z);
+        SetInt3OnProgramLoc(
+            program,
+            ru.SparseCloudOriginL1,
+            sparse.OriginL1.X,
+            sparse.OriginL1.Y,
+            sparse.OriginL1.Z);
+        SetInt3OnProgramLoc(
+            program,
+            ru.SparseCloudOriginL2,
+            sparse.OriginL2.X,
+            sparse.OriginL2.Y,
+            sparse.OriginL2.Z);
+        gl.ActiveTexture(TextureUnit.Texture8);
+        gl.BindTexture(TextureTarget.Texture3D, sparse.AtlasTexture);
+        gl.ActiveTexture(TextureUnit.Texture9);
+        gl.BindTexture(TextureTarget.Texture3D, sparse.PageTableL0);
+        gl.ActiveTexture(TextureUnit.Texture10);
+        gl.BindTexture(TextureTarget.Texture3D, sparse.PageTableL1);
+        gl.ActiveTexture(TextureUnit.Texture11);
+        gl.BindTexture(TextureTarget.Texture3D, sparse.PageTableL2);
     }
 
     private void BindCloudLightCacheUniforms(
@@ -2648,10 +3058,26 @@ public sealed partial class OpenGlPreviewBackend
             history.MomentTextureHandle != 0;
         SetFloatOnProgramLoc(program, tu.MomentSigma, momentProfile.Sigma);
         SetFloatOnProgramLoc(program, tu.MomentMinBand, momentProfile.MinimumBand);
-        SetFloatOnProgramLoc(program, tu.HistoryConfidence,
-            useMoments
-                ? PreviewCloudTemporalMoments.ResolveConfidence(_cloudHistoryConfidenceFrames)
-                : 1f);
+        var historyConfidence = useMoments
+            ? PreviewCloudTemporalMoments.ResolveConfidence(_cloudHistoryConfidenceFrames)
+            : 1f;
+        SetFloatOnProgramLoc(program, tu.HistoryConfidence, historyConfidence);
+        var windDelta2 = new Vector2(windDelta.X, windDelta.Z);
+        var cameraDelta = Vector3.Distance(frame.Eye, _cloudPrevCameraPos);
+        _cloudIdleDenoiseLatched = PreviewCloudTemporalLowAlphaWeight.UpdateIdleLatch(
+            _cloudIdleDenoiseLatched,
+            cameraDelta,
+            historyConfidence);
+        var stabilityTarget = _cloudIdleDenoiseLatched
+            ? 1f
+            : PreviewCloudTemporalLowAlphaWeight.EvaluateStability(
+                cameraDelta,
+                windDelta2.Length(),
+                historyConfidence);
+        _cloudTemporalStability = PreviewCloudTemporalLowAlphaWeight.EaseStability(
+            _cloudTemporalStability,
+            stabilityTarget);
+        SetFloatOnProgramLoc(program, tu.TemporalStability, _cloudTemporalStability);
         SetIntOnProgramLoc(program, tu.HasHistory, _cloudHistoryValid ? 1 : 0);
         SetIntOnProgramLoc(program, tu.HasMoments, useMoments ? 1 : 0);
         SetIntOnProgramLoc(program, tu.CloudDataDirect,
@@ -2705,13 +3131,740 @@ public sealed partial class OpenGlPreviewBackend
         hash.Add(settings.CloudWindSpeed);
         hash.Add(settings.CloudWindHeadingDegrees);
         hash.Add(settings.CloudCirrusStrength);
+        hash.Add(settings.CloudCumulusLayerCount);
+        hash.Add(settings.CloudInterDeckGap);
+        hash.Add(settings.CloudLayerHeightVariance);
+        hash.Add(settings.CloudUpperThicknessScale);
+        hash.Add(settings.CloudUpperCoverageScale);
+        hash.Add(settings.CloudUpperDensityScale);
+        hash.Add(settings.CloudUpperWindSpeedScale);
+        hash.Add(settings.CloudCirrusGap);
+        hash.Add(settings.CloudCirrusThickness);
+        hash.Add(settings.CloudStyleBias);
         hash.Add(settings.CloudMarchStepOverride);
         hash.Add(settings.CloudFreezeWind);
         hash.Add(settings.AtmosphereSunIntensity);
         hash.Add(verticalFieldOfViewRadians);
         hash.Add(PreviewCloudSpatiotemporalBlueNoiseGenerator.AssetVersion);
         hash.Add(_cloudDensityAssetVersion);
+        hash.Add((int)_cloudDensityBackendSelection.ActiveBackend);
+        hash.Add(
+            _cloudDensityBackendSelection.ActiveBackend ==
+                PreviewCloudDensityBackend.SparseVoxel
+                ? _sparseCloudActiveIdentity.Signature
+                : 0);
         return hash.ToHashCode();
+    }
+
+    private void UpdateCloudDensityBackendSelectionCq40(int volumetricQuality)
+    {
+        var selection = PreviewSparseCloudBackendPolicy.Select(
+            volumetricQuality,
+            _glCapabilities,
+            PreviewSparseCloudBackendPolicy.IsForceProceduralLayerEnabled(),
+            _sparseCloudResourcesReady,
+            _sparseCloudRuntimeFaulted);
+        if (_cloudDensityBackendSelectionInitialized &&
+            selection == _cloudDensityBackendSelection)
+        {
+            return;
+        }
+
+        var activeBackendChanged =
+            _cloudDensityBackendSelectionInitialized &&
+            selection.ActiveBackend !=
+            _cloudDensityBackendSelection.ActiveBackend;
+        _cloudDensityBackendSelection = selection;
+        _cloudDensityBackendSelectionInitialized = true;
+        if (activeBackendChanged)
+        {
+            InvalidateCloudTemporalHistory();
+            var sparseLightingAlreadyPrepared =
+                selection.ActiveBackend ==
+                    PreviewCloudDensityBackend.SparseVoxel &&
+                IsSparseCloudLightingPreparedCq46(
+                    _sparseCloudActiveIdentity);
+            if (!sparseLightingAlreadyPrepared)
+            {
+                _cloudLightCache?.Near.InvalidateGeneration();
+                _cloudLightCache?.Far.InvalidateGeneration();
+                ResetCloudLightingCacheLifecycleCq36();
+            }
+        }
+
+        var backendDiagnostic = selection.FormatDiagnostic();
+        if (_cloudLifecycleDiagnosticGate.TryReport(
+                "backend|" + backendDiagnostic))
+        {
+            EmitDiagnostic(
+                "[3D preview] CQ4.0 cloud density backend: " +
+                backendDiagnostic + ".");
+        }
+    }
+
+    private void PrepareSparseCloudActivationCq46()
+    {
+        if (!_sparseCloudPreparedIdentity.IsValid)
+        {
+            DemoteSparseCloudActivationCq46();
+            return;
+        }
+
+        if (_sparseCloudPreparedIdentity == _sparseCloudActiveIdentity)
+        {
+            return;
+        }
+
+        // Soft-hold: keep the prior active sparse view sampleable while a newer
+        // same-origin prepared identity catches lighting. Hard-demoting on every
+        // residency revision causes procedural↔sparse thrash and light-cache spikes.
+        if (_sparseCloudResourcesReady &&
+            PreviewSparseCloudActivationPolicy.CanSoftHold(
+                _sparseCloudActiveIdentity,
+                _sparseCloudPreparedIdentity))
+        {
+            _sparseCloudActivationDiagnostic =
+                "soft-hold-cq4.6/" +
+                _sparseCloudActiveIdentity.FormatDiagnostic() +
+                "/prepared-" +
+                _sparseCloudPreparedIdentity.FormatDiagnostic();
+            return;
+        }
+
+        DemoteSparseCloudActivationCq46();
+    }
+
+    private void DemoteSparseCloudActivationCq46()
+    {
+        if (_sparseCloudResourcesReady ||
+            _sparseCloudActiveIdentity.IsValid)
+        {
+            _sparseCloudCounters.NoteIdentityDemotion();
+        }
+
+        _sparseCloudResourcesReady = false;
+        _sparseCloudVolumeResources?.SetSamplingReadyCq46(false);
+    }
+
+    private void FinalizeSparseCloudActivationCq46(int volumetricQuality)
+    {
+        if (PreviewVolumetricQuality.Clamp(volumetricQuality) !=
+                PreviewVolumetricQuality.Cinematic ||
+            PreviewSparseCloudBackendPolicy.IsForceProceduralLayerEnabled() ||
+            _sparseCloudRuntimeFaulted ||
+            !_sparseCloudPreparedIdentity.IsValid)
+        {
+            DemoteSparseCloudActivationCq46();
+            return;
+        }
+
+        if (!IsSparseCloudResidencyReadyForActivation(
+                out var residencyDiagnostic))
+        {
+            if (!_sparseCloudResourcesReady)
+            {
+                _sparseCloudVolumeResources?.SetSamplingReadyCq46(false);
+                _sparseCloudActivationDiagnostic =
+                    residencyDiagnostic + "/" +
+                    _sparseCloudPreparedIdentity.FormatDiagnostic();
+            }
+
+            return;
+        }
+
+        if (!IsSparseCloudLightingPreparedCq46(
+                _sparseCloudPreparedIdentity))
+        {
+            if (!_sparseCloudResourcesReady)
+            {
+                _sparseCloudVolumeResources?.SetSamplingReadyCq46(false);
+                _sparseCloudCounters.NoteCq3PreparationStall();
+                _sparseCloudActivationDiagnostic =
+                    "waiting-for-cq3-lighting-" +
+                    _sparseCloudPreparedIdentity.FormatDiagnostic();
+            }
+            else
+            {
+                _sparseCloudCounters.NoteCq3PreparationStall();
+                _sparseCloudActivationDiagnostic =
+                    "soft-hold-waiting-lighting/" +
+                    _sparseCloudActiveIdentity.FormatDiagnostic() +
+                    "/prepared-" +
+                    _sparseCloudPreparedIdentity.FormatDiagnostic();
+            }
+
+            return;
+        }
+
+        var identityChanged =
+            _sparseCloudActiveIdentity !=
+            _sparseCloudPreparedIdentity;
+        _sparseCloudActiveIdentity = _sparseCloudPreparedIdentity;
+        _sparseCloudResourcesReady = true;
+        _sparseCloudVolumeResources?.SetSamplingReadyCq46(true);
+        _sparseCloudPreparedLightingChaseCooldown = 0;
+        _sparseCloudActivationDiagnostic =
+            "active-cq4.6/" +
+            _sparseCloudActiveIdentity.FormatDiagnostic() +
+            "/cq1-history+repair/cq3-near+far";
+        if (identityChanged)
+        {
+            _sparseCloudCounters.NoteIdentityPromotion();
+            InvalidateCloudTemporalHistory();
+            if (_cloudLifecycleDiagnosticGate.TryReport(
+                    "sparse-activation|active"))
+            {
+                EmitDiagnostic(
+                    "[3D preview] CQ4.6 sparse cloud density activated transactionally: " +
+                    _sparseCloudActivationDiagnostic + ".");
+            }
+        }
+    }
+
+    private bool IsSparseCloudResidencyReadyForActivation() =>
+        IsSparseCloudResidencyReadyForActivation(out _);
+
+    private bool IsSparseCloudResidencyReadyForActivation(
+        out string diagnostic)
+    {
+        var residentCount = _sparseCloudPreparedIdentity.IsValid
+            ? _sparseCloudPreparedIdentity.ResidentCount
+            : 0;
+        var requestedCount = Math.Max(
+            _sparseCloudClipmapController?.RequestedCount ?? 0,
+            residentCount);
+        var hasPendingGeneration =
+            _sparseCloudBrickGenerator?.HasPendingGeneration ?? false;
+        diagnostic = PreviewSparseCloudActivationPolicy
+            .FormatResidencyWarmupDiagnostic(
+                residentCount,
+                requestedCount,
+                hasPendingGeneration);
+        return _sparseCloudPreparedIdentity.IsValid &&
+               PreviewSparseCloudActivationPolicy.IsResidencyReady(
+                   residentCount,
+                   requestedCount,
+                   hasPendingGeneration);
+    }
+
+    private bool IsSparseCloudLightingPreparedCq46(
+        in PreviewSparseCloudSamplingIdentity identity)
+    {
+        if (_cloudLightCache is not { IsValid: true } cache)
+        {
+            return false;
+        }
+
+        var residentCount = identity.ResidentCount;
+        var requestedCount = Math.Max(
+            _sparseCloudClipmapController?.RequestedCount ?? 0,
+            residentCount);
+        return PreviewSparseCloudActivationPolicy.CanActivate(
+            identity,
+            cache.Near.IsGenerated,
+            cache.Near.DensityIdentity,
+            cache.Far.IsGenerated,
+            cache.Far.DensityIdentity,
+            residentCount,
+            requestedCount,
+            _sparseCloudBrickGenerator?.HasPendingGeneration ?? false);
+    }
+
+    private GlSparseCloudSamplingBindings?
+        CreatePreparedSparseCloudBindingsCq46()
+    {
+        // Do not feed incomplete sparse residency into CQ3 light-cache generation.
+        // Warmup keeps High-equivalent procedural density for both the view and the
+        // cache until the residency gate opens, then both switch together.
+        if (!IsSparseCloudResidencyReadyForActivation())
+        {
+            return null;
+        }
+
+        var target = ResolveSparseCloudLightingTargetIdentity();
+        if (target == _sparseCloudPreparedIdentity &&
+            _sparseCloudResourcesReady &&
+            _sparseCloudActiveIdentity.IsValid &&
+            target != _sparseCloudActiveIdentity)
+        {
+            // Amortize prepared-identity light refreshes across motion.
+            _sparseCloudPreparedLightingChaseCooldown = 4;
+        }
+
+        return CreateSparseCloudBindingsCq46(
+            target,
+            requireActiveBackend: false);
+    }
+
+    private GlSparseCloudSamplingBindings?
+        CreateActiveSparseCloudBindingsCq46() =>
+        CreateSparseCloudBindingsCq46(
+            _sparseCloudActiveIdentity,
+            requireActiveBackend: true);
+
+    private GlSparseCloudSamplingBindings?
+        CreateSparseCloudBindingsCq46(
+            in PreviewSparseCloudSamplingIdentity identity,
+            bool requireActiveBackend)
+    {
+        var resources = _sparseCloudVolumeResources;
+        if (!identity.IsValid ||
+            resources is not { IsAllocated: true } ||
+            _sparseCloudRuntimeFaulted ||
+            (requireActiveBackend &&
+             (!_sparseCloudResourcesReady ||
+              _cloudDensityBackendSelection.ActiveBackend !=
+                  PreviewCloudDensityBackend.SparseVoxel ||
+              identity != _sparseCloudActiveIdentity)))
+        {
+            return null;
+        }
+
+        return new GlSparseCloudSamplingBindings(
+            resources.AtlasTextureHandle,
+            resources.GetActivePageTableHandle(0),
+            resources.GetActivePageTableHandle(1),
+            resources.GetActivePageTableHandle(2),
+            identity.OriginL0,
+            identity.OriginL1,
+            identity.OriginL2,
+            identity.Signature);
+    }
+
+    private void TryInitSparseCloudTemplateAssetsCq41()
+    {
+        _sparseCloudTemplateAssets = null;
+        if (_glCapabilities?.CanUseSparseCloudVolumes != true)
+        {
+            _sparseCloudTemplateDiagnostic = "not-loaded-capability-unavailable";
+            return;
+        }
+
+        if (!PreviewSparseCloudTemplateAssetLoader.TryLoad(
+                out var assets,
+                out var reason))
+        {
+            _sparseCloudTemplateDiagnostic = "invalid-" + reason;
+            EmitDiagnostic(
+                "[3D preview] CQ4.1 sparse cloud template library unavailable; " +
+                "retaining the accepted CQ3.9 procedural layer (" + reason + ").");
+            return;
+        }
+
+        _sparseCloudTemplateAssets = assets;
+        _sparseCloudTemplateDiagnostic =
+            $"ready-v{assets.AssetVersion}/{assets.Templates.Count}-templates/" +
+            $"{assets.ByteLength}-bytes";
+        EmitDiagnostic(
+            "[3D preview] CQ4.1 sparse cloud template library: " +
+            _sparseCloudTemplateDiagnostic +
+            "; CQ4.2 resource allocation is independently gated by Cinematic quality.");
+    }
+
+    private void TryInitSparseCloudResourcesCq42(
+        GL gl,
+        int volumetricQuality)
+    {
+        if (_sparseCloudVolumeResources is { IsAllocated: true } &&
+            _sparseCloudBrickGenerator is not null)
+        {
+            return;
+        }
+
+        _sparseCloudResourcesReady = false;
+        if (PreviewVolumetricQuality.Clamp(volumetricQuality) !=
+            PreviewVolumetricQuality.Cinematic)
+        {
+            _sparseCloudResourceDiagnostic =
+                "not-allocated-quality-not-cinematic";
+            return;
+        }
+
+        if (PreviewSparseCloudBackendPolicy
+            .IsForceProceduralLayerEnabled())
+        {
+            _sparseCloudResourceDiagnostic =
+                "not-allocated-debug-force-procedural";
+            return;
+        }
+
+        if (_glCapabilities?.CanUseSparseCloudVolumes != true)
+        {
+            _sparseCloudResourceDiagnostic =
+                "not-allocated-capability-unavailable";
+            return;
+        }
+
+        if (_sparseCloudTemplateAssets is null)
+        {
+            _sparseCloudResourceDiagnostic =
+                "not-allocated-template-library-unavailable";
+            return;
+        }
+
+        if (_sparseCloudRuntimeFaulted ||
+            _sparseCloudResourceAllocationAttempted)
+        {
+            return;
+        }
+
+        _sparseCloudResourceAllocationAttempted = true;
+        if (!GlSparseCloudVolumeResources.TryCreate(
+                gl,
+                _glCapabilities,
+                out var resources,
+                out var reason))
+        {
+            _sparseCloudRuntimeFaulted = true;
+            _sparseCloudResourceDiagnostic =
+                "allocation-failed-" + reason;
+            EmitDiagnostic(
+                "[3D preview] CQ4.2 sparse cloud resource allocation failed; " +
+                "retaining the accepted CQ3.9 procedural layer (" +
+                reason + ").");
+            return;
+        }
+
+        _sparseCloudBrickGenerationProgram = CreatePreviewComputeProgram(
+            "genesis_sparse_cloud_brick_generate.comp",
+            out var generationShaderError,
+            "cq4.4-sparse-cloud-brick-generation");
+        if (_sparseCloudBrickGenerationProgram is not { IsValid: true })
+        {
+            resources!.Dispose();
+            _sparseCloudBrickGenerationProgram?.Dispose();
+            _sparseCloudBrickGenerationProgram = null;
+            _sparseCloudRuntimeFaulted = true;
+            _sparseCloudResourceDiagnostic =
+                "generation-shader-failed-" +
+                TrimShaderDiagnostic(generationShaderError);
+            EmitDiagnostic(
+                "[3D preview] CQ4.4 sparse brick generator unavailable; " +
+                "retaining the accepted CQ3.9 procedural layer (" +
+                _sparseCloudResourceDiagnostic + ").");
+            return;
+        }
+
+        if (!GlSparseCloudBrickGenerator.TryCreate(
+                gl,
+                _sparseCloudBrickGenerationProgram,
+                _sparseCloudTemplateAssets.Value,
+                out var generator,
+                out var generatorReason) ||
+            generator is null)
+        {
+            resources!.Dispose();
+            _sparseCloudBrickGenerationProgram?.Dispose();
+            _sparseCloudBrickGenerationProgram = null;
+            _sparseCloudRuntimeFaulted = true;
+            _sparseCloudResourceDiagnostic =
+                "generation-init-failed-" + generatorReason;
+            EmitDiagnostic(
+                "[3D preview] CQ4.4 sparse brick generator unavailable; " +
+                "retaining the accepted CQ3.9 procedural layer (" +
+                _sparseCloudResourceDiagnostic + ").");
+            return;
+        }
+
+        _sparseCloudVolumeResources = resources;
+        _sparseCloudBrickGenerator = generator;
+        // The validated CPU blobs are no longer needed after their RG8 array upload.
+        // The accounting reserves one persistent template copy, now owned by the GPU.
+        _sparseCloudTemplateAssets = null;
+        _sparseCloudBrickAllocator =
+            new PreviewSparseCloudBrickAllocator();
+        _sparseCloudClipmapController =
+            new PreviewSparseCloudClipmapController();
+        _sparseCloudResourceDiagnostic =
+            resources!.FormatDiagnostic() + ";" +
+            generator.FormatDiagnostic() + ";" +
+            _sparseCloudBrickAllocator.FormatDiagnostic() +
+            ";backendActivation=warming-cq4.6-transaction";
+        EmitDiagnostic(
+            "[3D preview] CQ4.2 sparse cloud resources allocated: " +
+            _sparseCloudResourceDiagnostic + ".");
+    }
+
+    private void UpdateSparseCloudClipmapsCq43(
+        ref GlRenderFrame frame,
+        float layerWorldY)
+    {
+        if (PreviewVolumetricQuality.Clamp(
+                frame.Settings.VolumetricQuality) !=
+            PreviewVolumetricQuality.Cinematic)
+        {
+            return;
+        }
+
+        var resources = _sparseCloudVolumeResources;
+        var controller = _sparseCloudClipmapController;
+        var allocator = _sparseCloudBrickAllocator;
+        var generator = _sparseCloudBrickGenerator;
+        if (resources is null ||
+            controller is null ||
+            allocator is null ||
+            generator is null ||
+            !resources.IsAllocated ||
+            _sparseCloudRuntimeFaulted)
+        {
+            return;
+        }
+
+        if (!resources.TryPublishCompleted(
+                out var published,
+                out var publicationReason))
+        {
+            FaultSparseCloudRuntimeCq43(
+                "page-publication-" + publicationReason);
+            return;
+        }
+
+        if (!generator.TryCollectCompleted(
+                out var completed,
+                out var generationCompletionReason))
+        {
+            FaultSparseCloudRuntimeCq43(
+                "brick-generation-completion-" +
+                generationCompletionReason);
+            return;
+        }
+
+        var residentPublished = 0;
+        var residentOrphanRecycled = 0;
+        foreach (var record in completed)
+        {
+            if (controller.TryMarkResident(
+                    record.Key,
+                    record.PhysicalBrickIndex))
+            {
+                if (!allocator.MarkResident(
+                        record.Key,
+                        generator.GenerationId,
+                        _sparseCloudControlFrame))
+                {
+                    FaultSparseCloudRuntimeCq43(
+                        "brick-residency-transition-" + record.Key);
+                    return;
+                }
+
+                residentPublished++;
+                _sparseCloudPendingRetire.Remove(record.Key);
+                continue;
+            }
+
+            // CQ4.7: the clipmap retired this page while generation was in flight.
+            // The fence already completed, so recycle the physical slot immediately.
+            if (!allocator.TryRecycleOrphanedGeneration(
+                    record.Key,
+                    generator.GenerationId,
+                    _sparseCloudControlFrame))
+            {
+                FaultSparseCloudRuntimeCq43(
+                    "brick-orphan-recycle-" + record.Key);
+                return;
+            }
+
+            residentOrphanRecycled++;
+            _sparseCloudPendingRetire.Remove(record.Key);
+        }
+
+        if (residentOrphanRecycled > 0)
+        {
+            _sparseCloudCounters.NoteOrphanedGenerationRecycled(
+                residentOrphanRecycled);
+        }
+
+        var viewDirection = frame.LookTarget - frame.Eye;
+        ReadOnlySpan<Vector4> frustumPlanes =
+            frame.CameraFrustumValid
+                ? frame.CameraFrustumPlanes
+                : ReadOnlySpan<Vector4>.Empty;
+        var update = controller.Update(
+            frame.Eye,
+            viewDirection,
+            layerWorldY +
+            Math.Max(frame.Settings.CloudVolumeHeight, 0.01f) * 0.5f,
+            frustumPlanes,
+            _sparseCloudControlFrame,
+            generator.HasPendingGeneration
+                ? 0
+                : PreviewSparseCloudVolumeContract
+                    .MaximumEnteringBricksPerFrame);
+        var generationFrame = _sparseCloudControlFrame;
+        _sparseCloudControlFrame =
+            _sparseCloudControlFrame == int.MaxValue
+                ? 0
+                : _sparseCloudControlFrame + 1;
+
+        foreach (var retiredKey in update.Retired)
+        {
+            _sparseCloudPendingRetire.Add(retiredKey);
+        }
+
+        if (published)
+        {
+            allocator.SyncActiveReferences(
+                resources.PublishedPhysicalBrickIndices);
+            allocator.ReleaseEligibleRetired();
+        }
+
+        var pendingRetireReleased = 0;
+        if (_sparseCloudPendingRetire.Count > 0)
+        {
+            var pendingKeys = _sparseCloudPendingRetire.ToArray();
+            foreach (var key in pendingKeys)
+            {
+                if (!allocator.TryGet(key, out _))
+                {
+                    _sparseCloudPendingRetire.Remove(key);
+                    continue;
+                }
+
+                if (allocator.TryRecycleUnreferenced(key))
+                {
+                    _sparseCloudPendingRetire.Remove(key);
+                    pendingRetireReleased++;
+                }
+            }
+        }
+
+        var dispatched = 0;
+        var generationDispatchReason = "no-entering-bricks";
+        if (update.Entering.Count > 0)
+        {
+            var windTime =
+                frame.Settings.CloudFreezeWind ? 0.0 : frame.RenderTime;
+            var generationInputs =
+                new PreviewSparseCloudBrickGenerationInputs(
+                    generationFrame,
+                    layerWorldY,
+                    layerWorldY +
+                    Math.Max(frame.Settings.CloudVolumeHeight, 0.01f),
+                    frame.Settings.CloudDensity,
+                    frame.Settings.CloudCoverageScale,
+                    frame.Settings.CloudVolumeSize,
+                    ComputeCloudWindOffset(windTime, frame.Settings),
+                    _cloudCoverageTex?.Id ?? 0,
+                    frame.Settings.CloudStyleBias);
+            using (BeginPassTimerScope(GlGpuTimerScope.SparseBrickGen))
+            {
+                if (!generator.TryDispatch(
+                        resources,
+                        allocator,
+                        update.Entering,
+                        generationInputs,
+                        out dispatched,
+                        out generationDispatchReason))
+                {
+                    FaultSparseCloudRuntimeCq43(
+                        "brick-generation-dispatch-" +
+                        generationDispatchReason);
+                    return;
+                }
+            }
+        }
+
+        if (!resources.HasPendingPublication &&
+            controller.TableRevision != resources.PublishedPlanRevision &&
+            !resources.TryStagePageTables(
+                controller,
+                generator.GenerationId,
+                out var stagingReason))
+        {
+            FaultSparseCloudRuntimeCq43(
+                "page-staging-" + stagingReason);
+            return;
+        }
+
+        _sparseCloudTraversalPrepared =
+            PreviewSparseCloudSamplingIdentity.TryCreate(
+                resources.PublishedAtlasGenerationId,
+                generator.HasPendingGeneration,
+                resources.PublishedGenerationId,
+                resources.PublishedPlanRevision,
+                resources.HasPendingPublication,
+                controller.TableRevision,
+                resources.PublishedResidentCount,
+                resources.GetActiveOrigin(0),
+                resources.GetActiveOrigin(1),
+                resources.GetActiveOrigin(2),
+                out _sparseCloudPreparedIdentity,
+                out var identityReason);
+        _sparseCloudTraversalDiagnostic =
+            _sparseCloudTraversalPrepared
+                ? "prepared-cq4.6/" +
+                  _sparseCloudPreparedIdentity.FormatDiagnostic()
+                : $"warming/generation-{generator.GenerationId}/" +
+                  $"publication-{resources.PublishedGenerationId}/" +
+                  $"resident-{controller.ResidentCount}/" +
+                  $"identity={identityReason}";
+        _sparseCloudCounters.CaptureResidency(
+            allocator,
+            controller,
+            _sparseCloudPendingRetire.Count);
+        _sparseCloudResourceDiagnostic =
+            resources.FormatDiagnostic() + ";" +
+            controller.FormatDiagnostic() + ";" +
+            allocator.FormatDiagnostic() + ";" +
+            generator.FormatDiagnostic() + ";" +
+            $"lastUpdate=frame-{update.Frame}/entering-{update.Entering.Count}/" +
+            $"retired-{update.Retired.Count}/originChanged-{update.OriginChanged}/" +
+            $"teleport-{update.Teleport};" +
+            $"lastGeneration=completed-{completed.Count}/mapped-{residentPublished}/" +
+            $"orphanRecycled-{residentOrphanRecycled}/" +
+            $"pendingRetireReleased-{pendingRetireReleased}/" +
+            $"dispatched-{dispatched}/{generationDispatchReason}/" +
+            $"{generationCompletionReason};" +
+            $"lastPublication={(published ? publicationReason : "none")};" +
+            $"counters={_sparseCloudCounters.FormatDiagnostic()};" +
+            $"backendActivation={_sparseCloudActivationDiagnostic}";
+
+        if (_sparseCloudPreparedLightingChaseCooldown > 0)
+        {
+            _sparseCloudPreparedLightingChaseCooldown--;
+        }
+    }
+
+    internal void InjectSparseCloudFaultForTests(
+        PreviewSparseCloudFaultInjectPoint point)
+    {
+        _sparseCloudFaultInject = point;
+        _sparseCloudVolumeResources?.SetFaultInjectForTests(point);
+        _sparseCloudBrickGenerator?.SetFaultInjectForTests(point);
+        if (point == PreviewSparseCloudFaultInjectPoint.ContextLoss)
+        {
+            FaultSparseCloudRuntimeCq43("injected-context-loss");
+        }
+    }
+
+    internal string FormatSparseCloudCountersForTests() =>
+        _sparseCloudCounters.FormatDiagnostic();
+
+    private void FaultSparseCloudRuntimeCq43(string reason)
+    {
+        _sparseCloudRuntimeFaulted = true;
+        _sparseCloudResourcesReady = false;
+        _sparseCloudTraversalPrepared = false;
+        _sparseCloudPreparedIdentity = default;
+        _sparseCloudActiveIdentity = default;
+        _sparseCloudPreparedLightingChaseCooldown = 0;
+        _sparseCloudActivationDiagnostic =
+            "runtime-failed-" + reason;
+        _sparseCloudTraversalDiagnostic = "runtime-failed-" + reason;
+        _sparseCloudResourceDiagnostic = "runtime-failed-" + reason;
+        _sparseCloudPendingRetire.Clear();
+        _sparseCloudVolumeResources?.Dispose();
+        _sparseCloudVolumeResources = null;
+        _sparseCloudBrickGenerator?.Dispose();
+        _sparseCloudBrickGenerator = null;
+        _sparseCloudBrickGenerationProgram?.Dispose();
+        _sparseCloudBrickGenerationProgram = null;
+        _sparseCloudBrickAllocator = null;
+        _sparseCloudClipmapController = null;
+        EmitDiagnostic(
+            "[3D preview] CQ4 sparse control/generation failed; " +
+            "retaining the accepted CQ3.9 procedural layer (" +
+            reason + ").");
     }
 
     internal static bool CanUseCloudStbn(
@@ -2790,6 +3943,53 @@ public sealed partial class OpenGlPreviewBackend
         return new Vector3(wx, 0f, wz);
     }
 
+    private static Vector3 ComputeUpperCloudWindOffset(
+        double renderTime,
+        in PreviewRenderSettingsSnapshot settings)
+    {
+        var period = Math.Max(settings.CloudVolumeSize, 8f) * 16f;
+        var heading =
+            (settings.CloudWindHeadingDegrees +
+             PreviewCloudLayerEnvelope.UpperDeckHeadingVeerDegrees) *
+            (MathF.PI / 180f);
+        var travel = renderTime *
+            settings.CloudWindSpeed *
+            Math.Max(settings.CloudUpperWindSpeedScale, 0f);
+        var wx = (float)((MathF.Cos(heading) * travel) % period);
+        var wz = (float)((MathF.Sin(heading) * travel) % period);
+        return new Vector3(wx, 0f, wz);
+    }
+
+    private void ApplyCloudLayerEnvelopeUniforms(
+        GlShaderProgram program,
+        int cumulusLayerCountLoc,
+        int interDeckGapLoc,
+        int heightVarianceLoc,
+        int upperThicknessScaleLoc,
+        int upperCoverageScaleLoc,
+        int upperDensityScaleLoc,
+        int upperWindOffsetLoc,
+        int cirrusGapLoc,
+        int cirrusThicknessLoc,
+        int styleBiasLoc,
+        in PreviewRenderSettingsSnapshot settings,
+        Vector3 upperWindOffset)
+    {
+        SetIntOnProgramLoc(
+            program,
+            cumulusLayerCountLoc,
+            PreviewCloudLayerEnvelope.ClampDeckCount(settings.CloudCumulusLayerCount));
+        SetFloatOnProgramLoc(program, interDeckGapLoc, settings.CloudInterDeckGap);
+        SetFloatOnProgramLoc(program, heightVarianceLoc, settings.CloudLayerHeightVariance);
+        SetFloatOnProgramLoc(program, upperThicknessScaleLoc, settings.CloudUpperThicknessScale);
+        SetFloatOnProgramLoc(program, upperCoverageScaleLoc, settings.CloudUpperCoverageScale);
+        SetFloatOnProgramLoc(program, upperDensityScaleLoc, settings.CloudUpperDensityScale);
+        SetVec3OnProgramLoc(program, upperWindOffsetLoc, upperWindOffset);
+        SetFloatOnProgramLoc(program, cirrusGapLoc, settings.CloudCirrusGap);
+        SetFloatOnProgramLoc(program, cirrusThicknessLoc, settings.CloudCirrusThickness);
+        SetIntOnProgramLoc(program, styleBiasLoc, Math.Clamp(settings.CloudStyleBias, 0, 4));
+    }
+
     /// <summary>
     /// High-altitude wind for the cirrus sheet: faster than the cumulus layer and slightly
     /// veered, as real upper winds are. The cirrus noise is procedural (non-tiling), so the
@@ -2864,8 +4064,14 @@ public sealed partial class OpenGlPreviewBackend
                 ComputeCloudSunDiscVisibility(in frame));
             SetIntOnProgramLoc(program, upu.CloudDataDirect,
                 source.Profile.UsesDirectMetadata ? 1 : 0);
-            SetFloatOnProgramLoc(program, upu.CloudExposure, frame.Settings.AtmosphereSkyExposure);
+            // Match atmo_sky.frag / procedural sky: exposure * 1.4 before present encode.
+            SetFloatOnProgramLoc(
+                program,
+                upu.CloudExposure,
+                frame.Settings.AtmosphereSkyExposure * 1.4f);
             SetIntOnProgramLoc(program, upu.HdrPresent, frame.Settings.HdrPresentActive ? 1 : 0);
+            SetFloatOnProgramLoc(program, upu.HdrPaperWhiteNits, frame.Settings.HdrPaperWhiteNits);
+            SetFloatOnProgramLoc(program, upu.HdrPeakNits, frame.Settings.HdrPeakNits);
             SetIntOnProgramLoc(program, upu.ApplyCloudEncoding,
                 frame.Settings.CloudDebugView == PreviewCloudDebugView.Off ? 1 : 0);
             SetIntOnProgramLoc(
@@ -2886,11 +4092,19 @@ public sealed partial class OpenGlPreviewBackend
             SetFloatOnProgramLoc(
                 program,
                 _cloudCompositeUniformLocs.CloudExposure,
-                frame.Settings.AtmosphereSkyExposure);
+                frame.Settings.AtmosphereSkyExposure * 1.4f);
             SetIntOnProgramLoc(
                 program,
                 _cloudCompositeUniformLocs.HdrPresent,
                 frame.Settings.HdrPresentActive ? 1 : 0);
+            SetFloatOnProgramLoc(
+                program,
+                _cloudCompositeUniformLocs.HdrPaperWhiteNits,
+                frame.Settings.HdrPaperWhiteNits);
+            SetFloatOnProgramLoc(
+                program,
+                _cloudCompositeUniformLocs.HdrPeakNits,
+                frame.Settings.HdrPeakNits);
             SetIntOnProgramLoc(
                 program,
                 _cloudCompositeUniformLocs.ApplyCloudEncoding,

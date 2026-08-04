@@ -169,7 +169,18 @@ public static class PreviewCloudLightingShadingProfiles
         Octave1: new Vector3(0.50f, 0.50f, 0.55f),
         Octave2: new Vector3(0.25f, 0.25f, 0.30f),
         ScatteredEnergyClamp: 2.25f,
-        CachedSkyVisibilityFloor: 0.18f,
-        GroundBounceStrength: 0.11f,
-        LocalConeOpticalDepthScale: 0.45f);
+        CachedSkyVisibilityFloor: 0.08f,
+        GroundBounceStrength: 0.13f,
+        LocalConeOpticalDepthScale: 0.38f);
+
+    /// <summary>
+    /// CA3.0/CA3.3 first-use diagnostic token for cloud-light contrast calibration.
+    /// </summary>
+    public static string FormatDiagnostic()
+    {
+        var profile = Default;
+        return $"ca3.3-shading(skyFloor={profile.CachedSkyVisibilityFloor:0.##}," +
+            $"bounce={profile.GroundBounceStrength:0.##}," +
+            $"coneOd={profile.LocalConeOpticalDepthScale:0.##})";
+    }
 }

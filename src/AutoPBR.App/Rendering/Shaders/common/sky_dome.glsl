@@ -64,7 +64,8 @@ vec3 skySunDiscAureole(vec3 viewDir, vec3 lightPropagationDir, float cosDiscEdge
     vec3 glowCol = mix(vec3(1.0, 0.80, 0.52), vec3(0.92, 0.93, 1.0), turbidityT * 0.7);
     glowCol = mix(glowCol, vec3(1.0, 0.40, 0.10), lowSun * 0.85);
 
-    // Disc amplitude is HDR (tone-mapped to near-white); aureole stays in sky range.
+    // Disc amplitude is HDR (tone-mapped to near-white on SDR; left linear for
+    // presentEncodeScRgb so the core rides paper-white headroom). Aureole stays in sky range.
     vec3 glow = glowCol * (circumsolar * 1.85 + skirt * 0.4) * glowCut;
     float discBright = max(discBrightness, 0.0);
     float bloom = max(bloomStrength, 0.0);
@@ -134,7 +135,7 @@ vec3 skyHorizonGlow(vec3 viewDir, float dayAmt, vec3 sunTint, float horizonBandS
 {
     float band = exp(-abs(viewDir.y) * 9.0);
     vec3 nightGlow = vec3(0.04, 0.05, 0.08);
-    vec3 dayGlow = sunTint * 0.28 + vec3(0.28, 0.42, 0.72);
+    vec3 dayGlow = sunTint * 0.28 + vec3(0.42, 0.66, 0.86);
     return mix(nightGlow, dayGlow, dayAmt) * band * 0.42 * clamp(horizonBandScale, 0.0, 1.0);
 }
 

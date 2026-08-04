@@ -1,0 +1,442 @@
+#version 430 core
+// CQ4.4 deterministic sparse-cloud brick generation. Sampling remains disabled until CQ4.6.
+
+//!include "common/cloud_population.glsl"
+
+layout(local_size_x = 5, local_size_y = 5, local_size_z = 5) in;
+layout(rg8, binding = 0) writeonly uniform image3D uSparseAtlasOut;
+
+struct Cq44GenerationRecord
+{
+    ivec4 logicalAndLevel;
+    ivec4 physicalSeedReserved;
+};
+
+layout(std430, binding = 0) readonly buffer Cq44GenerationRequests
+{
+    Cq44GenerationRecord cq44Requests[];
+};
+
+layout(std430, binding = 1) writeonly buffer Cq44GenerationStatus
+{
+    uint cq44Status[];
+};
+
+uniform sampler2DArray uEnvelopeTemplates;
+uniform sampler2D uWeatherMap;
+uniform int uHasWeatherMap;
+uniform int uRequestCount;
+uniform float uCloudBaseWorldY;
+uniform float uCloudTopWorldY;
+uniform float uDensity;
+uniform float uCoverageScale;
+uniform float uVolumeSize;
+uniform vec3 uWindOffset;
+uniform int uStyleBias;
+
+const int CQ44_LOGICAL_SIZE = 8;
+const int CQ44_PHYSICAL_SIZE = 10;
+const int CQ44_BORDER = 1;
+const int CQ44_ATLAS_BRICKS_PER_AXIS = 16;
+const int CQ44_TEMPLATE_WIDTH = 32;
+const int CQ44_TEMPLATE_HEIGHT = 24;
+const int CQ44_TEMPLATE_DEPTH = 32;
+const uint CQ44_COMPLETION_MAGIC = 0xC044B11Cu;
+const uint CQ45_MAX_DISTANCE = 32u;
+
+shared uint cq45Density[1000];
+shared uint cq45DistanceA[1000];
+shared uint cq45DistanceB[1000];
+
+float cq44VoxelWorldSize(int level)
+{
+    return level == 0 ? 2.0 : (level == 1 ? 8.0 : 32.0);
+}
+
+ivec3 cq44AtlasBrickCoordinate(int physicalIndex)
+{
+    int x = physicalIndex % CQ44_ATLAS_BRICKS_PER_AXIS;
+    int quotient = physicalIndex / CQ44_ATLAS_BRICKS_PER_AXIS;
+    int y = quotient % CQ44_ATLAS_BRICKS_PER_AXIS;
+    int z = quotient / CQ44_ATLAS_BRICKS_PER_AXIS;
+    return ivec3(x, y, z);
+}
+
+vec4 cqCa2SampleWeather(vec2 advectedWorld)
+{
+    if (uHasWeatherMap == 0)
+    {
+        return vec4(0.72, 0.45, 0.68, 0.5);
+    }
+
+    float primaryPeriod = max(uVolumeSize, 8.0) * 16.0;
+    vec2 primaryUv = fract(advectedWorld / primaryPeriod + vec2(0.5));
+    vec4 weather = textureLod(uWeatherMap, primaryUv, 0.0);
+    const mat2 weatherRotationScale = mat2(2.0, -1.0, 1.0, 2.0);
+    vec2 secondaryUv = fract(
+        weatherRotationScale * primaryUv +
+        vec2(0.173, 0.619));
+    vec4 secondaryWeather = textureLod(
+        uWeatherMap,
+        secondaryUv,
+        0.0);
+    float secondaryBlend = mix(0.08, 0.22, clamp(weather.a, 0.0, 1.0));
+    return mix(weather, secondaryWeather, secondaryBlend);
+}
+
+float cqCa2EvaluateEnvelope(
+    vec2 advectedWorld,
+    float unitHeight,
+    ivec2 cell,
+    float cellSpan,
+    uint salt,
+    int satellite,
+    vec4 weather,
+    out float support)
+{
+    float coverage = clamp(
+        weather.r * max(uCoverageScale, 0.0),
+        0.0,
+        1.0);
+    float spawnProbability = satellite > 0
+        ? cpSatelliteProbability(coverage, weather.g, weather.a)
+        : cpParentProbability(coverage, weather.g);
+    // Missing weather data is an intentional compatibility path, not a clear-sky
+    // instruction. Admit candidates deterministically so a rejected hash cell cannot
+    // turn the fallback or conservative-generation smoke fixture entirely empty.
+    if (uHasWeatherMap == 0)
+    {
+        spawnProbability = 1.0;
+    }
+    uint spawnSalt = satellite > 0 ? 0x1B56C4E9u : 0xB5297A4Du;
+    if (cpHash01(cell, salt ^ spawnSalt) > spawnProbability)
+    {
+        support = 0.0;
+        return 0.0;
+    }
+
+    float analyticSupport;
+    cpCellInfluence(
+        advectedWorld,
+        cell,
+        cellSpan,
+        salt,
+        satellite,
+        analyticSupport);
+    support = analyticSupport;
+
+    vec2 center = cpCellCenter(cell, cellSpan, salt);
+    float horizontalScale = cpCellScale(cell, salt, satellite);
+    vec2 centered = advectedWorld - center;
+    float rotation = cpCellRotation(cell, salt);
+    vec2 rotated = mat2(
+        cos(rotation), -sin(rotation),
+        sin(rotation), cos(rotation)) * centered;
+    float aspect = cpCellAspect(cell, salt, satellite);
+    vec2 local = vec2(
+        rotated.x / max(aspect, 1e-4),
+        rotated.y * aspect) /
+        max(cellSpan * horizontalScale, 1e-4) +
+        vec2(0.5);
+    if (any(lessThan(local, vec2(0.0))) ||
+        any(greaterThanEqual(local, vec2(1.0))))
+    {
+        return 0.0;
+    }
+
+    float verticalRandom = cpHash01(cell, salt ^ 0xD2511F53u);
+    float verticalScale = satellite > 0
+        ? mix(0.42, 0.72, verticalRandom)
+        : mix(0.72, 1.08, verticalRandom);
+    if (unitHeight > verticalScale)
+    {
+        return 0.0;
+    }
+
+    float normalizedHeight =
+        clamp(unitHeight / max(verticalScale, 1e-4), 0.0, 1.0);
+    vec2 lean = cpCellLean(cell, salt, satellite);
+    float leanProfile =
+        normalizedHeight * normalizedHeight -
+        normalizedHeight * 0.15;
+    local -= lean * leanProfile;
+    if (any(lessThan(local, vec2(0.0))) ||
+        any(greaterThanEqual(local, vec2(1.0))))
+    {
+        return 0.0;
+    }
+
+    float familyJitter =
+        (cpHash01(cell, salt ^ 0xCD9E8D57u) - 0.5) * 0.16;
+    float biasedType = weather.g;
+    if (uStyleBias > 0)
+    {
+        float target = (float(clamp(uStyleBias - 1, 0, 3)) + 0.5) / 4.0;
+        biasedType = mix(weather.g, target, 0.82);
+    }
+    float familyValue = clamp(biasedType + familyJitter, 0.0, 0.999);
+    int family = clamp(int(floor(familyValue * 4.0)), 0, 3);
+    if (satellite > 0)
+    {
+        // Satellite cells are predominantly humilis/mediocris. Strongly convective
+        // moist systems may promote a minority into congestus, never stratus.
+        family = familyValue < 0.48 ? 0 : 1;
+        if (weather.a > 0.76 && weather.b > 0.62)
+        {
+            family = 2;
+        }
+    }
+
+    int variant = int(cpHashCell(cell, salt ^ 0x9E3779B9u) % 3u);
+    int templateIndex = family * 3 + variant;
+
+    // Convection deforms the envelope without changing deterministic placement.
+    // All neighboring bricks evaluate the same global cell and template coordinate.
+    float convection = weather.a * 2.0 - 1.0;
+    float warpedHeight = clamp(
+        unitHeight / max(verticalScale, 1e-4) -
+            convection * 0.07 * sin((local.x + local.y) * 6.2831853),
+        0.0,
+        1.0);
+    ivec3 templateVoxel = ivec3(
+        clamp(int(floor(local.x * float(CQ44_TEMPLATE_WIDTH))),
+            0, CQ44_TEMPLATE_WIDTH - 1),
+        clamp(int(floor(warpedHeight * float(CQ44_TEMPLATE_HEIGHT))),
+            0, CQ44_TEMPLATE_HEIGHT - 1),
+        clamp(int(floor(local.y * float(CQ44_TEMPLATE_DEPTH))),
+            0, CQ44_TEMPLATE_DEPTH - 1));
+    int templateLayer =
+        templateIndex * CQ44_TEMPLATE_DEPTH + templateVoxel.z;
+    float envelope = texelFetch(
+        uEnvelopeTemplates,
+        ivec3(templateVoxel.xy, templateLayer),
+        0).r;
+    // The v1 templates can retain density close to their square storage boundary.
+    // Rotation exposes that as a vertical wall unless the storage domain has a
+    // physical evaporation apron. Neighboring cells still overlap through soft union.
+    vec2 domainDistance = min(local, vec2(1.0) - local);
+    float domainApron = smoothstep(
+        0.0,
+        satellite > 0 ? 0.10 : 0.075,
+        min(domainDistance.x, domainDistance.y));
+    envelope *= domainApron;
+
+    float coverageWeight = smoothstep(0.08, 0.86, coverage);
+    float weatherDensity = mix(0.55, 1.35, weather.b);
+    return envelope * coverageWeight * weatherDensity;
+}
+
+float cq44EvaluateDensity(vec3 worldPosition)
+{
+    float cloudHeight = max(uCloudTopWorldY - uCloudBaseWorldY, 0.01);
+    float unitHeight = (worldPosition.y - uCloudBaseWorldY) / cloudHeight;
+    if (unitHeight < 0.0 || unitHeight > 1.0)
+    {
+        return 0.0;
+    }
+
+    if (uHasWeatherMap == 0)
+    {
+        // Transactional asset fallback: retain a conservative, horizontally coherent
+        // cloud layer instead of allowing stochastic cells to erase the cloud body.
+        // Normal CA2 rendering always uses the validated weather texture.
+        float lower = smoothstep(0.0, 0.08, unitHeight);
+        float upper = 1.0 - smoothstep(0.72, 1.0, unitHeight);
+        float shaped = lower * upper * 0.72 * max(uDensity, 0.0);
+        // Wider than the original 0.12..0.62 gate so sparse isosurfaces do not
+        // become ink-outline walls under Cinematic local cone taps.
+        return smoothstep(0.06, 0.80, shaped);
+    }
+
+    vec2 advected = worldPosition.xz + uWindOffset.xz;
+    vec4 weather = cqCa2SampleWeather(advected);
+
+    float parentSpan = cpParentCellSpan(uVolumeSize);
+    ivec2 parentCell = ivec2(floor(advected / parentSpan));
+    float parentUnion = 0.0;
+    float parentSupport = 0.0;
+    for (int z = -1; z <= 1; ++z)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            float support;
+            float envelope = cqCa2EvaluateEnvelope(
+                advected,
+                unitHeight,
+                parentCell + ivec2(x, z),
+                parentSpan,
+                CP_PARENT_SALT,
+                0,
+                weather,
+                support);
+            parentUnion = cpSoftUnion(parentUnion, envelope);
+            parentSupport = max(parentSupport, support);
+        }
+    }
+
+    float satelliteSpan = cpSatelliteCellSpan(uVolumeSize);
+    ivec2 satelliteCell = ivec2(floor(advected / satelliteSpan));
+    float satelliteUnion = 0.0;
+    for (int z = -1; z <= 1; ++z)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            float support;
+            float envelope = cqCa2EvaluateEnvelope(
+                advected,
+                unitHeight,
+                satelliteCell + ivec2(x, z),
+                satelliteSpan,
+                CP_SATELLITE_SALT,
+                1,
+                weather,
+                support);
+            satelliteUnion = cpSoftUnion(satelliteUnion, envelope);
+        }
+    }
+
+    float attachment = smoothstep(0.025, 0.42, parentSupport);
+    float combined = cpSoftUnion(
+        parentUnion,
+        satelliteUnion * attachment * 0.86);
+    float shaped = combined * max(uDensity, 0.0);
+    return smoothstep(0.06, 0.80, shaped);
+}
+
+void main()
+{
+    int requestIndex = int(gl_WorkGroupID.x);
+    if (requestIndex < 0 || requestIndex >= uRequestCount)
+    {
+        return;
+    }
+
+    Cq44GenerationRecord request = cq44Requests[requestIndex];
+    ivec3 logicalBrick = request.logicalAndLevel.xyz;
+    int level = request.logicalAndLevel.w;
+    int physicalIndex = request.physicalSeedReserved.x;
+    if (level < 0 || level > 2 ||
+        physicalIndex < 0 || physicalIndex >= 4095)
+    {
+        return;
+    }
+
+    ivec3 atlasBase =
+        cq44AtlasBrickCoordinate(physicalIndex) * CQ44_PHYSICAL_SIZE;
+    float voxelWorldSize = cq44VoxelWorldSize(level);
+    int localLinear =
+        (int(gl_LocalInvocationID.z) * int(gl_WorkGroupSize.y) +
+         int(gl_LocalInvocationID.y)) *
+        int(gl_WorkGroupSize.x) +
+        int(gl_LocalInvocationID.x);
+    int localStride =
+        int(gl_WorkGroupSize.x) *
+        int(gl_WorkGroupSize.y) *
+        int(gl_WorkGroupSize.z);
+
+    for (int linear = localLinear;
+         linear < 1000;
+         linear += localStride)
+    {
+        int x = linear % CQ44_PHYSICAL_SIZE;
+        int quotient = linear / CQ44_PHYSICAL_SIZE;
+        int y = quotient % CQ44_PHYSICAL_SIZE;
+        int z = quotient / CQ44_PHYSICAL_SIZE;
+        ivec3 physicalLocal = ivec3(x, y, z);
+        ivec3 logicalVoxel =
+            logicalBrick * CQ44_LOGICAL_SIZE +
+            physicalLocal - ivec3(CQ44_BORDER);
+        vec3 worldPosition = vec3(logicalVoxel) * voxelWorldSize;
+        float density = cq44EvaluateDensity(worldPosition);
+        uint densityByte = uint(
+            floor(clamp(density, 0.0, 1.0) * 255.0 + 0.5));
+        cq45Density[linear] = densityByte;
+        cq45DistanceA[linear] =
+            densityByte > 0u ? 0u : CQ45_MAX_DISTANCE;
+    }
+
+    barrier();
+
+    // Nine shared-memory Chebyshev wavefront iterations are sufficient for a 10^3 brick.
+    // Empty bricks remain at the documented 32-voxel cap. Traversal clips the decoded
+    // distance to the logical brick boundary, so unseen density beyond the apron is safe.
+    for (int iteration = 0; iteration < 9; ++iteration)
+    {
+        bool readA = (iteration & 1) == 0;
+        for (int linear = localLinear;
+             linear < 1000;
+             linear += localStride)
+        {
+            int x = linear % CQ44_PHYSICAL_SIZE;
+            int quotient = linear / CQ44_PHYSICAL_SIZE;
+            int y = quotient % CQ44_PHYSICAL_SIZE;
+            int z = quotient / CQ44_PHYSICAL_SIZE;
+            uint best = readA
+                ? cq45DistanceA[linear]
+                : cq45DistanceB[linear];
+            for (int dz = -1; dz <= 1; ++dz)
+            {
+                for (int dy = -1; dy <= 1; ++dy)
+                {
+                    for (int dx = -1; dx <= 1; ++dx)
+                    {
+                        ivec3 neighbor = ivec3(x + dx, y + dy, z + dz);
+                        if (any(lessThan(neighbor, ivec3(0))) ||
+                            any(greaterThanEqual(
+                                neighbor,
+                                ivec3(CQ44_PHYSICAL_SIZE))))
+                        {
+                            continue;
+                        }
+
+                        int neighborLinear =
+                            (neighbor.z * CQ44_PHYSICAL_SIZE + neighbor.y) *
+                            CQ44_PHYSICAL_SIZE +
+                            neighbor.x;
+                        uint neighborDistance = readA
+                            ? cq45DistanceA[neighborLinear]
+                            : cq45DistanceB[neighborLinear];
+                        best = min(
+                            best,
+                            min(neighborDistance + 1u, CQ45_MAX_DISTANCE));
+                    }
+                }
+            }
+
+            if (readA)
+            {
+                cq45DistanceB[linear] = best;
+            }
+            else
+            {
+                cq45DistanceA[linear] = best;
+            }
+        }
+
+        barrier();
+    }
+
+    for (int linear = localLinear;
+         linear < 1000;
+         linear += localStride)
+    {
+        int x = linear % CQ44_PHYSICAL_SIZE;
+        int quotient = linear / CQ44_PHYSICAL_SIZE;
+        int y = quotient % CQ44_PHYSICAL_SIZE;
+        int z = quotient / CQ44_PHYSICAL_SIZE;
+        float density = float(cq45Density[linear]) / 255.0;
+        float conservativeDistance =
+            float(cq45DistanceB[linear]) / 255.0;
+        imageStore(
+            uSparseAtlasOut,
+            atlasBase + ivec3(x, y, z),
+            vec4(density, conservativeDistance, 0.0, 1.0));
+    }
+
+    memoryBarrierImage();
+    barrier();
+    if (all(equal(gl_LocalInvocationID, uvec3(0))))
+    {
+        cq44Status[requestIndex] = CQ44_COMPLETION_MAGIC;
+    }
+}

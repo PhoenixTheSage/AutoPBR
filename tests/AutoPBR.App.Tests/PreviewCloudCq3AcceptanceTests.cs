@@ -90,18 +90,25 @@ public sealed class PreviewCloudCq3AcceptanceTests
                     try
                     {
                         var groundY = PreviewStageConstants.GroundPlaneWorldY;
-                        var layerBase =
+                        var layerWorldY =
                             PreviewStageConstants.CloudLayerBaseWorldY(
-                                initialSettings.CloudLayerHeight) -
-                            groundY;
-                        var layerTop =
-                            layerBase + initialSettings.CloudVolumeHeight;
-                        var cirrusBase =
-                            layerTop +
-                            Math.Max(initialSettings.CloudVolumeHeight * 1.5f, 18f);
-                        var cirrusTop =
-                            cirrusBase +
-                            Math.Max(initialSettings.CloudVolumeHeight * 0.035f, 0.75f);
+                                initialSettings.CloudLayerHeight);
+                        var stack = PreviewCloudLayerEnvelope.Build(
+                            groundY,
+                            layerWorldY,
+                            initialSettings.CloudVolumeHeight,
+                            initialSettings.CloudVolumeSize,
+                            initialSettings.CloudCirrusStrength,
+                            initialSettings.CloudCumulusLayerCount,
+                            initialSettings.CloudInterDeckGap,
+                            initialSettings.CloudLayerHeightVariance,
+                            initialSettings.CloudUpperThicknessScale,
+                            initialSettings.CloudCirrusGap,
+                            initialSettings.CloudCirrusThickness);
+                        var layerBase = stack.Deck0.BaseAltitude;
+                        var layerTop = stack.CumulusSupportTop;
+                        var cirrusBase = stack.CirrusBaseAltitude;
+                        var cirrusTop = stack.CirrusTopAltitude;
                         WaitForRenderedScene(
                             context,
                             backend,

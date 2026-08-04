@@ -11,7 +11,6 @@ internal readonly struct GodRaysPassInvalidation
     public bool CloudHistory { get; init; }
     public bool TaaHistory { get; init; }
     public bool ResetGodRayLogs { get; init; }
-    public bool ResetCloudDrawLog { get; init; }
 }
 
 /// <summary>Coordinates god-ray toggle sync, scene-capture sizing, and diagnostic throttling.</summary>
@@ -45,7 +44,6 @@ internal sealed class GodRaysPassCoordinator
             CloudHistory = true,
             TaaHistory = true,
             ResetGodRayLogs = true,
-            ResetCloudDrawLog = true,
         };
     }
 
@@ -66,7 +64,6 @@ internal sealed class GodRaysPassCoordinator
             VolumeFroxelHistory = true,
             CloudHistory = true,
             TaaHistory = true,
-            ResetCloudDrawLog = true,
         };
     }
 
@@ -81,15 +78,13 @@ internal sealed class GodRaysPassCoordinator
         }
 
         var taa = resolveEffectiveTaa(settings);
+        // Cap at 1.5x. A former 2x tier (EdgeAA / high FXAA) still produced a hard bottom-half
+        // cutoff on some GL/ANGLE paths after the odd-height fix; EdgeAA quality comes from the
+        // resolve profile (edge blend / FXAA), not from a second SSAA octave.
         if (settings.PreviewTaaForceFxaa ||
             Math.Clamp(settings.PreviewTaaMode, 0, 4) == 2 ||
-            taa.EdgeAaBlend >= 0.45f ||
-            taa.FxaaEdgeStrength >= 0.70f)
-        {
-            return 2f;
-        }
-
-        if (taa.EdgeAaBlend > 0.05f || taa.FxaaEdgeStrength > 0.20f)
+            taa.EdgeAaBlend > 0.05f ||
+            taa.FxaaEdgeStrength > 0.20f)
         {
             return 1.5f;
         }
@@ -113,8 +108,16 @@ internal sealed class GodRaysPassCoordinator
             captureScale = Math.Clamp(captureScale, 1f, Math.Max(1f, maxAllowedScale));
         }
 
-        captureW = Math.Max(1, (int)MathF.Ceiling(frame.Vw * captureScale));
-        captureH = Math.Max(1, (int)MathF.Ceiling(frame.Vh * captureScale));
+        // Keep capture dimensions even. Odd heights (e.g. 683 @ 1.5x → 1025) combined with
+        // half-res AO / Y-sensitive blits produced a hard horizontal lighting split.
+        captureW = AlignEvenCaptureDimension((int)MathF.Ceiling(frame.Vw * captureScale));
+        captureH = AlignEvenCaptureDimension((int)MathF.Ceiling(frame.Vh * captureScale));
+    }
+
+    internal static int AlignEvenCaptureDimension(int size)
+    {
+        size = Math.Max(2, size);
+        return (size & 1) == 0 ? size : size + 1;
     }
 
     public bool TryLogSceneCaptureAaScale(

@@ -67,6 +67,7 @@ public sealed partial class PreviewRenderingTests
         Assert.Equal(0.002f, s.ShadowMinBias);
         Assert.Equal(0.012f, s.ShadowMaxBias);
         Assert.Equal(1.0f, s.ShadowSoftnessTexels);
+        Assert.Equal(1.0f, s.ShadowStrength);
         // Phase 3 stub: persisted boolean only, defaults to false in Phase 2.
         Assert.False(s.EnableShadowCascades);
     }
@@ -212,7 +213,9 @@ public sealed partial class PreviewRenderingTests
             "OpenGL",
             "OpenGlPreviewBackend.GroundTerrain.cs");
 
-        Assert.Contains("DefaultMaxTotalBufferBytes = 768L * 1024L * 1024L", pool, StringComparison.Ordinal);
+        Assert.Contains("TerrainMeshPoolBudgetDefaultBytes", pool, StringComparison.Ordinal);
+        Assert.Contains("ConfigureBudgetCeiling", pool, StringComparison.Ordinal);
+        Assert.Contains("TryRaiseBudgetCeiling", pool, StringComparison.Ordinal);
         Assert.Contains("targetBytes > _maxTotalBufferBytes", pool, StringComparison.Ordinal);
         Assert.Contains("TryCreateReplacementBuffer(", pool, StringComparison.Ordinal);
         Assert.Contains("RestoreLiveBindings();", pool, StringComparison.Ordinal);
@@ -841,8 +844,10 @@ public sealed partial class PreviewRenderingTests
         Assert.Contains("resolveTarget.EnsureSize(w, h, useFloat)", taa, StringComparison.Ordinal);
         Assert.Contains("resolveTarget.BindDraw();", taa, StringComparison.Ordinal);
         Assert.Contains("TryPresentPreviewTaaResolveToDefault", taa, StringComparison.Ordinal);
-        Assert.Contains("BindScenePresentUniforms(frame.Settings, sceneIsLinear: frame.Settings.HdrPresentActive);",
-            taa, StringComparison.Ordinal);
+        Assert.Contains("encodeHdr: false", taa, StringComparison.Ordinal);
+        Assert.Contains("bool encodeHdr = true)", postPassSettings, StringComparison.Ordinal);
+        Assert.Contains("encodeHdr && settings.HdrPresentActive", postPassSettings, StringComparison.Ordinal);
+        Assert.Contains("scratchTarget.CopyColorFromFramebuffer(readFbo, w, h, frame.VpX, frame.VpY)", taa, StringComparison.Ordinal);
         Assert.Contains("resolveTarget.BlitColorToFramebuffer(readFbo, frame.VpX, frame.VpY, w, h)", taa, StringComparison.Ordinal);
         Assert.Contains("historyTarget.CopyColorFrom(resolveTarget)", taa, StringComparison.Ordinal);
         Assert.Contains("MaybeLogPreviewTaaDiagnostics", taa, StringComparison.Ordinal);
@@ -957,9 +962,26 @@ public sealed partial class PreviewRenderingTests
         Assert.Contains("public float SceneCaptureScale;", frame, StringComparison.Ordinal);
         Assert.Contains("PreviewTaaSsaaMaxDimension", godRaysCoordinator, StringComparison.Ordinal);
         Assert.Contains("ResolveSceneCaptureScale", godRaysCoordinator, StringComparison.Ordinal);
+        Assert.Contains("AlignEvenCaptureDimension", godRaysCoordinator, StringComparison.Ordinal);
+        Assert.Contains("hard horizontal lighting split", godRaysCoordinator, StringComparison.Ordinal);
         Assert.Contains("ResolveSceneCaptureSize(ref frame, out var captureW, out var captureH, out var captureScale)", godRays, StringComparison.Ordinal);
-        Assert.Contains("_sceneCapture.EnsureSize(captureW, captureH, frame.Settings.HdrPresentActive)", godRays,
-            StringComparison.Ordinal);
+        var sceneCapture = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "GlSceneCaptureTarget.cs");
+        Assert.Contains("vpX, vpY, vpX + destW, vpY + destH", sceneCapture, StringComparison.Ordinal);
+        Assert.DoesNotContain("0, destH, destW, 0", sceneCapture, StringComparison.Ordinal);
+        var ao = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.ScreenSpaceAo.cs");
+        Assert.Contains("gl.ClearColor(1f, 1f, 1f, 1f);", ao, StringComparison.Ordinal);
+        Assert.Contains("requireViewNormals: requireNormals", godRays, StringComparison.Ordinal);
+        Assert.Contains("_sceneCapture.EnsureSize(", godRays, StringComparison.Ordinal);
         Assert.Contains("_sceneCapture.BindDraw(captureW, captureH)", godRays, StringComparison.Ordinal);
         Assert.Contains("Scene capture AA scale:", godRaysCoordinator, StringComparison.Ordinal);
         Assert.Contains("LogPreviewTaaDiagnostics", godRaysCoordinator, StringComparison.Ordinal);
@@ -1030,7 +1052,7 @@ public sealed partial class PreviewRenderingTests
         Assert.Contains("TryInitSceneCaptureCore(gl, useOpenGlEs", taa, StringComparison.Ordinal);
         Assert.Contains("CanUseTaaSceneCapture", godRays, StringComparison.Ordinal);
         Assert.Contains("!CanUseGodRayCapture(frame.Settings) && !CanUseTaaSceneCapture(frame.Settings)", godRays, StringComparison.Ordinal);
-        Assert.Contains("frame.Settings.EnableGodRays && frame.GodRayCaptureActive", post, StringComparison.Ordinal);
+        Assert.Contains("frame.Settings.EnableGodRays || frame.Settings.EnableScreenSpaceGodRays", post, StringComparison.Ordinal);
     }
 
     [Fact]

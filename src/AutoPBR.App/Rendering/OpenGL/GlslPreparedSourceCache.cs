@@ -33,6 +33,7 @@ internal static class GlslPreparedSourceCache
         ("genesis_godrays.frag", ShaderType.FragmentShader),
         ("genesis_godrays_shadow.frag", ShaderType.FragmentShader),
         ("genesis_godrays_upsample.frag", ShaderType.FragmentShader),
+        ("genesis_godrays_canopy_refine.frag", ShaderType.FragmentShader),
         ("genesis_godrays_composite.frag", ShaderType.FragmentShader),
         ("genesis_volume_inject.frag", ShaderType.FragmentShader),
         ("genesis_volume_integrate.frag", ShaderType.FragmentShader),
@@ -41,6 +42,11 @@ internal static class GlslPreparedSourceCache
         ("genesis_clouds.frag", ShaderType.FragmentShader),
         ("genesis_clouds_upsample.frag", ShaderType.FragmentShader),
         ("genesis_taa_resolve.frag", ShaderType.FragmentShader),
+        ("genesis_ssao.frag", ShaderType.FragmentShader),
+        ("genesis_gtao.frag", ShaderType.FragmentShader),
+        ("genesis_ao_bilateral.frag", ShaderType.FragmentShader),
+        ("genesis_ao_temporal.frag", ShaderType.FragmentShader),
+        ("genesis_ao_composite.frag", ShaderType.FragmentShader),
     ];
 
     private static readonly (string File, ShaderType Type, IReadOnlyDictionary<string, int> Defines)[] PrewarmVariantEntries =

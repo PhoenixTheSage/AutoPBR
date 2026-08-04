@@ -78,10 +78,16 @@ public class PreviewGlslEsAdaptTests
     [InlineData("genesis_godrays.frag")]
     [InlineData("genesis_godrays_shadow.frag")]
     [InlineData("genesis_godrays_upsample.frag")]
+    [InlineData("genesis_godrays_canopy_refine.frag")]
     [InlineData("genesis_scene_present.frag")]
     [InlineData("genesis_clouds.frag")]
     [InlineData("genesis_clouds_upsample.frag")]
     [InlineData("genesis_taa_resolve.frag")]
+    [InlineData("genesis_ssao.frag")]
+    [InlineData("genesis_gtao.frag")]
+    [InlineData("genesis_ao_bilateral.frag")]
+    [InlineData("genesis_ao_temporal.frag")]
+    [InlineData("genesis_ao_composite.frag")]
     [InlineData("genesis_volume_inject.frag")]
     [InlineData("genesis_volume_integrate.frag")]
     [InlineData("atmo_sky.frag")]
@@ -470,11 +476,18 @@ public class PreviewGlslEsAdaptTests
         Assert.Contains("uCascadeBlendWidth", adapted, StringComparison.Ordinal);
         Assert.Contains("uShadowDistance", adapted, StringComparison.Ordinal);
         Assert.Contains("uShadowFadeStart", adapted, StringComparison.Ordinal);
+        Assert.Contains("uShadowStrength", adapted, StringComparison.Ordinal);
+        Assert.Contains("shadowOcclusion * min(shadowStrength, 1.0)", adapted, StringComparison.Ordinal);
+        Assert.Contains("shadowAmbientAtten", adapted, StringComparison.Ordinal);
+        Assert.Contains("pomAo * shadowAmbientAtten", adapted, StringComparison.Ordinal);
+        Assert.Contains("min(max(shadowStrength - 1.0, 0.0) * 0.9, 1.0)", adapted, StringComparison.Ordinal);
         Assert.Contains("sampleSceneShadowCascaded", adapted, StringComparison.Ordinal);
         Assert.Contains("mix(nearVis, midVis, nearMidT)", shadowAdapted, StringComparison.Ordinal);
         Assert.Contains("mix(midVis, farVis, midFarT)", shadowAdapted, StringComparison.Ordinal);
-        // Far cascade (outer softness) still occludes near receivers for tall terrain outside near/mid.
-        Assert.Contains("min(nearVis, farVis)", shadowAdapted, StringComparison.Ordinal);
+        // Outside preferred cascade must fall back (not treat as lit); covered samples still min with far.
+        Assert.Contains("sampleSceneShadowFromWorldOrOutside", shadowAdapted, StringComparison.Ordinal);
+        Assert.Contains("nearSample >= 0.0", shadowAdapted, StringComparison.Ordinal);
+        Assert.Contains("min(nearSample, farVis)", shadowAdapted, StringComparison.Ordinal);
         Assert.Contains("min(mix(nearVis, midVis, nearMidT), farVis)", shadowAdapted, StringComparison.Ordinal);
         Assert.Contains("min(mix(midVis, farVis, midFarT), farVis)", shadowAdapted, StringComparison.Ordinal);
         Assert.DoesNotContain("min(min(nearVis, midVis), farVis)", shadowAdapted, StringComparison.Ordinal);
@@ -491,14 +504,16 @@ public class PreviewGlslEsAdaptTests
     }
 
     [Fact]
-    public void GodRaySparseMarch_CompilesWithDefineOnEs()
+    public void GodRaySparseMarch_DepthOnlyShader_DoesNotRequireSparseHelpers()
     {
+        // Depth-only overlay uses a dense on-screen march; sparse helpers live on the
+        // shadow-aware variant (see GodRayShadowSparseMarch_CompilesWithDefineOnEs).
         var raw = GlslIncludeResolver.Resolve("genesis_godrays.frag", LoadShader);
-        var withDefine = "#define GENESIS_GODRAY_SPARSE_MARCH 1\n" + raw;
-        var adapted = GlslSourceAdapter.Adapt(withDefine, ShaderType.FragmentShader, useOpenGlEs: true);
+        var adapted = GlslSourceAdapter.Adapt(raw, ShaderType.FragmentShader, useOpenGlEs: true);
 
-        Assert.Contains("grSparseMarchT", adapted, StringComparison.Ordinal);
-        Assert.Contains("grSparseMarchSkipOddStepScreen", adapted, StringComparison.Ordinal);
+        Assert.DoesNotContain("grSparseMarchT", adapted, StringComparison.Ordinal);
+        Assert.Contains("grDistToViewportBorder", adapted, StringComparison.Ordinal);
+        Assert.Contains("uSunConeRadius", adapted, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -665,12 +680,45 @@ public class PreviewGlslEsAdaptTests
         Assert.Contains("uHdrPresent", sky, StringComparison.Ordinal);
         Assert.Contains("skyAboveHorizonHazeWeight", sky, StringComparison.Ordinal);
         Assert.Contains("skySeamFogDir", sky, StringComparison.Ordinal);
+        // Sun disc stays linear under HDR (×34 core in sky_dome); SDR luminance-tonemaps.
+        Assert.Contains("skyTonemapLum(outRgb)", sky, StringComparison.Ordinal);
+        Assert.Contains("skySunDiscAureole", sky, StringComparison.Ordinal);
+
+        var skyDome = GlslIncludeResolver.Resolve("common/sky_dome.glsl", LoadShader);
+        Assert.Contains("Disc amplitude is HDR", skyDome, StringComparison.Ordinal);
+        Assert.Contains("34.0 * discBright", skyDome, StringComparison.Ordinal);
 
         var taa = GlslSourceAdapter.Adapt(
             GlslIncludeResolver.Resolve("genesis_taa_resolve.frag", LoadShader),
             ShaderType.FragmentShader,
             useOpenGlEs: true);
         Assert.Contains("uHdrPresent", taa, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MoonBillboard_AndProceduralSky_HaveHdrPresentPaths()
+    {
+        var moonPath = ResolveRepoSourcePath(
+            "src", "AutoPBR.App", "Rendering", "OpenGL", "GlMoonBillboardProgram.cs");
+        var procPath = ResolveRepoSourcePath(
+            "src", "AutoPBR.App", "Rendering", "OpenGL", "GlProceduralSkyProgram.cs");
+        Assert.True(File.Exists(moonPath), moonPath);
+        Assert.True(File.Exists(procPath), procPath);
+
+        var moon = File.ReadAllText(moonPath);
+        Assert.Contains("uniform int uHdrPresent", moon, StringComparison.Ordinal);
+        Assert.Contains("moonHdrPreserveContrast", moon, StringComparison.Ordinal);
+        Assert.Contains("moonSceneReferredRadiance", moon, StringComparison.Ordinal);
+        // Strength must stay mode-agnostic (no paper-white dim that breaks the shared slider).
+        Assert.DoesNotContain("uHdrPaperWhiteNits", moon, StringComparison.Ordinal);
+        Assert.DoesNotContain("moonHdrPaperScaleUndo", moon, StringComparison.Ordinal);
+        // GLES/ANGLE: single FragColor write via outRgb/outAlpha (no early return paths).
+        Assert.Contains("FragColor = vec4(outRgb, outAlpha);", moon, StringComparison.Ordinal);
+        Assert.Contains("outRgb = haloCol;", moon, StringComparison.Ordinal);
+
+        var proc = File.ReadAllText(procPath);
+        Assert.Contains("uniform int uHdrPresent", proc, StringComparison.Ordinal);
+        Assert.Contains("if (uHdrPresent <= 0)", proc, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -753,6 +801,30 @@ public class PreviewGlslEsAdaptTests
         Assert.Contains("genesisEntityAlphaMode(uEntityAlphaMode) == 1", adapted, StringComparison.Ordinal);
         Assert.Contains("genesisEntityAlphaMode(uEntityAlphaMode) == 2", adapted, StringComparison.Ordinal);
         Assert.Contains("TaaSignal = vec4", adapted, StringComparison.Ordinal);
+        Assert.Contains("layout(location = 2) out vec4 ViewNormal", adapted, StringComparison.Ordinal);
+        Assert.Contains("ViewNormal = vec4", adapted, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ScreenSpaceAoShaders_DeclareExpectedUniforms()
+    {
+        var ssao = GlslIncludeResolver.Resolve("genesis_ssao.frag", LoadShader);
+        Assert.Contains("uSceneDepth", ssao, StringComparison.Ordinal);
+        Assert.Contains("uViewNormal", ssao, StringComparison.Ordinal);
+        Assert.Contains("uAoSampleCount", ssao, StringComparison.Ordinal);
+        Assert.Contains("ssaoViewNormalFromDepth", ssao, StringComparison.Ordinal);
+        Assert.Contains("ssaoHasOpaqueDepth", ssao, StringComparison.Ordinal);
+
+        var gtao = GlslIncludeResolver.Resolve("genesis_gtao.frag", LoadShader);
+        Assert.Contains("uGtaoSlices", gtao, StringComparison.Ordinal);
+        Assert.Contains("uGtaoSteps", gtao, StringComparison.Ordinal);
+        Assert.Contains("ssaoGtaoMultiBounce", gtao, StringComparison.Ordinal);
+        Assert.Contains("gtaoIntegrateArc", gtao, StringComparison.Ordinal);
+        Assert.Contains("cosh0 = 0.0", gtao, StringComparison.Ordinal);
+
+        var composite = GlslIncludeResolver.Resolve("genesis_ao_composite.frag", LoadShader);
+        Assert.Contains("uAoStrength", composite, StringComparison.Ordinal);
+        Assert.Contains("presentEncodeScRgb", composite, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -816,6 +888,27 @@ public class PreviewGlslEsAdaptTests
 
     private static string ThisFilePath([System.Runtime.CompilerServices.CallerFilePath] string sourceFilePath = "") =>
         sourceFilePath;
+
+    private static string ResolveRepoSourcePath(params string[] segments)
+    {
+        var relative = Path.Combine(segments);
+        foreach (var start in new[] { Path.GetDirectoryName(ThisFilePath()) ?? string.Empty, AppContext.BaseDirectory, Directory.GetCurrentDirectory() })
+        {
+            var dir = new DirectoryInfo(start);
+            while (dir is not null)
+            {
+                var path = Path.Combine(dir.FullName, relative);
+                if (File.Exists(path))
+                {
+                    return path;
+                }
+
+                dir = dir.Parent;
+            }
+        }
+
+        throw new FileNotFoundException($"Could not locate repo source '{relative}'.");
+    }
 
     private static string LoadShaderCore(string fileName, string sourceFilePath)
     {

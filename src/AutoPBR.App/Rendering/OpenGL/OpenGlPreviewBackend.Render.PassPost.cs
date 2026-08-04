@@ -10,7 +10,10 @@ public sealed partial class OpenGlPreviewBackend
         EnsurePostPassPerSettingsUniforms(ref frame);
 
         var cloudsActive = frame.Settings.EnableVolumetricClouds && CanDrawVolumetricClouds(frame.Settings);
-        var godRaysActive = frame.Settings.EnableGodRays && frame.GodRayCaptureActive && _sceneCapture is { IsValid: true };
+        var godRaysActive =
+            (frame.Settings.EnableGodRays || frame.Settings.EnableScreenSpaceGodRays) &&
+            frame.GodRayCaptureActive &&
+            _sceneCapture is { IsValid: true };
         var cloudShaderTemporal = ShouldUseCloudShaderTemporal(frame.Settings);
         var cloudRenderedOffscreen = false;
         _cloudCompositeTarget = null;

@@ -119,6 +119,7 @@ internal sealed class GlCloudLightCascadeTarget : IDisposable
         _framebuffer != 0;
     public bool IsGenerated { get; private set; }
     public int GenerationId { get; private set; }
+    public int DensityIdentity { get; private set; }
     public int LastGenerationFrame { get; private set; } = -1;
     public System.Numerics.Vector3 GenerationWindOffset { get; private set; }
     public PreviewCloudLightCascadeTransform Transform { get; private set; }
@@ -201,18 +202,20 @@ internal sealed class GlCloudLightCascadeTarget : IDisposable
 
     public void CommitGeneration(in PreviewCloudLightCascadeTransform transform)
     {
-        CommitGeneration(transform, 0, System.Numerics.Vector3.Zero);
+        CommitGeneration(transform, 0, System.Numerics.Vector3.Zero, 0);
     }
 
     public void CommitGeneration(
         in PreviewCloudLightCascadeTransform transform,
         int generationFrame,
-        System.Numerics.Vector3 generationWindOffset)
+        System.Numerics.Vector3 generationWindOffset,
+        int densityIdentity = 0)
     {
         Transform = transform;
         IsGenerated = true;
         LastGenerationFrame = Math.Max(0, generationFrame);
         GenerationWindOffset = generationWindOffset;
+        DensityIdentity = densityIdentity;
         GenerationId++;
     }
 
@@ -285,7 +288,8 @@ internal sealed class GlCloudLightCascadeTarget : IDisposable
 
     public string FormatDiagnostic() =>
         $"{Profile.FormatDimensions()}/allocated={IsAllocated}/generated={IsGenerated}/" +
-        $"generation={GenerationId}/lastFrame={LastGenerationFrame}";
+        $"generation={GenerationId}/densityIdentity={DensityIdentity:X8}/" +
+        $"lastFrame={LastGenerationFrame}";
 
     private bool TryAllocate(out string diagnostic)
     {
@@ -483,6 +487,7 @@ internal sealed class GlCloudLightCascadeTarget : IDisposable
         }
 
         IsGenerated = false;
+        DensityIdentity = 0;
     }
 
     public void Dispose()

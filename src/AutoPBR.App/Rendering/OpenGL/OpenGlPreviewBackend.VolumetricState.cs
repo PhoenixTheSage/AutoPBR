@@ -22,7 +22,6 @@ public sealed partial class OpenGlPreviewBackend
         _prevPreviewTaaMode = settings.PreviewTaaMode;
         _cloudTierReadyWarmupDraws = CloudTierReadyWarmupDraws;
         _cloudDeferredCompositeRetries = 4;
-        _loggedCloudDraw = false;
         _loggedCloudDeferredCompositeMiss = 0;
         TryWarmCloudOffscreenTargets(viewportWidth, viewportHeight, settings.VolumetricQuality);
         EmitDiagnostic(

@@ -199,6 +199,8 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
 
     public void InvalidateShaderCaches() => _backend.InvalidateShaderCachesAndReload();
 
+    public void ClearLodCache() => _backend.ClearTerrainLodCache();
+
     /// <summary>When true, native WGL presentation uses swap interval 1; false sets swap interval 0 and removes app-side frame delays.</summary>
     public void SetPreviewVSync(bool enabled)
     {
@@ -228,14 +230,14 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         _backend.ConfigurePresentationVsync(_glInterface, _presentationVsyncEnabled);
     }
 
-    /// <summary>Updates orbit boom arm length, orbit/pan/zoom sensitivities, and the reset-camera key.</summary>
+    /// <summary>Updates orbit boom arm length, orbit/pan/zoom sensitivities, hold-zoom level, and the reset-camera key.</summary>
     public void SetCameraInteractionFromSettings(float orbitRadPerPx, float panPerPixel, float zoomPerWheelStep,
         float flyLookRadPerPx, bool invertLookY, float flyMoveSpeed, bool flySmoothAcceleration,
-        Key resetKey, float orbitBoomArmDistanceWorld)
+        Key resetKey, float orbitBoomArmDistanceWorld, float holdFovZoomLevel)
     {
         _cameraResetKey = resetKey;
         _backend.SetCameraSensitivities(orbitRadPerPx, panPerPixel, zoomPerWheelStep, flyLookRadPerPx, invertLookY,
-            flyMoveSpeed, flySmoothAcceleration);
+            flyMoveSpeed, flySmoothAcceleration, holdFovZoomLevel);
         _backend.SetOrbitBoomArmDistance(orbitBoomArmDistanceWorld);
     }
 
@@ -789,6 +791,13 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
             return true;
         }
 
+        if (key == Key.C)
+        {
+            _backend.SetHoldFovZoomActive(true);
+            RecoverPreviewFrame();
+            return true;
+        }
+
         var handled = true;
         switch (key)
         {
@@ -834,6 +843,13 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
 
     private bool HandlePreviewKeyUp(Key key)
     {
+        if (key == Key.C)
+        {
+            _backend.SetHoldFovZoomActive(false);
+            RecoverPreviewFrame();
+            return true;
+        }
+
         var handled = true;
         switch (key)
         {
@@ -1032,6 +1048,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         _flySpeedBoost = false;
         _flySpeedSlow = false;
         PushDebugFlyInput();
+        _backend.SetHoldFovZoomActive(false);
         _backend.SetUserCameraDragging(false);
         RecoverPreviewFrame();
     }
@@ -1057,6 +1074,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
             0x2E => Key.Delete,
             0x24 => Key.Home,
             0x41 => Key.A,
+            0x43 => Key.C,
             0x44 => Key.D,
             0x45 => Key.E,
             0x51 => Key.Q,
@@ -1437,9 +1455,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
                 {
                     _hdrTearingLogged = true;
                     _backend.EmitPreviewDiagnostic(
-                        "[3D preview] HDR DXGI tearing: " +
-                        (_hdrSwapchain.AllowTearing ? "enabled" : "unavailable") +
-                        ".");
+                        "[3D preview] HDR DXGI tearing: disabled (tear-free present).");
                 }
 
                 if (!_hdrPresentResolvePathLogged)

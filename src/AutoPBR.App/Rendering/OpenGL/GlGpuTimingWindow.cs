@@ -7,6 +7,7 @@ internal sealed class GlGpuTimingWindow(int capacity = 240)
     private readonly Queue<double> _cloudTrace = new(Math.Max(capacity, 1));
     private readonly Queue<double> _cloudComposite = new(Math.Max(capacity, 1));
     private readonly Queue<double> _cloudLightGeneration = new(Math.Max(capacity, 1));
+    private readonly Queue<double> _sparseBrickGeneration = new(Math.Max(capacity, 1));
     private readonly int _capacity = Math.Max(capacity, 1);
 
     public int Count => _cloudTrace.Count;
@@ -16,6 +17,7 @@ internal sealed class GlGpuTimingWindow(int capacity = 240)
         _cloudTrace.Clear();
         _cloudComposite.Clear();
         _cloudLightGeneration.Clear();
+        _sparseBrickGeneration.Clear();
     }
 
     public void Add(in GlGpuTimingSnapshot snapshot)
@@ -24,7 +26,8 @@ internal sealed class GlGpuTimingWindow(int capacity = 240)
             not { CloudRepairMs: > 0.0 } and
             not { CloudUpsampleMs: > 0.0 } and
             not { CloudLightNearMs: > 0.0 } and
-            not { CloudLightFarMs: > 0.0 })
+            not { CloudLightFarMs: > 0.0 } and
+            not { SparseBrickGenMs: > 0.0 })
         {
             return;
         }
@@ -34,6 +37,7 @@ internal sealed class GlGpuTimingWindow(int capacity = 240)
         AddBounded(
             _cloudLightGeneration,
             snapshot.CloudLightNearMs + snapshot.CloudLightFarMs);
+        AddBounded(_sparseBrickGeneration, snapshot.SparseBrickGenMs);
     }
 
     public string FormatCloudDiagnostic()
@@ -41,18 +45,22 @@ internal sealed class GlGpuTimingWindow(int capacity = 240)
         var trace = Summarize(_cloudTrace);
         var composite = Summarize(_cloudComposite);
         var light = Summarize(_cloudLightGeneration);
+        var sparseBrick = Summarize(_sparseBrickGeneration);
         return string.Format(
             CultureInfo.InvariantCulture,
             "cloudWindow={0} frames, trace p50={1:0.###}ms p95={2:0.###}ms, " +
             "composite p50={3:0.###}ms p95={4:0.###}ms, " +
-            "light-cache p50={5:0.###}ms p95={6:0.###}ms",
+            "light-cache p50={5:0.###}ms p95={6:0.###}ms, " +
+            "sparse-brick p50={7:0.###}ms p95={8:0.###}ms",
             Count,
             trace.P50,
             trace.P95,
             composite.P50,
             composite.P95,
             light.P50,
-            light.P95);
+            light.P95,
+            sparseBrick.P50,
+            sparseBrick.P95);
     }
 
     private void AddBounded(Queue<double> samples, double value)

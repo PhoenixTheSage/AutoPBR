@@ -46,8 +46,23 @@ public interface IRenderPreviewBackend : IDisposable
     /// <summary>Clears on-disk and in-memory shader caches and reloads GPU programs on the preview GL thread.</summary>
     void InvalidateShaderCachesAndReload();
 
+    /// <summary>
+    /// Clears the in-memory distant LOD section cache and resident streamed terrain meshes
+    /// so the next frames rebake. Does not wipe the shader program binary cache.
+    /// </summary>
+    void ClearTerrainLodCache();
+
     /// <summary>Debug: world-space eye and look target for on-screen readout (OpenGL path).</summary>
     bool TryGetCameraDebugPose(out Vector3 eye, out Vector3 lookTarget);
+
+    /// <summary>
+    /// Debug: live CQ1 cloud temporal history confidence. Returns false when cloud
+    /// temporal reconstruction is not active for the current quality profile.
+    /// </summary>
+    bool TryGetCloudTemporalHistoryDebug(
+        out int confidenceFrames,
+        out int confidenceFrameCount,
+        out bool historyValid);
 
     /// <summary>Debug fly: hold right mouse for FPS-style look; WASD/QE moves while right mouse is held.</summary>
     void SetDebugFlyInput(bool rightMouseHeld, bool keyW, bool keyA, bool keyS, bool keyD, bool keyQ, bool keyE,

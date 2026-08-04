@@ -108,11 +108,13 @@ public partial class MainWindowViewModel
     [ObservableProperty] private double _preview3DLightPitchDegrees = -55.0;
     [ObservableProperty] private bool _preview3DEnableShadowCascades;
     [ObservableProperty] private double _preview3DShadowDistance = 128.0;
+    [ObservableProperty] private double _preview3DShadowStrength = 1.0;
     [ObservableProperty] private int _preview3DSpritePlaneCount = 1;
     [ObservableProperty] private double _preview3DSpriteThickness;
     [ObservableProperty] private double _preview3DCameraOrbitSensitivity = 0.006;
     [ObservableProperty] private double _preview3DCameraPanSensitivity = 0.0022;
     [ObservableProperty] private double _preview3DCameraZoomSensitivity = 0.12;
+    [ObservableProperty] private double _preview3DCameraHoldZoomLevel = 2.0;
     [ObservableProperty] private double _preview3DCameraOrbitBoomDistance = PreviewCamera.DefaultOrbitBoomArmDistance;
     [ObservableProperty] private string _preview3DCameraResetKey = "R";
     [ObservableProperty] private double _preview3DCameraFlyLookSensitivity = 0.006;
@@ -122,11 +124,16 @@ public partial class MainWindowViewModel
     [ObservableProperty] private string? _preview3DCameraDebugText;
     [ObservableProperty] private bool _specularForceNoEmissive;
     [ObservableProperty] private bool _preview3DEnableGodRays = true;
+    [ObservableProperty] private bool _preview3DEnableScreenSpaceGodRays = true;
     [ObservableProperty] private bool _preview3DEnableVolumetricClouds;
     [ObservableProperty] private int _preview3DVolumetricQuality = 1;
     [ObservableProperty] private double _preview3DGodRayStrength = 0.45;
-    [ObservableProperty] private double _preview3DGodRayScatterGain = 3.4;
-    [ObservableProperty] private double _preview3DGodRayExtinction = 1.15;
+    [ObservableProperty] private double _preview3DScreenSpaceGodRayStrength = 0.85;
+    [ObservableProperty] private double _preview3DGodRayConeScale = 1.25;
+    [ObservableProperty] private double _preview3DGodRayFroxelResolution = 1.35;
+    [ObservableProperty] private double _preview3DGodRayPhaseDirectivity = 0.42;
+    [ObservableProperty] private double _preview3DGodRayScatterGain = 3.6;
+    [ObservableProperty] private double _preview3DGodRayExtinction = 0.70;
     [ObservableProperty] private double _preview3DGodRayDebugDensity;
     [ObservableProperty] private bool _preview3DGodRayStabilizeDebug = true;
     [ObservableProperty] private double _preview3DCloudDensity = 0.35;
@@ -137,11 +144,26 @@ public partial class MainWindowViewModel
     [ObservableProperty] private double _preview3DCloudWindSpeed = 1.5;
     [ObservableProperty] private double _preview3DCloudWindHeadingDegrees = 35.0;
     [ObservableProperty] private double _preview3DCloudCirrusStrength = 0.45;
+    [ObservableProperty] private double _preview3DCloudCumulusLayerCount = 2;
+    [ObservableProperty] private double _preview3DCloudInterDeckGap = 12.0;
+    [ObservableProperty] private double _preview3DCloudLayerHeightVariance = 6.0;
+    [ObservableProperty] private double _preview3DCloudUpperThicknessScale = 0.65;
+    [ObservableProperty] private double _preview3DCloudUpperCoverageScale = 0.70;
+    [ObservableProperty] private double _preview3DCloudUpperDensityScale = 0.85;
+    [ObservableProperty] private double _preview3DCloudUpperWindSpeedScale = 1.35;
+    [ObservableProperty] private double _preview3DCloudCirrusGap = 120.0;
+    [ObservableProperty] private double _preview3DCloudCirrusThickness = 2.5;
+    [ObservableProperty] private int _preview3DCloudStyleBias;
     [ObservableProperty] private int _preview3DCloudDebugView;
     [ObservableProperty] private bool _preview3DCloudDisableTemporal;
     [ObservableProperty] private double _preview3DCloudMarchStepOverride;
     [ObservableProperty] private bool _preview3DCloudFreezeWind;
     [ObservableProperty] private bool _preview3DEnablePreviewTaa = true;
+    [ObservableProperty] private bool _preview3DEnableScreenSpaceAo;
+    [ObservableProperty] private int _preview3DAoMode;
+    [ObservableProperty] private double _preview3DAoStrength = 0.85;
+    [ObservableProperty] private double _preview3DAoRadius = 0.55;
+    [ObservableProperty] private double _preview3DAoPower = 1.15;
     [ObservableProperty] private int _preview3DTaaMode;
     [ObservableProperty] private double _preview3DTaaTemporalScale = 1.0;
     [ObservableProperty] private double _preview3DTaaJitterScale = 1.0;
@@ -164,6 +186,15 @@ public partial class MainWindowViewModel
         LocalizedStrings.Preview3DVolumetricQualityCinematic
     ];
 
+    public string[] Preview3DCloudStyleBiasOptions { get; } =
+    [
+        LocalizedStrings.Preview3DCloudStyleBiasAuto,
+        LocalizedStrings.Preview3DCloudStyleBiasHumilis,
+        LocalizedStrings.Preview3DCloudStyleBiasMediocris,
+        LocalizedStrings.Preview3DCloudStyleBiasCongestus,
+        LocalizedStrings.Preview3DCloudStyleBiasStratus
+    ];
+
     public string[] Preview3DTaaModeOptions { get; } =
     [
         LocalizedStrings.Preview3DTaaModeLessJitter,
@@ -171,6 +202,13 @@ public partial class MainWindowViewModel
         LocalizedStrings.Preview3DTaaModeStableSoft,
         LocalizedStrings.Preview3DTaaModeSharper,
         LocalizedStrings.Preview3DTaaModeNoJitter
+    ];
+
+    public string[] Preview3DAoModeOptions { get; } =
+    [
+        LocalizedStrings.Preview3DAoModeAuto,
+        LocalizedStrings.Preview3DAoModeSsao,
+        LocalizedStrings.Preview3DAoModeGtao
     ];
 
     internal void InitPreviewShaderPrewarm()
@@ -217,7 +255,16 @@ public partial class MainWindowViewModel
         LocalizedStrings.Preview3DCloudDebugViewDetailA,
         LocalizedStrings.Preview3DCloudDebugViewSelectedLod,
         LocalizedStrings.Preview3DCloudDebugViewBaseDensity,
-        LocalizedStrings.Preview3DCloudDebugViewAssetProfile
+        LocalizedStrings.Preview3DCloudDebugViewAssetProfile,
+        LocalizedStrings.Preview3DCloudDebugViewSparseClipmapLevel,
+        LocalizedStrings.Preview3DCloudDebugViewSparsePageState,
+        LocalizedStrings.Preview3DCloudDebugViewSparsePhysicalBrick,
+        LocalizedStrings.Preview3DCloudDebugViewSparseBaseDensity,
+        LocalizedStrings.Preview3DCloudDebugViewSparseConservativeDistance,
+        LocalizedStrings.Preview3DCloudDebugViewSparseTraversalSteps,
+        LocalizedStrings.Preview3DCloudDebugViewSparseFallbackContribution,
+        LocalizedStrings.Preview3DCloudDebugViewSparseTemplateFamily,
+        LocalizedStrings.Preview3DCloudDebugViewSparseCascadeBlend
     ];
 
     public bool IsPreview2D => PreviewDisplayMode == 0;
@@ -314,6 +361,13 @@ public partial class MainWindowViewModel
     {
         _glPreview?.InvalidateShaderCaches();
         AddLogLine(LocalizedStrings.ShaderCacheInvalidatedLog);
+    }
+
+    [RelayCommand]
+    private void ClearLodCache()
+    {
+        _glPreview?.ClearLodCache();
+        AddLogLine(LocalizedStrings.LodCacheClearedLog);
     }
 
     partial void OnPreviewDisplayModeChanged(int value)
@@ -451,9 +505,14 @@ public partial class MainWindowViewModel
     partial void OnPreview3DAnimateTimeOfDayChanged(bool value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DTimeOfDaySpeedChanged(double value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DEnableGodRaysChanged(bool value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DEnableScreenSpaceGodRaysChanged(bool value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DEnableVolumetricCloudsChanged(bool value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DVolumetricQualityChanged(int value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DGodRayStrengthChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DScreenSpaceGodRayStrengthChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DGodRayConeScaleChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DGodRayFroxelResolutionChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DGodRayPhaseDirectivityChanged(double value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DGodRayScatterGainChanged(double value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DGodRayExtinctionChanged(double value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DGodRayDebugDensityChanged(double value) => OnPreview3DGpuSettingChanged(value);
@@ -466,11 +525,34 @@ public partial class MainWindowViewModel
     partial void OnPreview3DCloudWindSpeedChanged(double value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DCloudWindHeadingDegreesChanged(double value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DCloudCirrusStrengthChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DCloudCumulusLayerCountChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DCloudInterDeckGapChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DCloudLayerHeightVarianceChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DCloudUpperThicknessScaleChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DCloudUpperCoverageScaleChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DCloudUpperDensityScaleChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DCloudUpperWindSpeedScaleChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DCloudCirrusGapChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DCloudCirrusThicknessChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DCloudStyleBiasChanged(int value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DCloudDebugViewChanged(int value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DCloudDisableTemporalChanged(bool value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DCloudMarchStepOverrideChanged(double value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DCloudFreezeWindChanged(bool value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DEnablePreviewTaaChanged(bool value) => OnDebouncedPreviewTaaGpuSettingChanged(value);
+    partial void OnPreview3DEnableScreenSpaceAoChanged(bool value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DAoModeChanged(int value)
+    {
+        if (value is >= 0 and <= 2 && !Preview3DEnableScreenSpaceAo)
+        {
+            Preview3DEnableScreenSpaceAo = true;
+        }
+
+        OnPreview3DGpuSettingChanged(value);
+    }
+    partial void OnPreview3DAoStrengthChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DAoRadiusChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DAoPowerChanged(double value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DTaaModeChanged(int value) => OnDebouncedPreviewTaaGpuSettingChanged(value);
     partial void OnPreview3DTaaTemporalScaleChanged(double value) => OnDebouncedPreviewTaaGpuSettingChanged(value);
     partial void OnPreview3DTaaJitterScaleChanged(double value) => OnDebouncedPreviewTaaGpuSettingChanged(value);
@@ -485,6 +567,7 @@ public partial class MainWindowViewModel
     partial void OnPreview3DLightPitchDegreesChanged(double value) => OnPreview3DLightDirectionChanged(value);
     partial void OnPreview3DEnableShadowCascadesChanged(bool value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DShadowDistanceChanged(double value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DShadowStrengthChanged(double value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DSpritePlaneCountChanged(int value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DSpriteThicknessChanged(double value)
     {
@@ -538,6 +621,7 @@ public partial class MainWindowViewModel
     partial void OnPreview3DCameraOrbitSensitivityChanged(double value) => OnPreview3DCameraSettingChanged(value);
     partial void OnPreview3DCameraPanSensitivityChanged(double value) => OnPreview3DCameraSettingChanged(value);
     partial void OnPreview3DCameraZoomSensitivityChanged(double value) => OnPreview3DCameraSettingChanged(value);
+    partial void OnPreview3DCameraHoldZoomLevelChanged(double value) => OnPreview3DCameraSettingChanged(value);
     partial void OnPreview3DCameraOrbitBoomDistanceChanged(double value) => OnPreview3DCameraSettingChanged(value);
     partial void OnPreview3DCameraResetKeyChanged(string value) => OnPreview3DCameraSettingChanged(value);
     partial void OnPreview3DCameraFlyLookSensitivityChanged(double value) => OnPreview3DCameraSettingChanged(value);
@@ -774,6 +858,7 @@ public partial class MainWindowViewModel
             EnableShadows = Preview3DEnableShadows,
             EnableShadowCascades = Preview3DEnableShadowCascades,
             ShadowDistance = (float)Math.Clamp(Preview3DShadowDistance, 32.0, 256.0),
+            ShadowStrength = (float)Math.Clamp(Preview3DShadowStrength, 0.0, 3.0),
             ShadowMapResolution = 4096,
             EntityAnimationSpeed = (float)Preview3DEntityAnimationSpeed,
             EntityAnimationAmplitude = (float)Preview3DEntityAnimationAmplitude,
@@ -786,6 +871,11 @@ public partial class MainWindowViewModel
             EnableVolumetricClouds = Preview3DEnableVolumetricClouds,
             VolumetricQuality = PreviewVolumetricQuality.Clamp(Preview3DVolumetricQuality),
             GodRayStrength = (float)Preview3DGodRayStrength,
+            EnableScreenSpaceGodRays = Preview3DEnableScreenSpaceGodRays,
+            ScreenSpaceGodRayStrength = (float)Preview3DScreenSpaceGodRayStrength,
+            GodRayConeScale = (float)Preview3DGodRayConeScale,
+            GodRayFroxelResolution = (float)Preview3DGodRayFroxelResolution,
+            GodRayPhaseDirectivity = (float)Preview3DGodRayPhaseDirectivity,
             GodRayScatterGain = (float)Preview3DGodRayScatterGain,
             GodRayExtinction = (float)Preview3DGodRayExtinction,
             GodRayDebugDensity = (float)Preview3DGodRayDebugDensity,
@@ -798,14 +888,29 @@ public partial class MainWindowViewModel
             CloudWindSpeed = (float)Preview3DCloudWindSpeed,
             CloudWindHeadingDegrees = (float)Preview3DCloudWindHeadingDegrees,
             CloudCirrusStrength = (float)Preview3DCloudCirrusStrength,
+            CloudCumulusLayerCount = (int)Math.Clamp(Math.Round(Preview3DCloudCumulusLayerCount), 1, 3),
+            CloudInterDeckGap = (float)Preview3DCloudInterDeckGap,
+            CloudLayerHeightVariance = (float)Preview3DCloudLayerHeightVariance,
+            CloudUpperThicknessScale = (float)Preview3DCloudUpperThicknessScale,
+            CloudUpperCoverageScale = (float)Preview3DCloudUpperCoverageScale,
+            CloudUpperDensityScale = (float)Preview3DCloudUpperDensityScale,
+            CloudUpperWindSpeedScale = (float)Preview3DCloudUpperWindSpeedScale,
+            CloudCirrusGap = (float)Preview3DCloudCirrusGap,
+            CloudCirrusThickness = (float)Preview3DCloudCirrusThickness,
+            CloudStyleBias = Math.Clamp(Preview3DCloudStyleBias, 0, 4),
             CloudDebugView = (PreviewCloudDebugView)Math.Clamp(
                 Preview3DCloudDebugView,
                 0,
-                (int)PreviewCloudDebugView.AssetProfile),
+                (int)PreviewCloudDebugView.SparseCascadeBlend),
             CloudDisableTemporal = Preview3DCloudDisableTemporal,
             CloudMarchStepOverride = (int)Math.Clamp(Math.Round(Preview3DCloudMarchStepOverride), 0, 64),
             CloudFreezeWind = Preview3DCloudFreezeWind,
             EnablePreviewTaa = Preview3DEnablePreviewTaa,
+            EnableScreenSpaceAo = Preview3DEnableScreenSpaceAo,
+            PreviewAoMode = Math.Clamp(Preview3DAoMode, 0, 2),
+            AoStrength = (float)Math.Clamp(Preview3DAoStrength, 0.0, 1.0),
+            AoRadius = (float)Math.Clamp(Preview3DAoRadius, 0.05, 8.0),
+            AoPower = (float)Math.Clamp(Preview3DAoPower, 0.1, 4.0),
             PreviewTaaMode = Math.Clamp(Preview3DTaaMode, 0, 4),
             PreviewTaaTemporalScale = (float)Math.Clamp(Preview3DTaaTemporalScale, 0.0, 1.25),
             PreviewTaaJitterScale = (float)Math.Clamp(Preview3DTaaJitterScale, 0.0, 2.0),
@@ -850,7 +955,8 @@ public partial class MainWindowViewModel
             (float)Preview3DCameraFlyMoveSpeed,
             Preview3DCameraFlySmoothAcceleration,
             resetKey,
-            (float)Preview3DCameraOrbitBoomDistance);
+            (float)Preview3DCameraOrbitBoomDistance,
+            (float)Preview3DCameraHoldZoomLevel);
     }
 
     private void Push3DRenderSettingsOnly()
@@ -1005,6 +1111,16 @@ public partial class MainWindowViewModel
         {
             lines.Add($"Eye: {eye.X:0.00}, {eye.Y:0.00}, {eye.Z:0.00}");
             lines.Add($"Target: {target.X:0.00}, {target.Y:0.00}, {target.Z:0.00}");
+        }
+
+        if (_glPreview.Backend.TryGetCloudTemporalHistoryDebug(
+                out var confidenceFrames,
+                out var confidenceFrameCount,
+                out var historyValid))
+        {
+            lines.Add(
+                $"Cloud history: {confidenceFrames}/{confidenceFrameCount}" +
+                (historyValid ? " (valid)" : " (rebuilding)"));
         }
 
         Preview3DCameraDebugText = lines.Count > 0 ? string.Join('\n', lines) : null;

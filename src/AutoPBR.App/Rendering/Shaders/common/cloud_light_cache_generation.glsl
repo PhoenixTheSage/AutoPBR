@@ -1,6 +1,8 @@
 #ifndef GENESIS_CLOUD_LIGHT_CACHE_GENERATION_GLSL
 #define GENESIS_CLOUD_LIGHT_CACHE_GENERATION_GLSL
 
+//!include "sparse_cloud_traversal.glsl"
+
 // Shared CQ3 cloud-light cache density and optical-depth integration. Fragment-slice and
 // compute generators intentionally call this exact implementation so their RG16F results
 // differ only by the storage path and half-float rounding.
@@ -73,7 +75,7 @@ float cq3CumulusDensity(vec3 worldPos, float sampleFootprint)
         uWindOffset,
         sampleFootprint,
         uDensityAssetVersion);
-    if (conservative <= 1e-4)
+    if (uHasSparseCloudTraversal < 1 && conservative <= 1e-4)
     {
         return 0.0;
     }
@@ -100,6 +102,12 @@ float cq3CumulusDensity(vec3 worldPos, float sampleFootprint)
         sampleFootprint,
         weather,
         uDensityAssetVersion);
+    if (uHasSparseCloudTraversal > 0)
+    {
+        Cq45ResolvedBase sparseBase =
+            cq45ResolveBaseDensity(worldPos, base);
+        base = sparseBase.density;
+    }
     return vcCloudDensityFromBase(
         base,
         worldPos,
@@ -112,6 +120,7 @@ float cq3CumulusDensity(vec3 worldPos, float sampleFootprint)
         uDetailNoise,
         uHasDetailNoise,
         uWindOffset,
+        uCirrusWindDir,
         sampleFootprint,
         0.0,
         uQuality,

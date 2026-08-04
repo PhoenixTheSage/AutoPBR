@@ -112,12 +112,28 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         frame.Gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+        if (frame.GodRayCaptureActive && _sceneCapture is { IsValid: true })
+        {
+            // Scene Clear above resets MRT alpha to 1; foliage mask lives in TaaSignal.A.
+            _sceneCapture.ClearFoliageMaskAttachment();
+        }
 
         if (drawSky)
         {
             frame.Gl.Disable(EnableCap.DepthTest);
             frame.Gl.DepthMask(false);
+            if (frame.GodRayCaptureActive && _sceneCapture is { IsValid: true })
+            {
+                // Sky only writes color0; keep TaaSignal/foliage mask untouched.
+                _sceneCapture.SetDrawColorOnly();
+            }
+
             DrawAtmosphereSky(frame.Gl, ref frame, lutSkyReady);
+            if (frame.GodRayCaptureActive && _sceneCapture is { IsValid: true })
+            {
+                _sceneCapture.SetDrawSceneAttachments();
+            }
+
             frame.Gl.DepthMask(true);
             frame.Gl.Enable(EnableCap.DepthTest);
             frame.Gl.Clear(ClearBufferMask.DepthBufferBit);
@@ -138,13 +154,24 @@ public sealed partial class OpenGlPreviewBackend
             // remains a billboard, drawn before opaque geometry so depth testing hides it.
             frame.Gl.Enable(EnableCap.DepthTest);
             frame.Gl.DepthFunc(GLEnum.Lequal);
+            if (frame.GodRayCaptureActive && _sceneCapture is { IsValid: true })
+            {
+                // Moon writes color0 only; keep TaaSignal/foliage mask cleared for uncovered pixels.
+                _sceneCapture.SetDrawColorOnly();
+            }
+
             DrawMoonBillboard(frame.Gl, frame.Proj, frame.View, frame.Eye, frame.WorldLightDir,
                 farPlane,
                 frame.Settings.AtmosphereMoonDiscStrength,
                 frame.Settings.AtmosphereMoonDiscSize,
                 frame.Settings.AtmosphereMoonGlowStrength,
                 frame.Settings.AtmosphereMoonTextureSharpness,
+                frame.Settings.HdrPresentActive,
                 ShouldCullSolidBackFaces(frame.Scene.SceneKind, frame.BlockModel, frame.Settings));
+            if (frame.GodRayCaptureActive && _sceneCapture is { IsValid: true })
+            {
+                _sceneCapture.SetDrawSceneAttachments();
+            }
 
             _program.Use();
             var u = _mainUniformLocs;
@@ -363,6 +390,12 @@ public sealed partial class OpenGlPreviewBackend
                         var blockModel = frame.BlockModel;
                         var blockSlots = frame.BlockSlots;
                         EnsureFrameSubjectGpuUploads(ref frame);
+                        // Ground terrain uploads can overwrite the shared draw-record SSBO.
+                        if (_frameSubjectUseMaterialDrawRecords)
+                        {
+                            TryUploadGenesisMaterialDrawRecords(ref frame);
+                        }
+
                         var useMaterialDrawRecords = _frameSubjectUseMaterialDrawRecords;
                         var useIndirectDrawCommands = _frameSubjectUseIndirectDrawCommands;
                         var useMaterialTextureArrays = _frameSubjectUseMaterialTextureArrays;
@@ -728,6 +761,18 @@ public sealed partial class OpenGlPreviewBackend
         var fogStrength = frame.Settings.EnableAtmosphericSky && frame.Settings.ShowGroundMesh
             ? Math.Max(frame.Settings.AerialFogStrength, 0.85f)
             : (frame.Settings.EnableAtmosphericSky ? frame.Settings.AerialFogStrength : 0f);
+        // Froxel atmospheric fill owns most of the haze when volume god rays are active;
+        // keep a residual mesh aerial mix so the LOD unload rim still softens.
+        if (fogStrength > 0f &&
+            frame.Settings.EnableGodRays &&
+            frame.Settings.EnableVolumeGodRays &&
+            frame.Settings.EnableAtmosphericSky)
+        {
+            var gate = PreviewStageConstants.VolumeAerialFillMeshFogGate *
+                       Math.Clamp(frame.Settings.AerialFogStrength, 0f, 1f);
+            fogStrength *= 1f - gate;
+        }
+
         SetFloatLoc(u.AerialFogStrength, fogStrength);
         var hardR = _terrainStreamer?.HardRingWorldRadius
                     ?? PreviewStageConstants.TerrainDefaultChunkViewDistance *
@@ -737,6 +782,9 @@ public sealed partial class OpenGlPreviewBackend
                               PreviewStageConstants.TerrainChunkSize;
         SetFloatLoc(u.TerrainFogStart, hardR * 0.85f);
         SetFloatLoc(u.TerrainFogEnd, lodR * 0.98f);
+        SetIntLoc(u.TerrainLodFadeEnable, 0);
+        SetFloatLoc(u.TerrainLodFadeStart, hardR);
+        SetFloatLoc(u.TerrainLodFadeEnd, hardR + PreviewStageConstants.TerrainLodDetailFadeWidthMeters);
         SetFloatLoc(u.TerrainPomFadeStart, PreviewStageConstants.TerrainNearPomRadius);
         SetFloatLoc(
             u.TerrainPomFadeEnd,
@@ -779,11 +827,12 @@ public sealed partial class OpenGlPreviewBackend
         SetFloatLoc(u.EmissionStrength, frame.Settings.EmissionStrength);
         SetIntLoc(u.EnableAtmosphericSky, frame.Settings.EnableAtmosphericSky ? 1 : 0);
         SetFloatLoc(u.AtmosphereSunIntensity, frame.Settings.AtmosphereSunIntensity);
-        SetVec3Loc(u.SkyTint, new Vector3(0.55f, 0.62f, 0.74f));
+        SetVec3Loc(u.SkyTint, new Vector3(0.42f, 0.68f, 0.86f));
         SetVec3Loc(u.GroundTint, new Vector3(0.22f, 0.20f, 0.18f));
         SetFloatLoc(u.ShadowMinBias, frame.Settings.ShadowMinBias * ResolveShadowBiasScale(ref frame));
         SetFloatLoc(u.ShadowMaxBias, frame.Settings.ShadowMaxBias * ResolveShadowBiasScale(ref frame));
         SetFloatLoc(u.ShadowSoftnessTexels, Math.Clamp(frame.Settings.ShadowSoftnessTexels, 0f, 8f));
+        SetFloatLoc(u.ShadowStrength, Math.Clamp(frame.Settings.ShadowStrength, 0f, 3f));
         var shadowFarRes = _shadowTarget?.Resolution ?? Math.Clamp(frame.Settings.ShadowMapResolution, 256, 4096);
         var shadowNearRes = frame.ShadowCascadesActive
             ? (_shadowTargetCascadeNear?.Resolution ?? ShadowLodNearResolution)
@@ -866,8 +915,14 @@ public sealed partial class OpenGlPreviewBackend
                 environmentCeilingY: envCeiling);
         }
 
-        frame.VerticalFieldOfViewRadians =
-            cam.FieldOfViewDegrees * (MathF.PI / 180f);
+        var fovDegrees = cam.FieldOfViewDegrees;
+        var holdZoom = Math.Max(frame.HoldFovZoomMagnification, 1f);
+        if (holdZoom > 1.001f)
+        {
+            fovDegrees = Math.Clamp(fovDegrees / holdZoom, 8f, 120f);
+        }
+
+        frame.VerticalFieldOfViewRadians = fovDegrees * (MathF.PI / 180f);
         frame.UnjitteredProj = PreviewGlMatrices.CreatePerspectiveFieldOfViewOpenGl(
             frame.VerticalFieldOfViewRadians,
             aspect,

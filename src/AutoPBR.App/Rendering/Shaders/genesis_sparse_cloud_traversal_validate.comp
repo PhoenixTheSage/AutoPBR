@@ -1,0 +1,41 @@
+#version 430 core
+
+// CQ4.5 fixed-ray validation entry point. This is intentionally not dispatched by the
+// preview renderer; live-GL tests use it to verify the shared traversal implementation.
+
+//!include "common/sparse_cloud_traversal.glsl"
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) buffer Cq45TraversalValidationOutput
+{
+    vec4 cq45Primary;
+    vec4 cq45Counters;
+};
+
+uniform vec3 uValidationRayOrigin;
+uniform vec3 uValidationRayDirection;
+uniform float uValidationTStart;
+uniform float uValidationTEnd;
+uniform float uValidationFineStep;
+
+void main()
+{
+    vec3 direction = normalize(uValidationRayDirection);
+    Cq45TraversalResult result = cq45TraverseToCandidate(
+        uValidationRayOrigin,
+        direction,
+        uValidationTStart,
+        uValidationTEnd,
+        uValidationFineStep);
+    cq45Primary = vec4(
+        result.t,
+        result.density,
+        result.selectedLevel,
+        result.found);
+    cq45Counters = vec4(
+        float(result.pageSteps),
+        float(result.distanceSteps),
+        float(result.fineSteps),
+        float(result.fallbackQueries));
+}

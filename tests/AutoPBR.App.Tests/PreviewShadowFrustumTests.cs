@@ -210,4 +210,139 @@ public sealed class PreviewShadowFrustumTests
         Assert.True(highPad >= 0f);
         Assert.True(lowPad <= 6f);
     }
+
+    [Fact]
+    public void BuildDirectionalViewProj_camera_plus_distant_stage_clamp_keeps_camera_inside_when_camera_centered()
+    {
+        // Regression: unioning stage-at-origin into the far AABB then clamping maxHalfExtent
+        // recentered the ortho off a distant fly camera and wiped nearby shadows.
+        var lightDir = PreviewLightMath.LightDirectionFromYawPitch(-35.0, -55.0);
+        const float farHalf = 128f;
+        var camera = new Vector3(400f, 10f, 0f);
+
+        PreviewShadowFrustum.SeedTerrainShadowBounds(
+            focusXz: camera with { Y = 0f },
+            groundFloorY: -1f,
+            groundCeilingY: 8f,
+            xzHalfExtent: farHalf,
+            out var camMin,
+            out var camMax);
+        PreviewShadowFrustum.SeedTerrainShadowBounds(
+            focusXz: Vector3.Zero,
+            groundFloorY: -1f,
+            groundCeilingY: 8f,
+            xzHalfExtent: PreviewShadowFrustum.TerrainShadowMinXzHalfExtent,
+            out var stageMin,
+            out var stageMax);
+
+        var unionMin = camMin;
+        var unionMax = camMax;
+        PreviewShadowFrustum.EncapsulateAabb(ref unionMin, ref unionMax, stageMin, stageMax);
+        var brokenVp = PreviewShadowFrustum.BuildDirectionalViewProj(
+            lightDir,
+            unionMin,
+            unionMax,
+            Matrix4x4.Identity,
+            maxHalfExtent: farHalf);
+        Assert.False(
+            PointProjectsInsideFrustum(brokenVp, camera with { Y = 0f }),
+            "precondition: stage+camera union + clamp must leave distant camera outside");
+
+        var fixedVp = PreviewShadowFrustum.BuildDirectionalViewProj(
+            lightDir,
+            camMin,
+            camMax,
+            Matrix4x4.Identity,
+            maxHalfExtent: farHalf);
+        Assert.True(PointProjectsInsideFrustum(fixedVp, camera with { Y = 0f }));
+        Assert.True(PointProjectsInsideFrustum(fixedVp, camera + new Vector3(8f, 0f, 0f)));
+        Assert.True(PointProjectsInsideFrustum(fixedVp, camera + new Vector3(-8f, 0f, 0f)));
+    }
+
+    [Fact]
+    public void BuildDirectionalViewProj_near_cascade_ignores_distant_subject_inflation()
+    {
+        var lightDir = PreviewLightMath.LightDirectionFromYawPitch(-35.0, -55.0);
+        const float nearHalf = 8f;
+        var camera = new Vector3(400f, 10f, 0f);
+
+        PreviewShadowFrustum.SeedTerrainShadowBounds(
+            focusXz: camera with { Y = 0f },
+            groundFloorY: -1f,
+            groundCeilingY: 8f,
+            xzHalfExtent: nearHalf,
+            out var nearMin,
+            out var nearMax);
+        var inflatedMin = nearMin;
+        var inflatedMax = nearMax;
+        PreviewShadowFrustum.EncapsulateAabb(
+            ref inflatedMin,
+            ref inflatedMax,
+            new Vector3(-0.5f, 0f, -0.5f),
+            new Vector3(0.5f, 2f, 0.5f));
+
+        var brokenVp = PreviewShadowFrustum.BuildDirectionalViewProj(
+            lightDir,
+            inflatedMin,
+            inflatedMax,
+            Matrix4x4.Identity,
+            maxHalfExtent: nearHalf);
+        Assert.False(
+            PointProjectsInsideFrustum(brokenVp, camera with { Y = 0f }),
+            "precondition: distant subject inflation + clamp must leave camera outside near ortho");
+
+        var fixedVp = PreviewShadowFrustum.BuildDirectionalViewProj(
+            lightDir,
+            nearMin,
+            nearMax,
+            Matrix4x4.Identity,
+            maxHalfExtent: nearHalf);
+        Assert.True(PointProjectsInsideFrustum(fixedVp, camera with { Y = 0f }));
+    }
+
+    [Fact]
+    public void ShadowPass_GroundMeshFarCascade_UsesCameraCenteredFit()
+    {
+        var shadow = File.ReadAllText(Path.Combine(
+            FindRepoRoot(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.Render.PassShadow.cs"));
+        Assert.Contains("BuildCameraCenteredCascadeAabb(", shadow, StringComparison.Ordinal);
+        Assert.Contains("TryEncapsulateNearbySubjectIntoCascadeAabb", shadow, StringComparison.Ordinal);
+        // Far terrain fit must not reintroduce stage-origin encapsulation before maxHalfExtent clamp.
+        var groundFarFit = shadow.IndexOf(
+            "// Far must stay camera-centered like near/mid",
+            StringComparison.Ordinal);
+        Assert.True(groundFarFit >= 0);
+        var stageSeedAfter = shadow.IndexOf(
+            "focusXz: Vector3.Zero",
+            groundFarFit,
+            StringComparison.Ordinal);
+        var nextMethod = shadow.IndexOf(
+            "ResolveShadowCasterInclusionPadding",
+            groundFarFit,
+            StringComparison.Ordinal);
+        Assert.True(stageSeedAfter < 0 || stageSeedAfter > nextMethod,
+            "far cascade VP fit must not seed stage-at-origin before inclusion-padding helper");
+    }
+
+    private static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "AutoPBR.sln")) ||
+                File.Exists(Path.Combine(dir.FullName, "AutoPBR.slnx")))
+            {
+                return dir.FullName;
+            }
+
+            dir = dir.Parent;
+        }
+
+        throw new InvalidOperationException("Could not locate repo root from " + AppContext.BaseDirectory);
+    }
 }

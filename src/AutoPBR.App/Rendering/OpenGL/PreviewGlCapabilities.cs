@@ -100,6 +100,24 @@ internal sealed record PreviewGlCapabilities(
         ComputeShaders &&
         ImageLoadStore;
 
+    /// <summary>
+    /// CQ4 logical sparse cloud volumes require the desktop compute path, image load/store for
+    /// atlas and page-table generation, and SSBOs for bounded request/residency queues. This is a
+    /// hardware/API capability only; shader, asset, and resource readiness remain runtime gates.
+    /// </summary>
+    public bool CanUseSparseCloudVolumes =>
+        !IsOpenGlEs &&
+        ComputeShaders &&
+        ImageLoadStore &&
+        ShaderStorageBuffers;
+
+    /// <summary>
+    /// Screen-space AO needs a third scene-capture color attachment for view-space normals.
+    /// </summary>
+    public bool CanUseScreenSpaceAo =>
+        MaxColorAttachments >= 3 &&
+        MaxDrawBuffers >= 3;
+
     public string UploadTransportLabel => CanUsePersistentUploadRing ? "persistent-mapped UBO uploads" : "BufferSubData uploads";
 
     public string FormatDiagnostic()
@@ -127,6 +145,8 @@ internal sealed record PreviewGlCapabilities(
                $"cloudMoments={(CanUseCloudTemporalMoments ? "on" : "off")}({MaxColorAttachments}/{MaxDrawBuffers}), " +
                $"cloudLightCacheFragment={(CanUseFragmentCloudLightingCache ? "on" : "off")}, " +
                $"cloudLightCacheCompute={(CanUseComputeCloudLightingCache ? "on" : "off")}, " +
+               $"sparseCloudVolumes={(CanUseSparseCloudVolumes ? "on" : "off")}, " +
+               $"screenSpaceAo={(CanUseScreenSpaceAo ? "on" : "off")}, " +
                $"gpuTimers={(CanUseGpuTimerQueries ? "on" : "off")}, " +
                $"compute={(ComputeShaders ? "yes" : "no")}, " +
                $"imageStore={(ImageLoadStore ? "yes" : "no")}, " +
@@ -147,11 +167,14 @@ internal sealed record PreviewGlCapabilities(
         var cloudTargets = CanUseFloatingPointCloudTargets
             ? CanUseCloudTemporalMoments ? "FP cloud targets + moments" : "FP cloud targets"
             : "RGBA8 clouds";
+        var cloudDensity = CanUseSparseCloudVolumes
+            ? "sparse-cloud capable"
+            : "procedural clouds";
         var gpuTimers = CanUseGpuTimerQueries ? "GPU timers" : "no GPU timers";
         var drawCommands = CanUseMultiDrawIndirectGroups
             ? "multi-draw groups"
             : CanUseIndirectDrawCommands ? "indirect draws" : "direct draws";
-        return $" · {upload} · {entitySkinning} · {drawRecords} · {materialTextures} · {froxelInject} · {cloudTargets} · {drawCommands} · {gpuTimers}";
+        return $" · {upload} · {entitySkinning} · {drawRecords} · {materialTextures} · {froxelInject} · {cloudTargets} · {cloudDensity} · {drawCommands} · {gpuTimers}";
     }
 
     public static PreviewGlCapabilities FromGl(GL gl, bool useOpenGlEs, string versionString)

@@ -227,7 +227,7 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         var readFbo = (uint)Math.Max(0, frame.DefaultFbo);
-        if (!scratchTarget.CopyColorFromFramebuffer(readFbo, w, h))
+        if (!scratchTarget.CopyColorFromFramebuffer(readFbo, w, h, frame.VpX, frame.VpY))
         {
             _taaHistoryValid = false;
             return;
@@ -381,7 +381,10 @@ public sealed partial class OpenGlPreviewBackend
         _scenePresentProgram.Use();
         gl.ActiveTexture(TextureUnit.Texture0);
         gl.BindTexture(TextureTarget.Texture2D, resolveTarget.ColorTextureHandle);
-        BindScenePresentUniforms(frame.Settings, sceneIsLinear: frame.Settings.HdrPresentActive);
+        BindScenePresentUniforms(
+            frame.Settings,
+            sceneIsLinear: false,
+            encodeHdr: false);
         gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
         var err = gl.GetError();
         gl.BindVertexArray(0);

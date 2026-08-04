@@ -10,6 +10,7 @@ public sealed class PreviewGpuInitProgress
     public bool GodRaysReady { get; init; }
     public bool CloudsReady { get; init; }
     public bool PreviewTaaReady { get; init; }
+    public bool ScreenSpaceAoReady { get; init; }
     public bool IsFullyReady { get; init; }
     public string Phase { get; init; } = PreviewGpuInitPhases.Starting;
     /// <summary>Combined init progress in [0, 1] for the preview loading bar.</summary>
@@ -24,6 +25,7 @@ public sealed class PreviewGpuInitProgress
         GodRaysReady = true,
         CloudsReady = true,
         PreviewTaaReady = true,
+        ScreenSpaceAoReady = true,
         IsFullyReady = true,
         Phase = PreviewGpuInitPhases.Ready,
         ElapsedMs = elapsedMs,

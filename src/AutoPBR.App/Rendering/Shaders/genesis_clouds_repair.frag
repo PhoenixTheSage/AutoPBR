@@ -9,6 +9,7 @@
 //!include "common/cloud_temporal.glsl"
 //!include "common/ray_reconstruct.glsl"
 //!include "common/cloud_scene_depth.glsl"
+//!include "common/sparse_cloud_traversal.glsl"
 
 in vec2 vUv;
 
@@ -48,16 +49,25 @@ uniform int uHasSkyLut;
 uniform int uSourceCloudDataDirect;
 uniform int uDensityAssetVersion;
 uniform int uCloudFrameIndex;
+uniform float uRepairStability;
 
 layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 FragCloudData;
 
 const int CLOUD_REPAIR_STEPS = 8;
-const float CLOUD_REPAIR_ALPHA_THRESHOLD = 0.08;
+// Keep in sync with PreviewCloudEdgeRepairClassifier. CA1/CA2 raised legitimate
+// opacity variation well above the original 0.08 CQ1.8 threshold.
+const float CLOUD_REPAIR_ALPHA_THRESHOLD = 0.24;
+const float CLOUD_REPAIR_STRONG_ALPHA_THRESHOLD = 0.36;
+const float CLOUD_REPAIR_SILHOUETTE_ALPHA_CEILING = 0.18;
 const float CLOUD_REPAIR_DISTANCE_MIN = 0.75;
 const float CLOUD_REPAIR_DISTANCE_SCALE = 0.01;
 const float CLOUD_REPAIR_VALID_WEIGHT_MIN = 0.75;
 const float CLOUD_REPAIR_KIND_THRESHOLD = 0.24;
+// Keep in sync with PreviewCloudEdgeRepairClassifier idle/retrace thresholds.
+const float CLOUD_REPAIR_IDLE_FREEZE = 0.85;
+const float CLOUD_REPAIR_RETRACE_RAMP_START = 0.20;
+const float CLOUD_REPAIR_JITTER_FREEZE = 0.35;
 const float CLOUD_MAX_TRACE_DISTANCE = 4096.0;
 const float CLOUD_DISTANCE_FADE_FRACTION = 0.20;
 const float CLOUD_STBN_WIDTH = 128.0;
@@ -97,12 +107,16 @@ float repairTapSceneVisibility(float sceneDistance, vec4 cloudData)
 
 float repairJitter()
 {
+    // Freeze STBN until clearly moving so ramped retrace blends do not sparkle.
+    float frameIndex = uRepairStability >= CLOUD_REPAIR_JITTER_FREEZE
+        ? 0.0
+        : float(uCloudFrameIndex);
     if (uHasCloudStbn > 0)
     {
         vec2 pixel = mod(
             floor(gl_FragCoord.xy),
             vec2(CLOUD_STBN_WIDTH, CLOUD_STBN_HEIGHT));
-        float frameSlice = mod(float(uCloudFrameIndex), CLOUD_STBN_FRAMES);
+        float frameSlice = mod(frameIndex, CLOUD_STBN_FRAMES);
         float value = texture(uCloudStbn, vec3(
             (pixel + vec2(0.5)) / vec2(CLOUD_STBN_WIDTH, CLOUD_STBN_HEIGHT),
             (frameSlice + 0.5) / CLOUD_STBN_FRAMES)).r;
@@ -110,7 +124,7 @@ float repairJitter()
     }
 
     return fract(52.9829189 * fract(dot(
-        gl_FragCoord.xy + float(uCloudFrameIndex) * vec2(47.0, 17.0),
+        gl_FragCoord.xy + frameIndex * vec2(47.0, 17.0),
         vec2(0.06711056, 0.00583715))));
 }
 
@@ -141,12 +155,18 @@ vec3 repairSampleSkyViewLutSrgb(vec3 viewDir)
     return texture(uSkyViewLut, texelUv).rgb;
 }
 
+vec3 repairNeutralSkyAmbient(vec3 skyAmbient)
+{
+    float lum = dot(skyAmbient, vec3(0.2126, 0.7152, 0.0722));
+    return mix(skyAmbient, vec3(lum), 0.90);
+}
+
 vec3 repairSkyAmbient(vec3 viewDir, float dayAmount)
 {
     vec3 night = repairNightZenith(viewDir) * 2.0;
     if (uHasSkyLut < 1)
     {
-        return mix(night, vec3(0.42, 0.50, 0.63), dayAmount);
+        return repairNeutralSkyAmbient(mix(night, vec3(0.52, 0.53, 0.55), dayAmount));
     }
 
     vec3 ambientDir = normalize(vec3(
@@ -154,8 +174,8 @@ vec3 repairSkyAmbient(vec3 viewDir, float dayAmount)
         max(viewDir.y, 0.45),
         viewDir.z * 0.35));
     vec3 lut = srgbToLinear(repairSampleSkyViewLutSrgb(ambientDir));
-    vec3 dayFloor = vec3(0.060, 0.080, 0.120);
-    return mix(night, max(lut, dayFloor), dayAmount);
+    vec3 dayFloor = vec3(0.070, 0.072, 0.074);
+    return repairNeutralSkyAmbient(mix(night, max(lut, dayFloor), dayAmount));
 }
 
 void writeEmpty()
@@ -252,19 +272,74 @@ void main()
     vec3 planetCenter = vec3(0.0, uGroundWorldY - planetRadius, 0.0);
     float layerBaseAltitude = max(uLayerHeight - uGroundWorldY, 0.01);
     float layerTopAltitude = layerBaseAltitude + max(uVolumeHeight, 0.01);
+    VcCloudAltitudeStack altitudeStack = vcBuildCloudAltitudeStack(
+        layerBaseAltitude,
+        uVolumeHeight,
+        uCumulusLayerCount,
+        uInterDeckGap,
+        uHeightVariance,
+        uUpperThicknessScale,
+        uCirrusGap,
+        uCirrusThickness,
+        uCirrusStrength);
     float layerSupportGuard = clamp(uVolumeHeight * 0.015, 0.50, 1.50);
     vec2 slabSegment = vcsIntersectAltitudeSlab(
         uCameraPos,
         rayDir,
         uGroundWorldY,
-        max(layerBaseAltitude - layerSupportGuard, 0.001),
-        layerTopAltitude + layerSupportGuard,
+        max(altitudeStack.supportBase - layerSupportGuard, 0.001),
+        altitudeStack.supportTop + layerSupportGuard,
         CLOUD_MAX_TRACE_DISTANCE);
+    // Prefer the nearest individual deck segment so repair does not march empty
+    // inter-deck gaps as one inflated lattice.
+    float nearestDeckEnter = slabSegment.x;
+    float nearestDeckExit = slabSegment.y;
+    bool foundDeckSeg = false;
+    for (int deckIndex = 0; deckIndex < CLOUD_LAYER_ENVELOPE_MAX_DECKS; ++deckIndex)
+    {
+        float supportBase;
+        float supportTop;
+        float deckThickness;
+        if (!vcTryGetCumulusDeckSupportBand(
+                deckIndex,
+                layerBaseAltitude,
+                uVolumeHeight,
+                supportBase,
+                supportTop,
+                deckThickness))
+        {
+            continue;
+        }
+
+        vec2 deckSeg = vcsIntersectAltitudeSlab(
+            uCameraPos,
+            rayDir,
+            uGroundWorldY,
+            supportBase,
+            supportTop,
+            CLOUD_MAX_TRACE_DISTANCE);
+        deckSeg.y = min(deckSeg.y, sceneDistance);
+        if (deckSeg.y > deckSeg.x &&
+            (!foundDeckSeg || deckSeg.x < nearestDeckEnter))
+        {
+            nearestDeckEnter = deckSeg.x;
+            nearestDeckExit = deckSeg.y;
+            foundDeckSeg = true;
+        }
+    }
+    if (foundDeckSeg)
+    {
+        slabSegment = vec2(nearestDeckEnter, nearestDeckExit);
+    }
+    else
+    {
+        slabSegment = vec2(1.0, 0.0);
+    }
     slabSegment.y = min(slabSegment.y, sceneDistance);
 
-    float cirrusAltitude = layerTopAltitude + max(uVolumeHeight * 1.5, 18.0);
-    float cirrusThickness = max(uVolumeHeight * 0.035, 0.75);
-    float cirrusSupportGuard = clamp(cirrusThickness * 0.20, 0.25, 0.75);
+    float cirrusAltitude = altitudeStack.cirrusBase;
+    float cirrusThickness = max(altitudeStack.cirrusThickness, 0.0);
+    float cirrusSupportGuard = clamp(max(cirrusThickness, 0.1) * 0.20, 0.25, 0.75);
     vec2 cirrusSegment = vcsIntersectAltitudeSlab(
         uCameraPos,
         rayDir,
@@ -300,7 +375,10 @@ void main()
     float normalizedValidWeight = clamp(validWeight * 0.25, 0.0, 1.0);
     bool lowValidWeight = validCount > 0.0 &&
         normalizedValidWeight < CLOUD_REPAIR_VALID_WEIGHT_MIN;
-    bool alphaEdge = alphaMax - alphaMin > CLOUD_REPAIR_ALPHA_THRESHOLD;
+    float alphaRange = alphaMax - alphaMin;
+    bool alphaEdge = alphaRange > CLOUD_REPAIR_ALPHA_THRESHOLD &&
+        (alphaMin <= CLOUD_REPAIR_SILHOUETTE_ALPHA_CEILING ||
+         alphaRange > CLOUD_REPAIR_STRONG_ALPHA_THRESHOLD);
     bool needsRepair = alphaEdge || distanceEdge || validityEdge || kindEdge || lowValidWeight;
 
     float reconstructedDistance = nearestDistance < 1e8
@@ -419,7 +497,7 @@ void main()
             radiance = vcSunScatter(
                 sunColor,
                 cosTheta,
-                cirrusDensity * 0.62) * 0.42 + skyAmbient * 0.54;
+                cirrusDensity * 0.62) * 0.42 + skyAmbient * 0.42;
         }
         else
         {
@@ -445,6 +523,12 @@ void main()
                 sampleFootprint,
                 weather,
                 uDensityAssetVersion);
+            if (uHasSparseCloudTraversal > 0)
+            {
+                Cq45ResolvedBase sparseBase =
+                    cq45ResolveBaseDensity(worldPos, baseShape);
+                baseShape = sparseBase.density;
+            }
             density = vcCloudDensityFromBase(
                 baseShape,
                 worldPos,
@@ -457,6 +541,7 @@ void main()
                 uDetailNoise,
                 uHasDetailNoise,
                 uWindOffset,
+                uCirrusWindDir,
                 sampleFootprint,
                 -0.35,
                 3,
@@ -486,9 +571,9 @@ void main()
             float heightSample = saturate1(
                 (altitude - layerBaseAltitude) / max(uVolumeHeight, 0.001));
             radiance = vcSunScatter(sunColor, cosTheta, lightOd);
-            float ambientVisibility = mix(0.38, 1.0, exp(-lightOd * 0.32));
-            radiance += skyAmbient * mix(0.22, 0.82, heightSample) *
-                0.62 * ambientVisibility;
+            float ambientVisibility = mix(0.20, 1.0, exp(-lightOd * 0.32));
+            radiance += skyAmbient * mix(0.10, 0.78, heightSample) *
+                0.52 * ambientVisibility;
         }
 
         if (density > 1e-5)
@@ -504,17 +589,19 @@ void main()
     }
 
     float repairAlpha = saturate1(1.0 - transmittance);
-    repairRadiance += skyAmbient * repairAlpha * mix(0.35, 0.55, dayAmount);
+    repairRadiance += skyAmbient * repairAlpha * mix(0.22, 0.38, dayAmount);
     float repairDistanceVisibility = repairCirrus
         ? cirrusDistanceVisibility
         : slabDistanceVisibility;
     repairRadiance *= repairDistanceVisibility;
     repairAlpha *= repairDistanceVisibility;
 
-    float alphaSeverity = clamp(
-        (alphaMax - alphaMin - CLOUD_REPAIR_ALPHA_THRESHOLD) / 0.32,
-        0.0,
-        1.0);
+    float alphaSeverity = alphaEdge
+        ? clamp(
+            (alphaRange - CLOUD_REPAIR_ALPHA_THRESHOLD) / 0.32,
+            0.0,
+            1.0)
+        : 0.0;
     float distanceThreshold = max(
         CLOUD_REPAIR_DISTANCE_MIN,
         distanceMin * CLOUD_REPAIR_DISTANCE_SCALE);
@@ -534,6 +621,18 @@ void main()
     float repairConfidence = edgeSeverity *
         mix(0.35, 1.0, sourceCoverage) *
         mix(0.78, 1.0, sampledCoverage);
+    // Post-temporal CQ1.8 retrace is Cinematic-only. Idle kills it; clear motion
+    // restores it; the band between ramps so pans do not flash blocky borders.
+    float repairStability = clamp(uRepairStability, 0.0, 1.0);
+    float retraceBlend = repairStability >= CLOUD_REPAIR_IDLE_FREEZE
+        ? 0.0
+        : (repairStability <= CLOUD_REPAIR_RETRACE_RAMP_START
+            ? 1.0
+            : 1.0 - smoothstep(
+                CLOUD_REPAIR_RETRACE_RAMP_START,
+                CLOUD_REPAIR_IDLE_FREEZE,
+                repairStability));
+    repairConfidence *= retraceBlend;
 
     vec4 repaired = vec4(max(repairRadiance, vec3(0.0)), repairAlpha);
     vec4 outputCloud = mix(max(reconstructed, vec4(0.0)), repaired, repairConfidence);

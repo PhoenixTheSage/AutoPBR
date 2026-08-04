@@ -973,6 +973,15 @@
   <data name="ForceShaderCacheInvalidationTooltip" xml:space="preserve">
     <value>Deletes the on-disk GPU shader binary cache and recompiles preview shaders. Use after shader edits when the preview looks stale.</value>
   </data>
+  <data name="ClearLodCache" xml:space="preserve">
+    <value>Clear LOD cache</value>
+  </data>
+  <data name="ClearLodCacheTooltip" xml:space="preserve">
+    <value>Clears the in-memory distant LOD section cache and resident streamed terrain meshes so they rebake. Does not delete the shader binary cache. Also cleared automatically on new seed, terrain modifications, and shader invalidation.</value>
+  </data>
+  <data name="LodCacheClearedLog" xml:space="preserve">
+    <value>Distant LOD cache cleared; terrain will rebake.</value>
+  </data>
   <data name="ShaderCacheInvalidatedLog" xml:space="preserve">
     <value>[Settings] Shader cache cleared; preview shaders will recompile.</value>
   </data>
@@ -1091,7 +1100,7 @@
     <value>3D Preview Camera</value>
   </data>
   <data name="Preview3DCameraBindings" xml:space="preserve">
-    <value>Alt + drag (left or middle button): orbit. Drag without Alt (left or middle): pan. Wheel: zoom (fly speed while right-dragging). Right-drag: look (fly camera). While holding right button: WASD move, Q/E down/up, Shift faster, Ctrl slower. Double-click: frame subject. Click the preview for focus, then press the reset key to restore default framing.</value>
+    <value>Alt + drag (left or middle button): orbit. Drag without Alt (left or middle): pan. Wheel: zoom (fly speed while right-dragging). Hold C: temporary FOV zoom. Right-drag: look (fly camera). While holding right button: WASD move, Q/E down/up, Shift faster, Ctrl slower. Double-click: frame subject. Click the preview for focus, then press the reset key to restore default framing.</value>
   </data>
   <data name="Preview3DCameraOrbitSensitivity" xml:space="preserve">
     <value>Orbit Sensitivity</value>
@@ -1101,6 +1110,12 @@
   </data>
   <data name="Preview3DCameraZoomSensitivity" xml:space="preserve">
     <value>Zoom Sensitivity</value>
+  </data>
+  <data name="Preview3DCameraHoldZoomLevel" xml:space="preserve">
+    <value>Hold Zoom (C)</value>
+  </data>
+  <data name="Preview3DCameraHoldZoomLevelTooltip" xml:space="preserve">
+    <value>FOV magnification while holding C. Higher values zoom in more without changing orbit distance.</value>
   </data>
   <data name="Preview3DCameraOrbitBoomDistance" xml:space="preserve">
     <value>Orbit boom distance</value>
@@ -1158,6 +1173,12 @@
   </data>
   <data name="Preview3DCameraHelpItemZoomDesc" xml:space="preserve">
     <value>Zoom in and out.</value>
+  </data>
+  <data name="Preview3DCameraHelpItemHoldZoomInput" xml:space="preserve">
+    <value>C (hold)</value>
+  </data>
+  <data name="Preview3DCameraHelpItemHoldZoomDesc" xml:space="preserve">
+    <value>Temporary FOV zoom. Magnification is set under Camera → Hold Zoom (C).</value>
   </data>
   <data name="Preview3DCameraHelpItemFlyLookInput" xml:space="preserve">
     <value>Right-drag</value>
@@ -1226,7 +1247,7 @@
     <value>Moon</value>
   </data>
   <data name="Preview3DGodRayDebugSection" xml:space="preserve">
-    <value>God ray debug (froxel)</value>
+    <value>Volumetric fog debug (froxel)</value>
   </data>
   <data name="Preview3DGodRayStabilizeDebug" xml:space="preserve">
     <value>Stabilize (no temporal/jitter)</value>
@@ -1427,10 +1448,10 @@
     <value>Volumetric effects</value>
   </data>
   <data name="Preview3DEnableGodRays" xml:space="preserve">
-    <value>God rays</value>
+    <value>Volumetric fog</value>
   </data>
   <data name="Preview3DEnableGodRaysTooltip" xml:space="preserve">
-    <value>Froxel volume light shafts toward the sun (inject + integrate + upsample).</value>
+    <value>Froxel volumetric fog and coarse light shafts (inject + integrate + upsample). Pair with screen-space beams for fine leaf gaps.</value>
   </data>
   <data name="Preview3DEnableVolumetricClouds" xml:space="preserve">
     <value>Volumetric clouds</value>
@@ -1448,10 +1469,40 @@
     <value>Controls fog-froxel resolution, slice count, cloud detail, and temporal filtering. Cinematic keeps the High fog cost while raising desktop cloud quality.</value>
   </data>
   <data name="Preview3DGodRayStrength" xml:space="preserve">
-    <value>God-ray strength</value>
+    <value>Froxel ray strength</value>
   </data>
   <data name="Preview3DGodRayStrengthTooltip" xml:space="preserve">
-    <value>Intensity of the additive god-ray composite (0 = off).</value>
+    <value>Intensity of froxel fog in-scatter and coarse shafts (0 = fog medium only / off).</value>
+  </data>
+  <data name="Preview3DEnableScreenSpaceGodRays" xml:space="preserve">
+    <value>Screen-space beams</value>
+  </data>
+  <data name="Preview3DEnableScreenSpaceGodRaysTooltip" xml:space="preserve">
+    <value>Layer shadow-aware screen-space god rays over froxel fog for fine beams through leaves and thin gaps the froxel grid cannot resolve. When froxel fog is off, this is the standalone shaft path.</value>
+  </data>
+  <data name="Preview3DScreenSpaceGodRayStrength" xml:space="preserve">
+    <value>God-Ray Strength</value>
+  </data>
+  <data name="Preview3DScreenSpaceGodRayStrengthTooltip" xml:space="preserve">
+    <value>Intensity of the screen-space / shadow-map god-ray layer locked to the sun or moon disc (0 = off).</value>
+  </data>
+  <data name="Preview3DGodRayConeScale" xml:space="preserve">
+    <value>God-Ray Cone Size</value>
+  </data>
+  <data name="Preview3DGodRayConeScaleTooltip" xml:space="preserve">
+    <value>Widens the screen-space shaft cone around the sun or moon. Raise this if beams feel too thin when the disc is near the edge of the view.</value>
+  </data>
+  <data name="Preview3DGodRayFroxelResolution" xml:space="preserve">
+    <value>Froxel resolution</value>
+  </data>
+  <data name="Preview3DGodRayFroxelResolutionTooltip" xml:space="preserve">
+    <value>Scales fog/god-ray froxel grid density on top of Froxel Quality. Higher = finer, less blocky shafts (costs more GPU). Try 1.5–2.0 for tight crevices.</value>
+  </data>
+  <data name="Preview3DGodRayPhaseDirectivity" xml:space="preserve">
+    <value>Shaft focus</value>
+  </data>
+  <data name="Preview3DGodRayPhaseDirectivityTooltip" xml:space="preserve">
+    <value>0 = sun-lit fog stays visible from any camera angle. 1 = classic Mie shafts that peak only when looking toward the sun. Mid values keep both volume glow and crepuscular beams.</value>
   </data>
   <data name="Preview3DCloudSection" xml:space="preserve">
     <value>Cloud Layer</value>
@@ -1504,6 +1555,81 @@
   <data name="Preview3DCloudCirrusStrengthTooltip" xml:space="preserve">
     <value>Opacity of the high thin cirrus sheet above the main layer (0 = off).</value>
   </data>
+  <data name="Preview3DCloudCumulusLayerCount" xml:space="preserve">
+    <value>Cumulus layers</value>
+  </data>
+  <data name="Preview3DCloudCumulusLayerCountTooltip" xml:space="preserve">
+    <value>Number of stacked cumulus altitude decks (1–3). Default is 2.</value>
+  </data>
+  <data name="Preview3DCloudInterDeckGap" xml:space="preserve">
+    <value>Layer spacing</value>
+  </data>
+  <data name="Preview3DCloudInterDeckGapTooltip" xml:space="preserve">
+    <value>Clear-air gap between successive cumulus decks.</value>
+  </data>
+  <data name="Preview3DCloudLayerHeightVariance" xml:space="preserve">
+    <value>Height variance</value>
+  </data>
+  <data name="Preview3DCloudLayerHeightVarianceTooltip" xml:space="preserve">
+    <value>Procedural base-height variation inside each cumulus deck so formations sit at different altitudes.</value>
+  </data>
+  <data name="Preview3DCloudUpperThicknessScale" xml:space="preserve">
+    <value>Upper thickness</value>
+  </data>
+  <data name="Preview3DCloudUpperThicknessScaleTooltip" xml:space="preserve">
+    <value>Thickness scale of upper cumulus decks relative to the primary deck.</value>
+  </data>
+  <data name="Preview3DCloudUpperCoverageScale" xml:space="preserve">
+    <value>Upper coverage</value>
+  </data>
+  <data name="Preview3DCloudUpperCoverageScaleTooltip" xml:space="preserve">
+    <value>Coverage multiplier for upper cumulus decks.</value>
+  </data>
+  <data name="Preview3DCloudUpperDensityScale" xml:space="preserve">
+    <value>Upper density</value>
+  </data>
+  <data name="Preview3DCloudUpperDensityScaleTooltip" xml:space="preserve">
+    <value>Density multiplier for upper cumulus decks.</value>
+  </data>
+  <data name="Preview3DCloudUpperWindSpeedScale" xml:space="preserve">
+    <value>Upper wind</value>
+  </data>
+  <data name="Preview3DCloudUpperWindSpeedScaleTooltip" xml:space="preserve">
+    <value>Wind speed scale for upper cumulus decks (slight heading veer is applied automatically).</value>
+  </data>
+  <data name="Preview3DCloudCirrusGap" xml:space="preserve">
+    <value>Cirrus height</value>
+  </data>
+  <data name="Preview3DCloudCirrusGapTooltip" xml:space="preserve">
+    <value>Clear-air gap from the top cumulus deck up to the cirrus sheet.</value>
+  </data>
+  <data name="Preview3DCloudCirrusThickness" xml:space="preserve">
+    <value>Cirrus thickness</value>
+  </data>
+  <data name="Preview3DCloudCirrusThicknessTooltip" xml:space="preserve">
+    <value>Vertical thickness of the cirrus sheet.</value>
+  </data>
+  <data name="Preview3DCloudStyleBias" xml:space="preserve">
+    <value>Cloud style</value>
+  </data>
+  <data name="Preview3DCloudStyleBiasTooltip" xml:space="preserve">
+    <value>Bias weather/template selection toward a cloud family. Auto keeps the weather-driven mix.</value>
+  </data>
+  <data name="Preview3DCloudStyleBiasAuto" xml:space="preserve">
+    <value>Auto</value>
+  </data>
+  <data name="Preview3DCloudStyleBiasHumilis" xml:space="preserve">
+    <value>Cumulus humilis</value>
+  </data>
+  <data name="Preview3DCloudStyleBiasMediocris" xml:space="preserve">
+    <value>Cumulus mediocris</value>
+  </data>
+  <data name="Preview3DCloudStyleBiasCongestus" xml:space="preserve">
+    <value>Cumulus congestus</value>
+  </data>
+  <data name="Preview3DCloudStyleBiasStratus" xml:space="preserve">
+    <value>Stratus</value>
+  </data>
   <data name="Preview3DCloudDebugSection" xml:space="preserve">
     <value>Cloud debug</value>
   </data>
@@ -1511,7 +1637,7 @@
     <value>Debug view</value>
   </data>
   <data name="Preview3DCloudDebugViewTooltip" xml:space="preserve">
-    <value>Inspect weather, shape/detail channels, selected mip levels, density stages, or the active asset profile. Debug views bypass cloud history and Cinematic edge repair.</value>
+    <value>Inspect weather, shape/detail channels, selected mip levels, density stages, the active asset profile, or CQ4 sparse residency/traversal. Debug views bypass cloud history and Cinematic edge repair.</value>
   </data>
   <data name="Preview3DCloudDebugViewOff" xml:space="preserve">
     <value>Off</value>
@@ -1564,6 +1690,33 @@
   <data name="Preview3DCloudDebugViewAssetProfile" xml:space="preserve">
     <value>Asset profile / fallback</value>
   </data>
+  <data name="Preview3DCloudDebugViewSparseClipmapLevel" xml:space="preserve">
+    <value>Sparse — clipmap level</value>
+  </data>
+  <data name="Preview3DCloudDebugViewSparsePageState" xml:space="preserve">
+    <value>Sparse — page state</value>
+  </data>
+  <data name="Preview3DCloudDebugViewSparsePhysicalBrick" xml:space="preserve">
+    <value>Sparse — physical brick / atlas</value>
+  </data>
+  <data name="Preview3DCloudDebugViewSparseBaseDensity" xml:space="preserve">
+    <value>Sparse — base density</value>
+  </data>
+  <data name="Preview3DCloudDebugViewSparseConservativeDistance" xml:space="preserve">
+    <value>Sparse — conservative distance</value>
+  </data>
+  <data name="Preview3DCloudDebugViewSparseTraversalSteps" xml:space="preserve">
+    <value>Sparse — traversal steps</value>
+  </data>
+  <data name="Preview3DCloudDebugViewSparseFallbackContribution" xml:space="preserve">
+    <value>Sparse — shell/coarse fallback</value>
+  </data>
+  <data name="Preview3DCloudDebugViewSparseTemplateFamily" xml:space="preserve">
+    <value>Sparse — template family</value>
+  </data>
+  <data name="Preview3DCloudDebugViewSparseCascadeBlend" xml:space="preserve">
+    <value>Sparse — cascade / shell blend</value>
+  </data>
   <data name="Preview3DCloudDisableTemporal" xml:space="preserve">
     <value>Disable temporal</value>
   </data>
@@ -1587,6 +1740,48 @@
   </data>
   <data name="Preview3DEnablePreviewTaaTooltip" xml:space="preserve">
     <value>Final temporal anti-aliasing on the composited frame. Uses shared reprojection helpers; motion-aware when god rays provide scene depth. Per-pass temporal is halved while this is on.</value>
+  </data>
+  <data name="Preview3DEnableScreenSpaceAo" xml:space="preserve">
+    <value>Screen-space AO</value>
+  </data>
+  <data name="Preview3DEnableScreenSpaceAoTooltip" xml:space="preserve">
+    <value>Darkens crevices on lit opaque geometry using SSAO or GTAO before clouds and god rays. Stacks with parallax contact AO.</value>
+  </data>
+  <data name="Preview3DAoMode" xml:space="preserve">
+    <value>AO mode</value>
+  </data>
+  <data name="Preview3DAoModeTooltip" xml:space="preserve">
+    <value>Auto picks SSAO on Low/Medium and GTAO on High/Cinematic. Force SSAO or GTAO to override.</value>
+  </data>
+  <data name="Preview3DAoStrength" xml:space="preserve">
+    <value>AO strength</value>
+  </data>
+  <data name="Preview3DAoStrengthTooltip" xml:space="preserve">
+    <value>How strongly screen-space AO multiplies lit opaque color (0 = off, 1 = full).</value>
+  </data>
+  <data name="Preview3DAoRadius" xml:space="preserve">
+    <value>AO radius</value>
+  </data>
+  <data name="Preview3DAoRadiusTooltip" xml:space="preserve">
+    <value>Sample radius in view-space units. Larger values catch broader cavities.</value>
+  </data>
+  <data name="Preview3DAoPower" xml:space="preserve">
+    <value>AO power</value>
+  </data>
+  <data name="Preview3DAoPowerTooltip" xml:space="preserve">
+    <value>Power curve on occlusion visibility. Higher values deepen dark regions.</value>
+  </data>
+  <data name="Preview3DAoModeAuto" xml:space="preserve">
+    <value>Auto</value>
+  </data>
+  <data name="Preview3DAoModeSsao" xml:space="preserve">
+    <value>SSAO</value>
+  </data>
+  <data name="Preview3DAoModeGtao" xml:space="preserve">
+    <value>GTAO</value>
+  </data>
+  <data name="Preview3DAoSection" xml:space="preserve">
+    <value>Screen-space AO</value>
   </data>
   <data name="Preview3DTaaSection" xml:space="preserve">
     <value>TXAA</value>
@@ -1711,6 +1906,12 @@
   <data name="Preview3DShadowDistanceTooltip" xml:space="preserve">
     <value>Maximum world-unit radius for directional shadow casting and receiving. Shadows fade out near this limit.</value>
   </data>
+  <data name="Preview3DShadowStrength" xml:space="preserve">
+    <value>Shadow strength</value>
+  </data>
+  <data name="Preview3DShadowStrengthTooltip" xml:space="preserve">
+    <value>Shadow tone lightness/darkness (0 = no darkening, 1 = as sampled, up to 3 = deeper umbra). Does not change shadow size.</value>
+  </data>
   <data name="Preview3DVolumetricQualityLow" xml:space="preserve">
     <value>Low</value>
   </data>
@@ -1826,7 +2027,7 @@
     <value>Distant LOD</value>
   </data>
   <data name="Preview3DDistantLodTooltip" xml:space="preserve">
-    <value>Extra merged LOD chunks beyond chunk view distance. Higher values keep biome materials and vegetation farther out before terrain unloads into fog.</value>
+    <value>Extra combined LOD section radius beyond chunk view distance (up to 1024 chunks). Sections escalate 2×2 → 128×128 with coarser sampling so extreme ranges (256 / 512 / 1024) stay cached and rendered; near LOD keeps sparse vegetation.</value>
   </data>
   <data name="Preview3DWorldSeed" xml:space="preserve">
     <value>World seed</value>
@@ -2108,13 +2309,16 @@
     <value>Finalizing preview…</value>
   </data>
   <data name="Status_GpuPreviewLoadingGodRays" xml:space="preserve">
-    <value>Loading god rays…</value>
+    <value>Loading volumetric fog…</value>
   </data>
   <data name="Status_GpuPreviewLoadingClouds" xml:space="preserve">
     <value>Loading volumetric clouds…</value>
   </data>
   <data name="Status_GpuPreviewLoadingTaa" xml:space="preserve">
     <value>Loading preview TAA…</value>
+  </data>
+  <data name="Status_GpuPreviewLoadingScreenSpaceAo" xml:space="preserve">
+    <value>Loading screen-space AO…</value>
   </data>
   <data name="Status_GpuPreviewReady" xml:space="preserve">
     <value>Ready</value>

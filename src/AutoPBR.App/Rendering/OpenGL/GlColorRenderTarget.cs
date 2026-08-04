@@ -10,6 +10,7 @@ internal sealed class GlColorRenderTarget(GL gl, bool useOpenGlEs, bool useFloat
     private int _width;
     private int _height;
     private bool _useFloatColor = useFloatColor;
+    private bool _floatPreserveAlpha;
     private bool _disposed;
 
     public uint ColorTextureHandle => _colorTexture;
@@ -17,18 +18,19 @@ internal sealed class GlColorRenderTarget(GL gl, bool useOpenGlEs, bool useFloat
     public int Height => _height;
     public bool IsValid => _fbo != 0 && _colorTexture != 0;
 
-    public bool EnsureSize(int width, int height, bool? useFloatColor = null)
+    public bool EnsureSize(int width, int height, bool? useFloatColor = null, bool floatPreserveAlpha = false)
     {
         width = Math.Max(1, width);
         height = Math.Max(1, height);
         if (useFloatColor is { } floatColor)
         {
-            if (_useFloatColor != floatColor && IsValid)
+            if ((_useFloatColor != floatColor || _floatPreserveAlpha != floatPreserveAlpha) && IsValid)
             {
                 DestroyGpuResources();
             }
 
             _useFloatColor = floatColor;
+            _floatPreserveAlpha = floatPreserveAlpha;
         }
 
         if (_width == width && _height == height && IsValid)
@@ -44,7 +46,21 @@ internal sealed class GlColorRenderTarget(GL gl, bool useOpenGlEs, bool useFloat
         gl.BindTexture(TextureTarget.Texture2D, _colorTexture);
         unsafe
         {
-            if (_useFloatColor)
+            if (_useFloatColor && _floatPreserveAlpha)
+            {
+                // RGBA16F: linear HDR shafts need alpha for transmittance (scene*T + inscatter).
+                gl.TexImage2D(
+                    TextureTarget.Texture2D,
+                    0,
+                    InternalFormat.Rgba16f,
+                    (uint)width,
+                    (uint)height,
+                    0,
+                    PixelFormat.Rgba,
+                    PixelType.HalfFloat,
+                    (void*)0);
+            }
+            else if (_useFloatColor)
             {
                 // R11G11B10F: half the bandwidth of RGBA16F for HDR capture/TAA intermediates.
                 // Final scRGB present targets stay RGBA16F (need alpha for HUD compositing).
@@ -121,9 +137,9 @@ internal sealed class GlColorRenderTarget(GL gl, bool useOpenGlEs, bool useFloat
         return err == GLEnum.NoError;
     }
 
-    public bool CopyColorFromFramebuffer(uint readFramebuffer, int width, int height)
+    public bool CopyColorFromFramebuffer(uint readFramebuffer, int width, int height, int srcX = 0, int srcY = 0)
     {
-        if (!IsValid || width != _width || height != _height)
+        if (!IsValid || width != _width || height != _height || srcX < 0 || srcY < 0)
         {
             return false;
         }
@@ -134,7 +150,9 @@ internal sealed class GlColorRenderTarget(GL gl, bool useOpenGlEs, bool useFloat
         gl.ReadBuffer(readFramebuffer == 0 ? ReadBufferMode.Back : ReadBufferMode.ColorAttachment0);
         gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _fbo);
         ConfigureDrawFramebufferColorAttachment(_fbo);
-        gl.BlitFramebuffer(0, 0, width, height, 0, 0, width, height,
+        gl.BlitFramebuffer(
+            srcX, srcY, srcX + width, srcY + height,
+            0, 0, width, height,
             ClearBufferMask.ColorBufferBit, GLEnum.Nearest);
         var err = gl.GetError();
         gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, (uint)Math.Max(0, priorRead));

@@ -118,13 +118,22 @@ public sealed class PreviewCloudLightCoordinatesTests
             layerWorldY: 23.36f,
             volumeHeight: 60f,
             volumeSize: 178f,
-            cirrusStrength: 0.13f);
+            cirrusStrength: 0.13f,
+            cumulusLayerCount: 2,
+            interDeckGap: 12f,
+            heightVariance: 6f,
+            upperThicknessScale: 0.65f,
+            cirrusGap: 120f,
+            cirrusThickness: 2.5f);
 
-        AssertClose(26.56f, bounds.CumulusBaseAltitude);
-        AssertClose(86.56f, bounds.CumulusTopAltitude);
-        AssertClose(176.56f, bounds.CirrusBaseAltitude);
-        AssertClose(178.66f, bounds.CirrusTopAltitude);
+        // Primary deck 26.56..86.56, upper deck + gap/scale, soft pad (~1.2) on support.
+        AssertClose(25.36f, bounds.CumulusBaseAltitude);
+        AssertClose(138.76f, bounds.CumulusTopAltitude);
+        AssertClose(257.56f, bounds.CirrusBaseAltitude);
+        AssertClose(260.06f, bounds.CirrusTopAltitude);
         AssertClose(89f, bounds.DetailPadding);
+        AssertClose(26.56f, bounds.DensityCumulusBaseAltitude);
+        AssertClose(86.56f, bounds.DensityCumulusTopAltitude);
         Assert.True(bounds.MinimumAltitude < bounds.CumulusBaseAltitude);
         Assert.True(bounds.MaximumAltitude > bounds.CirrusTopAltitude);
     }

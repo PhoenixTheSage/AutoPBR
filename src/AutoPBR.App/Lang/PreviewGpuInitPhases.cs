@@ -18,6 +18,7 @@ public static class PreviewGpuInitPhases
     public static string LoadingGodRays => Resources.GetString("Status_GpuPreviewLoadingGodRays");
     public static string LoadingClouds => Resources.GetString("Status_GpuPreviewLoadingClouds");
     public static string LoadingTaa => Resources.GetString("Status_GpuPreviewLoadingTaa");
+    public static string LoadingScreenSpaceAo => Resources.GetString("Status_GpuPreviewLoadingScreenSpaceAo");
     public static string Ready => Resources.GetString("Status_GpuPreviewReady");
     public static string PreviewReady => Resources.GetString("Status_GpuPreviewPreviewReady");
     public static string CoreReady => Resources.GetString("Status_GpuPreviewCoreReady");

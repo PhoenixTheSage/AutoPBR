@@ -83,30 +83,30 @@ public sealed partial class OpenGlPreviewBackend
         {
             if (frame.Settings.ShowGroundMesh)
             {
-                PreviewShadowFrustum.SeedTerrainShadowBounds(
-                    focusXz: frame.Eye with { Y = 0f },
-                    groundFloorY: _terrainEnvFloorY,
-                    groundCeilingY: _terrainEnvCeilingY,
-                    xzHalfExtent: farHalf,
-                    out var camMin,
-                    out var camMax);
-                PreviewShadowFrustum.EncapsulateAabb(ref boundsMin, ref boundsMax, camMin, camMax);
-                PreviewShadowFrustum.SeedTerrainShadowBounds(
-                    focusXz: Vector3.Zero,
-                    groundFloorY: _terrainEnvFloorY,
-                    groundCeilingY: _terrainEnvCeilingY,
-                    xzHalfExtent: PreviewShadowFrustum.TerrainShadowMinXzHalfExtent,
-                    out var stageMin,
-                    out var stageMax);
-                PreviewShadowFrustum.EncapsulateAabb(ref boundsMin, ref boundsMax, stageMin, stageMax);
+                // Far must stay camera-centered like near/mid. Unioning the stage/world AABB then
+                // clamping maxHalfExtent recenters the ortho off the eye and wipes shadows in a
+                // disk/ring around the camera (out-of-frustum → lit).
+                BuildCameraCenteredCascadeAabb(
+                    ref frame,
+                    farHalf,
+                    out var farMin,
+                    out var farMax);
+                frame.ShadowVp = PreviewShadowFrustum.BuildDirectionalViewProj(
+                    frame.LightDir,
+                    farMin,
+                    farMax,
+                    Matrix4x4.Identity,
+                    maxHalfExtent: farHalf);
             }
-
-            frame.ShadowVp = PreviewShadowFrustum.BuildDirectionalViewProj(
-                frame.LightDir,
-                boundsMin,
-                boundsMax,
-                Matrix4x4.Identity,
-                maxHalfExtent: farHalf);
+            else
+            {
+                frame.ShadowVp = PreviewShadowFrustum.BuildDirectionalViewProj(
+                    frame.LightDir,
+                    boundsMin,
+                    boundsMax,
+                    Matrix4x4.Identity,
+                    maxHalfExtent: farHalf);
+            }
 
             BuildCameraCenteredCascadeAabb(
                 ref frame,
@@ -275,16 +275,7 @@ public sealed partial class OpenGlPreviewBackend
                 xzHalfExtent: xzHalfExtent,
                 out min,
                 out max);
-            if (TryGetSubjectShadowCasterBounds(ref frame, out var subjectMin, out var subjectMax))
-            {
-                PreviewShadowFrustum.EncapsulateTransformedAabb(
-                    subjectMin,
-                    subjectMax,
-                    frame.ModelMatrix,
-                    ref min,
-                    ref max);
-            }
-
+            TryEncapsulateNearbySubjectIntoCascadeAabb(ref frame, xzHalfExtent, ref min, ref max);
             return;
         }
 
@@ -308,6 +299,41 @@ public sealed partial class OpenGlPreviewBackend
             xzHalfExtent: xzHalfExtent,
             out min,
             out max);
+    }
+
+    /// <summary>
+    /// Pulls the preview subject into a camera-centered cascade only when it already sits inside
+    /// that cascade's XZ neighborhood. Distant stage subjects must not inflate the AABB: fitting
+    /// then clamping <c>maxHalfExtent</c> recenters the ortho away from the eye and clears nearby
+    /// shadows (out-of-frustum samples return fully lit).
+    /// </summary>
+    private void TryEncapsulateNearbySubjectIntoCascadeAabb(
+        ref GlRenderFrame frame,
+        float xzHalfExtent,
+        ref Vector3 min,
+        ref Vector3 max)
+    {
+        if (!TryGetSubjectShadowCasterBounds(ref frame, out var subjectMin, out var subjectMax))
+        {
+            return;
+        }
+
+        var localCenter = (subjectMin + subjectMax) * 0.5f;
+        var worldCenter = Vector3.Transform(localCenter, frame.ModelMatrix);
+        var eyeXz = frame.Eye with { Y = 0f };
+        var subjectXz = worldCenter with { Y = 0f };
+        if (Vector2.Distance(new Vector2(eyeXz.X, eyeXz.Z), new Vector2(subjectXz.X, subjectXz.Z)) >
+            MathF.Max(xzHalfExtent, 0f))
+        {
+            return;
+        }
+
+        PreviewShadowFrustum.EncapsulateTransformedAabb(
+            subjectMin,
+            subjectMax,
+            frame.ModelMatrix,
+            ref min,
+            ref max);
     }
 
     private float ResolveTerrainShadowFarCoverageHalfExtent()
@@ -731,6 +757,13 @@ public sealed partial class OpenGlPreviewBackend
 
             BindFallbackShadowMaterialTextureArrayIfPresent(su);
             DrawPreparedTerrainShadowCasters(terrainSelection);
+
+            // Ground shadow may overwrite the shared draw-record SSBO; restore subject records.
+            if (_shadowSubjectUseMaterialDrawRecords)
+            {
+                TryUploadGenesisMaterialDrawRecords(ref frame);
+                BindGenesisMaterialDrawRecordBuffer();
+            }
 
             if (restoreCull)
             {

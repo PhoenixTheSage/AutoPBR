@@ -1,6 +1,7 @@
 #version 430 core
 
-// Cull resident terrain chunks into near/mid/far shadow MultiDrawIndirect command lists.
+// Cull resident terrain material batches into near/mid/far shadow MultiDrawIndirect command lists.
+// Each source command is one draw batch (baseInstance = ground material/draw-record index).
 // Writes DrawElementsIndirectCommand entries + atomic counters for MultiDrawIndirectCount
 // (no CPU readback of index lists).
 

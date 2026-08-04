@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 
+using AutoPBR.App.Rendering.Scene;
 using Silk.NET.OpenGL;
 
 namespace AutoPBR.App.Rendering.OpenGL;
@@ -15,11 +16,18 @@ internal sealed class GlTerrainMeshPool : IDisposable
     private const int InitialVertexFloatCapacity = 256 * 1024;
     private const int InitialIndexCapacity = 512 * 1024;
     private const int GrowthAlignmentElements = 256 * 1024;
-    internal const long DefaultMaxTotalBufferBytes = 768L * 1024L * 1024L;
+    /// <summary>
+    /// Soft VRAM ceiling for the shared terrain VAO pool. Starts at
+    /// <see cref="PreviewStageConstants.TerrainMeshPoolBudgetDefaultBytes"/> and may be raised
+    /// dynamically toward <see cref="PreviewStageConstants.TerrainMeshPoolBudgetCeilingBytes"/>
+    /// based on LOD ring size (see ConfigureBudgetCeiling).
+    /// </summary>
+    internal static long DefaultMaxTotalBufferBytes =>
+        PreviewStageConstants.TerrainMeshPoolBudgetDefaultBytes;
 
     private readonly GL _gl;
     private readonly uint _vao;
-    private readonly long _maxTotalBufferBytes;
+    private long _maxTotalBufferBytes;
     private uint _vbo;
     private uint _ebo;
     private readonly List<FreeBlock> _freeVertices = new(32);
@@ -32,9 +40,14 @@ internal sealed class GlTerrainMeshPool : IDisposable
     private bool _disposed;
     private uint[]? _indexRemapScratch;
 
-    public GlTerrainMeshPool(GL gl, long maxTotalBufferBytes = DefaultMaxTotalBufferBytes)
+    public GlTerrainMeshPool(GL gl, long maxTotalBufferBytes = 0)
     {
         _gl = gl;
+        if (maxTotalBufferBytes <= 0)
+        {
+            maxTotalBufferBytes = DefaultMaxTotalBufferBytes;
+        }
+
         _maxTotalBufferBytes = Math.Max(
             maxTotalBufferBytes,
             (long)InitialVertexFloatCapacity * sizeof(float) +
@@ -68,6 +81,41 @@ internal sealed class GlTerrainMeshPool : IDisposable
     internal int AllocationFailureCount { get; private set; }
     internal GLEnum LastFailure { get; private set; } = GLEnum.NoError;
     internal string LastFailureReason { get; private set; } = "none";
+
+    /// <summary>
+    /// Raise or lower the soft growth ceiling. Does not shrink existing VBO/EBO allocations;
+    /// only gates further EnsureGpuCapacity growth.
+    /// </summary>
+    internal void ConfigureBudgetCeiling(long maxTotalBufferBytes)
+    {
+        var minBytes =
+            (long)InitialVertexFloatCapacity * sizeof(float) +
+            (long)InitialIndexCapacity * sizeof(uint);
+        _maxTotalBufferBytes = Math.Clamp(
+            maxTotalBufferBytes,
+            Math.Max(minBytes, PreviewStageConstants.TerrainMeshPoolBudgetFloorBytes),
+            PreviewStageConstants.TerrainMeshPoolBudgetCeilingBytes);
+    }
+
+    /// <summary>
+    /// Try to raise the ceiling toward <paramref name="targetBytes"/> after a budget-ceiling
+    /// failure so uploads can proceed without immediately evicting visible residents.
+    /// </summary>
+    internal bool TryRaiseBudgetCeiling(long targetBytes)
+    {
+        targetBytes = Math.Clamp(
+            targetBytes,
+            PreviewStageConstants.TerrainMeshPoolBudgetFloorBytes,
+            PreviewStageConstants.TerrainMeshPoolBudgetCeilingBytes);
+        if (targetBytes <= _maxTotalBufferBytes)
+        {
+            return false;
+        }
+
+        _maxTotalBufferBytes = targetBytes;
+        LastFailureReason = "none";
+        return true;
+    }
 
     public readonly struct Allocation
     {

@@ -135,29 +135,54 @@ public static class PreviewStageConstants
     public const int TerrainMinChunkViewDistance = 2;
     public const int TerrainMaxChunkViewDistance = 24;
 
-    /// <summary>Default extra Chebyshev chunks beyond hard view distance kept as merged LOD meshes.</summary>
-    public const int TerrainDefaultLodRingChunks = 16;
+    /// <summary>Default extra Chebyshev chunks beyond hard view distance kept as combined LOD sections.</summary>
+    public const int TerrainDefaultLodRingChunks = 128;
 
     public const int TerrainMinLodRingChunks = 2;
-    public const int TerrainMaxLodRingChunks = 32;
+
+    /// <summary>
+    /// Extreme distant-horizon style ring (chunk Chebyshev). Combined sections escalate to
+    /// 128×128 so residency stays tractable at this radius.
+    /// </summary>
+    public const int TerrainMaxLodRingChunks = 1024;
+
+    /// <summary>Common far presets exposed in tooling/docs (slider still continuous).</summary>
+    public const int TerrainLodRingPresetMedium = 256;
+    public const int TerrainLodRingPresetFar = 512;
+    public const int TerrainLodRingPresetExtreme = 1024;
+
+    /// <summary>
+    /// Occluder height atlas only covers Full + this much LOD ring. Extreme LOD rings are far
+    /// larger than a practical RG32F atlas; DDA stays near-field.
+    /// </summary>
+    public const int TerrainOccluderAtlasMaxLodRingChunks = 16;
+
+    /// <summary>Max CPU LOD section meshes retained in <c>TerrainLodSectionCache</c>.</summary>
+    public const int TerrainLodCacheMaxEntries = 2048;
+
+    /// <summary>Approx CPU LOD section cache byte budget (vertices + indices).</summary>
+    public const long TerrainLodCacheMaxBytes = 384L * 1024L * 1024L;
 
     /// <summary>Legacy alias for <see cref="TerrainDefaultLodRingChunks"/>.</summary>
     public const int TerrainLodRingChunks = TerrainDefaultLodRingChunks;
 
-    /// <summary>Unload hysteresis past LOD radius (chunks).</summary>
-    public const int TerrainUnloadHysteresisChunks = 1;
+    /// <summary>Minimum unload hysteresis past LOD radius (chunks).</summary>
+    public const int TerrainUnloadHysteresisChunks = 2;
 
     /// <summary>Steady-state chunk GPU uploads per frame (keeps fly-cam smooth).</summary>
     public const int TerrainMaxChunkUploadsPerFrame = 4;
 
     /// <summary>Upload cap while streaming is still catching up to the desired ring.</summary>
-    public const int TerrainMaxChunkUploadsPerFrameCatchUp = 12;
+    public const int TerrainMaxChunkUploadsPerFrameCatchUp = 8;
 
     /// <summary>Steady-state terrain vertex/index bytes submitted to GL per frame.</summary>
     public const long TerrainMaxUploadBytesPerFrame = 8L * 1024L * 1024L;
 
-    /// <summary>Catch-up terrain vertex/index bytes submitted to GL per frame.</summary>
-    public const long TerrainMaxUploadBytesPerFrameCatchUp = 24L * 1024L * 1024L;
+    /// <summary>
+    /// Catch-up terrain vertex/index bytes submitted to GL per frame. Kept below a full
+    /// LOD-section stamp burst so budget recovery does not hitch the preview frame.
+    /// </summary>
+    public const long TerrainMaxUploadBytesPerFrameCatchUp = 16L * 1024L * 1024L;
 
     /// <summary>Max LongRunning bake workers (pool size is also capped by ProcessorCount-1).</summary>
     public const int TerrainMaxBakeWorkers = 8;
@@ -165,8 +190,72 @@ public static class PreviewStageConstants
     /// <summary>If frustum cull yields zero chunks, draw this many nearest by XZ (never blank the pad).</summary>
     public const int TerrainFrustumDrawFallbackCount = 64;
 
-    /// <summary>Max chunk GPU disposals per frame.</summary>
+    /// <summary>Max chunk GPU disposals per frame (steady state).</summary>
     public const int TerrainMaxChunkDisposalsPerFrame = 8;
+
+    /// <summary>Disposals per frame while the mesh pool is under budget pressure / catch-up.</summary>
+    public const int TerrainMaxChunkDisposalsPerFramePressure = 24;
+
+    /// <summary>
+    /// Soft hysteresis (chunks) for residents that left the desired set but are still inside the
+    /// hard unload radius. Keeps brief trail coverage without pinning multi-GiB rings in VRAM.
+    /// </summary>
+    public const int TerrainSoftUnloadHysteresisChunks = 4;
+
+    /// <summary>
+    /// World-meter blend width where each finer detail level dithers out at its outer edge
+    /// over solid coarser LOD underneath (never dither the only coverage — that punches sky holes).
+    /// </summary>
+    public const float TerrainLodDetailFadeWidthMeters = 48f;
+
+    /// <summary>
+    /// LOD vegetation / detail contract: block-space occupancy stays 1:1 with Full meshes.
+    /// Budget levers that are allowed to differ by distance: texture mip bias, transparency /
+    /// alpha testing, and shadow caster range. Do not thin placements or drop voxels for VRAM.
+    /// </summary>
+    public const bool TerrainLodVegetationBlockSpaceIdentity = true;
+
+    /// <summary>
+    /// Soft-start unlock radius (Chebyshev chunks from camera). Bakers only claim keys with
+    /// ring ≤ this, then expand by one when the unlocked window has no pending work.
+    /// </summary>
+    public const int TerrainStreamSoftStartInitialRing = 2;
+
+    /// <summary>Floor for the shared terrain mesh-pool VRAM ceiling.</summary>
+    public const long TerrainMeshPoolBudgetFloorBytes = 1024L * 1024L * 1024L;
+
+    /// <summary>Default / starting terrain mesh-pool VRAM ceiling.</summary>
+    public const long TerrainMeshPoolBudgetDefaultBytes = 1536L * 1024L * 1024L;
+
+    /// <summary>Hard cap — pool may grow toward this under large LOD rings, never beyond.</summary>
+    public const long TerrainMeshPoolBudgetCeilingBytes = 3072L * 1024L * 1024L;
+
+    /// <summary>Enter budget-pressure thrash controls at this fraction of the active ceiling.</summary>
+    public const float TerrainMeshPoolPressureEnterRatio = 0.90f;
+
+    /// <summary>Leave budget-pressure thrash controls below this fraction (hysteresis).</summary>
+    public const float TerrainMeshPoolPressureExitRatio = 0.70f;
+
+    /// <summary>
+    /// Scales the terrain mesh-pool ceiling with view distance + LOD ring so extreme horizons
+    /// can grow headroom instead of thrashing a fixed 1.5 GiB limit (chunk flash).
+    /// </summary>
+    public static long ResolveTerrainMeshPoolBudgetBytes(int hardRadiusChunks, int lodRingChunks)
+    {
+        hardRadiusChunks = Math.Max(0, hardRadiusChunks);
+        lodRingChunks = Math.Max(0, lodRingChunks);
+        // ~2 MiB per Chebyshev ring unit — coarse estimate for combined Full+LOD residency.
+        var scaled = TerrainMeshPoolBudgetFloorBytes +
+                     ((long)hardRadiusChunks + lodRingChunks) * 2L * 1024L * 1024L;
+        scaled = Math.Max(scaled, TerrainMeshPoolBudgetDefaultBytes);
+        return Math.Clamp(
+            scaled,
+            TerrainMeshPoolBudgetFloorBytes,
+            TerrainMeshPoolBudgetCeilingBytes);
+    }
+
+    /// <summary>Minimum vertical skirt depth (blocks) on LOD section edges to hide cracks.</summary>
+    public const int TerrainLodEdgeSkirtMinBlocks = 8;
 
     /// <summary>Half extent of the 1×1 item/sprite preview card in world units.</summary>
     public const float SpritePlaneHalfSize = 0.5f;
@@ -203,6 +292,15 @@ public static class PreviewStageConstants
     /// </summary>
     public const float CloudLegacyAltitudeReferenceRadius = 72_000f;
 
-    /// <summary>World-anchored ground mist slab height above <see cref="GroundPlaneWorldY"/>.</summary>
-    public const float GroundFogSlabHeight = 4f;
+    /// <summary>
+    /// Valley mist scale reference above <see cref="GroundPlaneWorldY"/>. Used as the soft
+    /// near-ground boost scale height (~0.55×); column haze continues above with no hard top.
+    /// </summary>
+    public const float GroundFogSlabHeight = 48f;
+
+    /// <summary>
+    /// Scales mesh aerial fog when froxel atmospheric fill is active so distant terrain is not fogged twice.
+    /// 0 = keep full mesh fog, 1 = fully defer fill to the froxel path.
+    /// </summary>
+    public const float VolumeAerialFillMeshFogGate = 0.72f;
 }

@@ -27,8 +27,6 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
     private const int DXGI_SWAP_EFFECT_FLIP_DISCARD = 4;
     private const int DXGI_ALPHA_MODE_IGNORE = 3;
     private const int DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 = 16;
-    private const uint DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING = 0x800;
-    private const uint DXGI_PRESENT_ALLOW_TEARING = 0x200;
     private const uint D3D11_SDK_VERSION = 7;
     private const uint D3D11_CREATE_DEVICE_BGRA_SUPPORT = 0x20;
     private const int D3D_DRIVER_TYPE_HARDWARE = 1;
@@ -251,7 +249,6 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
     private bool _sceneFboComplete;
     /// <summary>0 = undecided, 1 = blit, 2 = shader fallback.</summary>
     private int _yFlipPath;
-    private bool _allowTearing;
     private IntPtr _parentHwnd;
     private IntPtr _presentHwnd;
     private int _presentHwndWidth;
@@ -310,8 +307,11 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
         _ => "undecided"
     };
 
-    /// <summary>True when the swapchain was created with <c>ALLOW_TEARING</c> (used for unlocked presents).</summary>
-    public bool AllowTearing => _allowTearing;
+    /// <summary>
+    /// Always false. Preview HDR presents are tear-free; <c>ALLOW_TEARING</c> caused a mid-viewport
+    /// jagged horizontal tear with VSync off.
+    /// </summary>
+    public bool AllowTearing => false;
 
     /// <summary>Returned when the present child HWND is still being created on the UI thread.</summary>
     public const string PresentWindowPendingMessage = "HDR present HWND is being created on the UI thread.";
@@ -458,8 +458,10 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             if (_yFlipPath != 2 && TryResolveByBlit(gl, resolveFbo))
             {
                 _yFlipPath = 1;
-                EndFrame();
+                // Fence while still locked so D3D cannot CopyResource a partial resolve.
                 _resolveFences[write] = gl.FenceSync(SyncCondition.SyncGpuCommandsComplete, SyncBehaviorFlags.None);
+                gl.Flush();
+                EndFrame();
                 _lastFailure = null;
                 return true;
             }
@@ -470,8 +472,9 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             }
 
             _yFlipPath = 2;
-            EndFrame();
             _resolveFences[write] = gl.FenceSync(SyncCondition.SyncGpuCommandsComplete, SyncBehaviorFlags.None);
+            gl.Flush();
+            EndFrame();
             _lastFailure = null;
             return true;
         }
@@ -634,22 +637,14 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             copy(_context, backBuffer, shared);
 
             var present = GetVTableFn<PresentDelegate>(_swapChain, 8);
-            var presentFlags = !vsync && _allowTearing ? DXGI_PRESENT_ALLOW_TEARING : 0u;
-            hr = present(_swapChain, vsync ? 1u : 0u, presentFlags);
+            // Never pass ALLOW_TEARING: unlocked presents produce a mid-viewport jagged
+            // horizontal tear that reads as a render bug in the preview.
+            hr = present(_swapChain, vsync ? 1u : 0u, 0u);
             if (hr != S_OK && hr != unchecked((int)0x087A0001))
             {
-                if (presentFlags != 0)
-                {
-                    _allowTearing = false;
-                    hr = present(_swapChain, 0u, 0u);
-                }
-
-                if (hr != S_OK && hr != unchecked((int)0x087A0001))
-                {
-                    failure = $"IDXGISwapChain::Present failed (hr=0x{hr:X8}).";
-                    _lastFailure = failure;
-                    return false;
-                }
+                failure = $"IDXGISwapChain::Present failed (hr=0x{hr:X8}).";
+                _lastFailure = failure;
+                return false;
             }
 
             _writeIndex ^= 1;
@@ -679,7 +674,14 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             return;
         }
 
-        _ = gl.ClientWaitSync(fence, SyncObjectMask.Bit, PreviewGlCommandDrain.DefaultTimeoutNanoseconds);
+        // Prefer a short wait (previous-frame resolve is usually already done). If it
+        // times out, block rather than CopyResource a half-written shared texture.
+        var status = gl.ClientWaitSync(fence, SyncObjectMask.Bit, PreviewGlCommandDrain.DefaultTimeoutNanoseconds);
+        if (status is GLEnum.TimeoutExpired || (int)status == 0x911B)
+        {
+            _ = gl.ClientWaitSync(fence, SyncObjectMask.Bit, ulong.MaxValue);
+        }
+
         gl.DeleteSync(fence);
         fences[index] = 0;
     }
@@ -941,7 +943,8 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
         }
 
         _factory = factory;
-        _allowTearing = false;
+        // Tear-free present only. ALLOW_TEARING was intentionally dropped: with VSync off it
+        // produced a stable mid-viewport jagged horizontal tear in the 3D preview.
 
         var desc = new DxgiSwapChainDesc1
         {
@@ -955,26 +958,16 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
             Scaling = DXGI_SCALING_STRETCH,
             SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,
             AlphaMode = DXGI_ALPHA_MODE_IGNORE,
-            Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING
+            Flags = 0
         };
 
         var createSc = GetVTableFn<CreateSwapChainForHwndDelegate>(factory, 15);
         hr = createSc(factory, device, _presentHwnd, ref desc, IntPtr.Zero, IntPtr.Zero, out var swapChain);
-        if (hr == S_OK && swapChain != IntPtr.Zero)
+        if (hr != S_OK || swapChain == IntPtr.Zero)
         {
-            _allowTearing = true;
-        }
-        else
-        {
-            // Step 5 fallback: create without tearing if the output/OS rejects the flag.
-            desc.Flags = 0;
-            hr = createSc(factory, device, _presentHwnd, ref desc, IntPtr.Zero, IntPtr.Zero, out swapChain);
-            if (hr != S_OK || swapChain == IntPtr.Zero)
-            {
-                failure = $"CreateSwapChainForHwnd failed (hr=0x{hr:X8}).";
-                TeardownDxgi();
-                return false;
-            }
+            failure = $"CreateSwapChainForHwnd failed (hr=0x{hr:X8}).";
+            TeardownDxgi();
+            return false;
         }
 
         _swapChain = swapChain;
@@ -1460,7 +1453,6 @@ internal sealed class PreviewHdrDxgiSwapchain : IDisposable
 
         _width = 0;
         _height = 0;
-        _allowTearing = false;
     }
 
     private static T GetVTableFn<T>(IntPtr comObject, int index) where T : Delegate

@@ -107,6 +107,18 @@ public sealed class PreviewVolumeInjectShaderEsTests
         Assert.DoesNotContain("sampleShadowPcf3x3", adapted, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("genesis_volume_integrate.frag")]
+    [InlineData("genesis_volume_integrate_lite.frag")]
+    public void VolumeIntegrate_KeepsLinearInscatterUntilComposite(string fragmentFile)
+    {
+        var adapted = ResolveAndAdapt(fragmentFile, useOpenGlEs: false);
+        Assert.Contains("vec3 vol = max(accum * uStrength, vec3(0.0))", adapted, StringComparison.Ordinal);
+        Assert.DoesNotContain("softKnee(accum * uStrength", adapted, StringComparison.Ordinal);
+        Assert.DoesNotContain("cpEncodeLinearRadiance(", adapted, StringComparison.Ordinal);
+        Assert.DoesNotContain("uniform int uHdrPresent", adapted, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void LiteInject_ExcludesRayMarchHelpers()
     {
@@ -129,6 +141,17 @@ public sealed class PreviewVolumeInjectShaderEsTests
         var gateAssign = adapted.IndexOf("shadowGate = grShadowGateCascaded", StringComparison.Ordinal);
         Assert.True(densityGate >= 0 && gateAssign > densityGate,
             "cascade shadow gate must be behind empty-density early-out");
+    }
+
+    [Fact]
+    public void VolumeInjectShadowGates_UseHardCompareNotPcf3x3()
+    {
+        var adapted = ResolveAndAdapt("genesis_volume_inject.frag", useOpenGlEs: false);
+        Assert.Contains("sampleShadowBordered", adapted, StringComparison.Ordinal);
+        Assert.Contains("grShadowGateSample", adapted, StringComparison.Ordinal);
+        Assert.Contains("return -1.0;", adapted, StringComparison.Ordinal);
+        Assert.DoesNotContain("return sampleShadowPcf3x3(shadowMap, shadowUv, shadowTexelSize);", adapted, StringComparison.Ordinal);
+        Assert.Contains("shadowTexelSize * 0.65", adapted, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -343,13 +366,7 @@ public sealed class PreviewVolumeInjectShaderEsTests
     [Fact]
     public void Cq35GroundTransmittance_MainSamplerDoesNotAliasMaterialArrayUnits()
     {
-        var repoRoot = Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory,
-            "..",
-            "..",
-            "..",
-            "..",
-            ".."));
+        var repoRoot = FindRepoRoot();
         var passSource = File.ReadAllText(Path.Combine(
             repoRoot,
             "src",
@@ -392,7 +409,11 @@ public sealed class PreviewVolumeInjectShaderEsTests
         Assert.DoesNotContain("vcsPlanetHorizonVisibility", adapted, StringComparison.Ordinal);
         Assert.Contains("uCloudSourceFullResolution", adapted, StringComparison.Ordinal);
         Assert.Contains("cdoDirectDiscOcclusionAlpha", adapted, StringComparison.Ordinal);
-        Assert.Contains("FragColor = vec4(presentedRgb, compositeCoverage)", adapted,
+        Assert.Contains(
+            "compositeRgb = presentedRgb * (compositeCoverage / max(coverage, 1e-5))",
+            adapted,
+            StringComparison.Ordinal);
+        Assert.Contains("FragColor = vec4(compositeRgb, compositeCoverage)", adapted,
             StringComparison.Ordinal);
     }
 
@@ -402,7 +423,11 @@ public sealed class PreviewVolumeInjectShaderEsTests
         var repair = ResolveAndAdapt("genesis_clouds_repair.frag", useOpenGlEs: false);
 
         Assert.Contains("const int CLOUD_REPAIR_STEPS = 8", repair, StringComparison.Ordinal);
-        Assert.Contains("alphaMax - alphaMin > CLOUD_REPAIR_ALPHA_THRESHOLD", repair,
+        Assert.Contains("alphaRange > CLOUD_REPAIR_ALPHA_THRESHOLD", repair,
+            StringComparison.Ordinal);
+        Assert.Contains("CLOUD_REPAIR_SILHOUETTE_ALPHA_CEILING", repair,
+            StringComparison.Ordinal);
+        Assert.Contains("CLOUD_REPAIR_STRONG_ALPHA_THRESHOLD", repair,
             StringComparison.Ordinal);
         Assert.Contains("distanceMax - distanceMin > max(", repair, StringComparison.Ordinal);
         Assert.Contains("bool validityEdge = validCount > 0.0 && validCount < 4.0", repair,
@@ -413,6 +438,10 @@ public sealed class PreviewVolumeInjectShaderEsTests
             StringComparison.Ordinal);
         Assert.Contains("for (int i = 0; i < CLOUD_REPAIR_STEPS; ++i)", repair,
             StringComparison.Ordinal);
+        Assert.Contains("uniform float uRepairStability", repair, StringComparison.Ordinal);
+        Assert.Contains("CLOUD_REPAIR_IDLE_FREEZE = 0.85", repair, StringComparison.Ordinal);
+        Assert.Contains("CLOUD_REPAIR_RETRACE_RAMP_START = 0.20", repair, StringComparison.Ordinal);
+        Assert.Contains("repairConfidence *= retraceBlend", repair, StringComparison.Ordinal);
         Assert.Contains("boundaryCenter - primaryFineStep", repair, StringComparison.Ordinal);
         Assert.Contains("boundaryCenter + primaryFineStep", repair, StringComparison.Ordinal);
         Assert.Contains("vcCloudDensityFromBase(", repair, StringComparison.Ordinal);
@@ -464,12 +493,17 @@ public sealed class PreviewVolumeInjectShaderEsTests
         Assert.Contains("i < 2", trace, StringComparison.Ordinal);
         Assert.Contains("longSlabMarch", trace, StringComparison.Ordinal);
         Assert.Contains("marchInterval", trace, StringComparison.Ordinal);
-        Assert.Contains("localMarchDistance", trace, StringComparison.Ordinal);
-        Assert.Contains("maxStep", trace, StringComparison.Ordinal);
+        Assert.Contains("float farStep = max(", trace, StringComparison.Ordinal);
+        Assert.Contains(
+            "marchInterval * 2.0 / float(steps) - baseStep",
+            trace,
+            StringComparison.Ordinal);
+        Assert.Contains("float(i) / float(max(steps - 1, 1))", trace,
+            StringComparison.Ordinal);
         Assert.Contains("emptyLen", trace, StringComparison.Ordinal);
-        Assert.Contains("densitySteps += 1", trace, StringComparison.Ordinal);
-        Assert.Contains("int densitySteps = 0", trace, StringComparison.Ordinal);
-        Assert.Contains("densitySteps >= steps", trace, StringComparison.Ordinal);
+        Assert.Contains("if (i >= steps || t >= tExit)", trace,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("densitySteps", trace, StringComparison.Ordinal);
         Assert.Contains("representativeFound || alpha > 1e-3", trace, StringComparison.Ordinal);
         Assert.Contains("vcsMarchStepLength(", repair, StringComparison.Ordinal);
         Assert.DoesNotContain(
@@ -503,14 +537,27 @@ public sealed class PreviewVolumeInjectShaderEsTests
         Assert.Contains("vec3 presentedRgb = cpEncodeCloudRadiance(", upsample, StringComparison.Ordinal);
         Assert.Contains("uniform float uCloudExposure", upsample, StringComparison.Ordinal);
         Assert.Contains("uniform int uHdrPresent", upsample, StringComparison.Ordinal);
+        Assert.Contains("uniform float uHdrPaperWhiteNits", upsample, StringComparison.Ordinal);
+        Assert.Contains("uniform float uHdrPeakNits", upsample, StringComparison.Ordinal);
         Assert.Contains("vec3 straightRadiance = max(linearPremultipliedRadiance", upsample,
             StringComparison.Ordinal);
-        Assert.Contains("vec3 presented = hdrPresent > 0 ? shaped : linearToSrgb(shaped)", upsample,
-            StringComparison.Ordinal);
-        Assert.Contains("return presented * opacity", upsample, StringComparison.Ordinal);
+        Assert.Contains("cpEncodeLinearRadiance(", upsample, StringComparison.Ordinal);
+        Assert.Contains("softKnee(linear, 0.08)", upsample, StringComparison.Ordinal);
+        Assert.Contains("linearToSrgb(shaped) * scale", upsample, StringComparison.Ordinal);
+        Assert.Contains(") * opacity;", upsample, StringComparison.Ordinal);
 
         Assert.Contains("uniform int uCloudPresent", fallbackComposite, StringComparison.Ordinal);
         Assert.Contains("rays.rgb = cpEncodeCloudRadiance(", fallbackComposite, StringComparison.Ordinal);
+        Assert.Contains("rays.rgb = cpEncodeShaftRadiance(", fallbackComposite, StringComparison.Ordinal);
+        Assert.Contains("shaped * (scale * 0.55)", fallbackComposite, StringComparison.Ordinal);
+        Assert.Contains("softKnee(linear, 0.35)", fallbackComposite, StringComparison.Ordinal);
+        Assert.Contains("uniform float uHdrPeakNits", fallbackComposite, StringComparison.Ordinal);
+        Assert.DoesNotContain("rays.rgb *= max(uHdrPaperWhiteNits, 80.0) / 80.0", fallbackComposite,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "return presentEncodeScRgb(linear, paperWhiteNits, peakNits);",
+            fallbackComposite,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -576,7 +623,8 @@ public sealed class PreviewVolumeInjectShaderEsTests
         Assert.Contains("trClipHistoryToNeighborhoodYCoCg", temporal, StringComparison.Ordinal);
         Assert.Contains("uHistoryConfidence", temporal, StringComparison.Ordinal);
         Assert.Contains("depthWeight * kindWeight * motionWeight", temporal, StringComparison.Ordinal);
-        Assert.Contains("reactiveWeight * confidenceWeight", temporal, StringComparison.Ordinal);
+        Assert.Contains("reactiveWeight * lowAlphaWeight * confidenceWeight", temporal,
+            StringComparison.Ordinal);
         Assert.Contains("FragCloudMoments = mix(currentMoments, clippedHistoryMoments, historyWeight)",
             temporal, StringComparison.Ordinal);
         Assert.DoesNotContain("cpEncodeCloudRadiance(", temporal, StringComparison.Ordinal);
@@ -618,7 +666,7 @@ public sealed class PreviewVolumeInjectShaderEsTests
     [Fact]
     public void DumpAdaptedVolumeShaders_ForAngleDebug()
     {
-        var outDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "agent-tools"));
+        var outDir = Path.Combine(FindRepoRoot(), "agent-tools");
         Directory.CreateDirectory(outDir);
         foreach (var f in new[]
         {
@@ -633,10 +681,28 @@ public sealed class PreviewVolumeInjectShaderEsTests
         }
     }
 
+    private static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var shaders = Path.Combine(dir.FullName, "src", "AutoPBR.App", "Rendering", "Shaders");
+            if (Directory.Exists(shaders))
+            {
+                return dir.FullName;
+            }
+
+            dir = dir.Parent;
+        }
+
+        throw new InvalidOperationException(
+            "Could not locate repo root containing src/AutoPBR.App/Rendering/Shaders from " +
+            AppContext.BaseDirectory);
+    }
+
     private static string ResolveAndAdapt(string fragmentFile, bool useOpenGlEs = true)
     {
-        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..",
-            "src", "AutoPBR.App", "Rendering", "Shaders"));
+        var root = Path.Combine(FindRepoRoot(), "src", "AutoPBR.App", "Rendering", "Shaders");
         string Read(string name) =>
             File.ReadAllText(Path.Combine(root, name.Replace('/', Path.DirectorySeparatorChar)));
 
@@ -648,17 +714,7 @@ public sealed class PreviewVolumeInjectShaderEsTests
 
     private static string ResolveAndAdaptCompute(string computeFile)
     {
-        var root = Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory,
-            "..",
-            "..",
-            "..",
-            "..",
-            "..",
-            "src",
-            "AutoPBR.App",
-            "Rendering",
-            "Shaders"));
+        var root = Path.Combine(FindRepoRoot(), "src", "AutoPBR.App", "Rendering", "Shaders");
         string Read(string name) =>
             File.ReadAllText(Path.Combine(
                 root,

@@ -180,6 +180,7 @@ internal static class UserSettingsSynchronizer
         vm.Preview3DShadowDistance = settings.Preview3DShadowDistance <= 0
             ? 128.0
             : Math.Clamp(settings.Preview3DShadowDistance, 32.0, 256.0);
+        vm.Preview3DShadowStrength = Math.Clamp(settings.Preview3DShadowStrength, 0.0, 3.0);
         vm.Preview3DLightYawDegrees = Math.Clamp(settings.Preview3DLightYawDegrees, -180.0, 180.0);
         vm.Preview3DLightPitchDegrees = Math.Clamp(settings.Preview3DLightPitchDegrees, -89.0, 89.0);
         vm.Preview3DTimeOfDayHours = settings.Preview3DTimeOfDayHours is > 0 and <= 24
@@ -195,39 +196,86 @@ internal static class UserSettingsSynchronizer
             ? 0
             : Math.Clamp(settings.Preview3DHorizonFogStrength, 0.0, 2.0);
         vm.Preview3DEnableGodRays = settings.Preview3DEnableGodRays;
+        vm.Preview3DEnableScreenSpaceGodRays = settings.Preview3DEnableScreenSpaceGodRays;
         vm.Preview3DEnableVolumetricClouds = settings.Preview3DEnableVolumetricClouds;
         vm.Preview3DVolumetricQuality = PreviewVolumetricQuality.Clamp(settings.Preview3DVolumetricQuality);
         vm.Preview3DGodRayStrength = settings.Preview3DGodRayStrength <= 0
             ? 0.45
             : Math.Clamp(settings.Preview3DGodRayStrength, 0.0, 2.0);
+        vm.Preview3DScreenSpaceGodRayStrength = settings.Preview3DScreenSpaceGodRayStrength < 0
+            ? 0.85
+            : Math.Clamp(settings.Preview3DScreenSpaceGodRayStrength, 0.0, 2.0);
+        vm.Preview3DGodRayConeScale = settings.Preview3DGodRayConeScale <= 0
+            ? 1.25
+            : Math.Clamp(settings.Preview3DGodRayConeScale, 0.25, 3.0);
+        vm.Preview3DGodRayFroxelResolution = settings.Preview3DGodRayFroxelResolution <= 0
+            ? 1.35
+            : Math.Clamp(settings.Preview3DGodRayFroxelResolution, 0.5, 2.5);
+        vm.Preview3DGodRayPhaseDirectivity = Math.Clamp(settings.Preview3DGodRayPhaseDirectivity, 0.0, 1.0);
         vm.Preview3DGodRayScatterGain = settings.Preview3DGodRayScatterGain <= 0
-            ? 3.4
+            ? 3.6
             : Math.Clamp(settings.Preview3DGodRayScatterGain, 0.0, 20.0);
         vm.Preview3DGodRayExtinction = settings.Preview3DGodRayExtinction <= 0
-            ? 1.15
+            ? 0.70
             : Math.Clamp(settings.Preview3DGodRayExtinction, 0.01, 8.0);
         vm.Preview3DGodRayDebugDensity = Math.Clamp(settings.Preview3DGodRayDebugDensity, 0.0, 2.0);
         vm.Preview3DGodRayStabilizeDebug = settings.Preview3DGodRayStabilizeDebug;
-        vm.Preview3DCloudDensity = Math.Clamp(settings.Preview3DCloudDensity, 0.0, 2.0);
-        vm.Preview3DCloudCoverageScale = Math.Clamp(settings.Preview3DCloudCoverageScale, 0.0, 2.0);
-        vm.Preview3DCloudLayerHeight = Math.Clamp(settings.Preview3DCloudLayerHeight, -12.0, 48.0);
+        vm.Preview3DCloudDensity = Math.Clamp(settings.Preview3DCloudDensity, 0.0, 4.0);
+        vm.Preview3DCloudCoverageScale = Math.Clamp(settings.Preview3DCloudCoverageScale, 0.0, 4.0);
+        vm.Preview3DCloudLayerHeight = Math.Clamp(settings.Preview3DCloudLayerHeight, -64.0, 256.0);
         vm.Preview3DCloudVolumeHeight = settings.Preview3DCloudVolumeHeight <= 0
             ? 24.0
-            : Math.Clamp(settings.Preview3DCloudVolumeHeight, 4.0, 96.0);
+            : Math.Clamp(settings.Preview3DCloudVolumeHeight, 1.0, 512.0);
         vm.Preview3DCloudVolumeSize = settings.Preview3DCloudVolumeSize <= 0
             ? 48.0
-            : Math.Clamp(settings.Preview3DCloudVolumeSize, 8.0, 256.0);
-        vm.Preview3DCloudWindSpeed = Math.Clamp(settings.Preview3DCloudWindSpeed, 0.0, 12.0);
+            : Math.Clamp(settings.Preview3DCloudVolumeSize, 4.0, 1024.0);
+        vm.Preview3DCloudWindSpeed = Math.Clamp(settings.Preview3DCloudWindSpeed, 0.0, 48.0);
         vm.Preview3DCloudWindHeadingDegrees = Math.Clamp(settings.Preview3DCloudWindHeadingDegrees, -180.0, 180.0);
-        vm.Preview3DCloudCirrusStrength = Math.Clamp(settings.Preview3DCloudCirrusStrength, 0.0, 2.0);
+        vm.Preview3DCloudCirrusStrength = Math.Clamp(settings.Preview3DCloudCirrusStrength, 0.0, 4.0);
+        vm.Preview3DCloudCumulusLayerCount = settings.Preview3DCloudCumulusLayerCount <= 0
+            ? PreviewCloudLayerEnvelope.DefaultCumulusLayerCount
+            : Math.Clamp(
+                Math.Round(settings.Preview3DCloudCumulusLayerCount),
+                1,
+                PreviewCloudLayerEnvelope.MaxCumulusDecks);
+        vm.Preview3DCloudInterDeckGap = settings.Preview3DCloudInterDeckGap < 0
+            ? PreviewCloudLayerEnvelope.DefaultInterDeckGap
+            : Math.Clamp(settings.Preview3DCloudInterDeckGap, 0.0, 256.0);
+        vm.Preview3DCloudLayerHeightVariance = settings.Preview3DCloudLayerHeightVariance < 0
+            ? PreviewCloudLayerEnvelope.DefaultHeightVariance
+            : Math.Clamp(settings.Preview3DCloudLayerHeightVariance, 0.0, 64.0);
+        vm.Preview3DCloudUpperThicknessScale = settings.Preview3DCloudUpperThicknessScale <= 0
+            ? PreviewCloudLayerEnvelope.DefaultUpperThicknessScale
+            : Math.Clamp(settings.Preview3DCloudUpperThicknessScale, 0.05, 3.0);
+        vm.Preview3DCloudUpperCoverageScale = settings.Preview3DCloudUpperCoverageScale < 0
+            ? PreviewCloudLayerEnvelope.DefaultUpperCoverageScale
+            : Math.Clamp(settings.Preview3DCloudUpperCoverageScale, 0.0, 4.0);
+        vm.Preview3DCloudUpperDensityScale = settings.Preview3DCloudUpperDensityScale < 0
+            ? PreviewCloudLayerEnvelope.DefaultUpperDensityScale
+            : Math.Clamp(settings.Preview3DCloudUpperDensityScale, 0.0, 4.0);
+        vm.Preview3DCloudUpperWindSpeedScale = settings.Preview3DCloudUpperWindSpeedScale < 0
+            ? PreviewCloudLayerEnvelope.DefaultUpperWindSpeedScale
+            : Math.Clamp(settings.Preview3DCloudUpperWindSpeedScale, 0.0, 4.0);
+        vm.Preview3DCloudCirrusGap = settings.Preview3DCloudCirrusGap < 0
+            ? PreviewCloudLayerEnvelope.DefaultCirrusGap
+            : Math.Clamp(settings.Preview3DCloudCirrusGap, 0.0, 512.0);
+        vm.Preview3DCloudCirrusThickness = settings.Preview3DCloudCirrusThickness <= 0
+            ? PreviewCloudLayerEnvelope.DefaultCirrusThickness
+            : Math.Clamp(settings.Preview3DCloudCirrusThickness, 0.1, 64.0);
+        vm.Preview3DCloudStyleBias = Math.Clamp(settings.Preview3DCloudStyleBias, 0, 4);
         vm.Preview3DCloudDebugView = Math.Clamp(
             settings.Preview3DCloudDebugView,
             0,
-            (int)PreviewCloudDebugView.AssetProfile);
+            (int)PreviewCloudDebugView.SparseCascadeBlend);
         vm.Preview3DCloudDisableTemporal = settings.Preview3DCloudDisableTemporal;
         vm.Preview3DCloudMarchStepOverride = Math.Clamp(settings.Preview3DCloudMarchStepOverride, 0.0, 64.0);
         vm.Preview3DCloudFreezeWind = settings.Preview3DCloudFreezeWind;
         vm.Preview3DEnablePreviewTaa = settings.Preview3DEnablePreviewTaa;
+        vm.Preview3DEnableScreenSpaceAo = settings.Preview3DEnableScreenSpaceAo;
+        vm.Preview3DAoMode = Math.Clamp(settings.Preview3DAoMode, 0, 2);
+        vm.Preview3DAoStrength = Math.Clamp(settings.Preview3DAoStrength, 0.0, 1.0);
+        vm.Preview3DAoRadius = Math.Clamp(settings.Preview3DAoRadius <= 0 ? 0.55 : settings.Preview3DAoRadius, 0.05, 8.0);
+        vm.Preview3DAoPower = Math.Clamp(settings.Preview3DAoPower <= 0 ? 1.15 : settings.Preview3DAoPower, 0.1, 4.0);
         vm.Preview3DTaaMode = ResolvePreview3DTaaMode(settings);
         vm.Preview3DTaaTemporalScale = Math.Clamp(settings.Preview3DTaaTemporalScale, 0.0, 1.25);
         vm.Preview3DTaaJitterScale = Math.Clamp(settings.Preview3DTaaJitterScale, 0.0, 2.0);
@@ -253,6 +301,9 @@ internal static class UserSettingsSynchronizer
         vm.Preview3DCameraZoomSensitivity = settings.Preview3DCameraZoomSensitivity <= 0
             ? 0.12
             : Math.Clamp(settings.Preview3DCameraZoomSensitivity, 0.02, 0.5);
+        vm.Preview3DCameraHoldZoomLevel = settings.Preview3DCameraHoldZoomLevel <= 0
+            ? 2.0
+            : Math.Clamp(settings.Preview3DCameraHoldZoomLevel, 1.25, 4.0);
         var boomDefault = (double)PreviewCamera.DefaultOrbitBoomArmDistance;
         vm.Preview3DCameraOrbitBoomDistance = settings.Preview3DCameraOrbitBoomDistance <= 0
             ? boomDefault
@@ -499,29 +550,52 @@ internal static class UserSettingsSynchronizer
         settings.Preview3DTimeOfDaySpeed = Math.Clamp(vm.Preview3DTimeOfDaySpeed, 0.1, 4.0);
         settings.Preview3DHorizonFogStrength = Math.Clamp(vm.Preview3DHorizonFogStrength, 0.0, 2.0);
         settings.Preview3DEnableGodRays = vm.Preview3DEnableGodRays;
+        settings.Preview3DEnableScreenSpaceGodRays = vm.Preview3DEnableScreenSpaceGodRays;
         settings.Preview3DEnableVolumetricClouds = vm.Preview3DEnableVolumetricClouds;
         settings.Preview3DVolumetricQuality = PreviewVolumetricQuality.Clamp(vm.Preview3DVolumetricQuality);
         settings.Preview3DGodRayStrength = Math.Clamp(vm.Preview3DGodRayStrength, 0.0, 2.0);
+        settings.Preview3DScreenSpaceGodRayStrength = Math.Clamp(vm.Preview3DScreenSpaceGodRayStrength, 0.0, 2.0);
+        settings.Preview3DGodRayConeScale = Math.Clamp(vm.Preview3DGodRayConeScale, 0.25, 3.0);
+        settings.Preview3DGodRayFroxelResolution = Math.Clamp(vm.Preview3DGodRayFroxelResolution, 0.5, 2.5);
+        settings.Preview3DGodRayPhaseDirectivity = Math.Clamp(vm.Preview3DGodRayPhaseDirectivity, 0.0, 1.0);
         settings.Preview3DGodRayScatterGain = Math.Clamp(vm.Preview3DGodRayScatterGain, 0.0, 20.0);
         settings.Preview3DGodRayExtinction = Math.Clamp(vm.Preview3DGodRayExtinction, 0.01, 8.0);
         settings.Preview3DGodRayDebugDensity = Math.Clamp(vm.Preview3DGodRayDebugDensity, 0.0, 2.0);
         settings.Preview3DGodRayStabilizeDebug = vm.Preview3DGodRayStabilizeDebug;
-        settings.Preview3DCloudDensity = Math.Clamp(vm.Preview3DCloudDensity, 0.0, 2.0);
-        settings.Preview3DCloudCoverageScale = Math.Clamp(vm.Preview3DCloudCoverageScale, 0.0, 2.0);
-        settings.Preview3DCloudLayerHeight = Math.Clamp(vm.Preview3DCloudLayerHeight, -12.0, 48.0);
-        settings.Preview3DCloudVolumeHeight = Math.Clamp(vm.Preview3DCloudVolumeHeight, 4.0, 96.0);
-        settings.Preview3DCloudVolumeSize = Math.Clamp(vm.Preview3DCloudVolumeSize, 8.0, 256.0);
-        settings.Preview3DCloudWindSpeed = Math.Clamp(vm.Preview3DCloudWindSpeed, 0.0, 12.0);
+        settings.Preview3DCloudDensity = Math.Clamp(vm.Preview3DCloudDensity, 0.0, 4.0);
+        settings.Preview3DCloudCoverageScale = Math.Clamp(vm.Preview3DCloudCoverageScale, 0.0, 4.0);
+        settings.Preview3DCloudLayerHeight = Math.Clamp(vm.Preview3DCloudLayerHeight, -64.0, 256.0);
+        settings.Preview3DCloudVolumeHeight = Math.Clamp(vm.Preview3DCloudVolumeHeight, 1.0, 512.0);
+        settings.Preview3DCloudVolumeSize = Math.Clamp(vm.Preview3DCloudVolumeSize, 4.0, 1024.0);
+        settings.Preview3DCloudWindSpeed = Math.Clamp(vm.Preview3DCloudWindSpeed, 0.0, 48.0);
         settings.Preview3DCloudWindHeadingDegrees = Math.Clamp(vm.Preview3DCloudWindHeadingDegrees, -180.0, 180.0);
-        settings.Preview3DCloudCirrusStrength = Math.Clamp(vm.Preview3DCloudCirrusStrength, 0.0, 2.0);
+        settings.Preview3DCloudCirrusStrength = Math.Clamp(vm.Preview3DCloudCirrusStrength, 0.0, 4.0);
+        settings.Preview3DCloudCumulusLayerCount = Math.Clamp(
+            Math.Round(vm.Preview3DCloudCumulusLayerCount),
+            1,
+            PreviewCloudLayerEnvelope.MaxCumulusDecks);
+        settings.Preview3DCloudInterDeckGap = Math.Clamp(vm.Preview3DCloudInterDeckGap, 0.0, 256.0);
+        settings.Preview3DCloudLayerHeightVariance = Math.Clamp(vm.Preview3DCloudLayerHeightVariance, 0.0, 64.0);
+        settings.Preview3DCloudUpperThicknessScale = Math.Clamp(vm.Preview3DCloudUpperThicknessScale, 0.05, 3.0);
+        settings.Preview3DCloudUpperCoverageScale = Math.Clamp(vm.Preview3DCloudUpperCoverageScale, 0.0, 4.0);
+        settings.Preview3DCloudUpperDensityScale = Math.Clamp(vm.Preview3DCloudUpperDensityScale, 0.0, 4.0);
+        settings.Preview3DCloudUpperWindSpeedScale = Math.Clamp(vm.Preview3DCloudUpperWindSpeedScale, 0.0, 4.0);
+        settings.Preview3DCloudCirrusGap = Math.Clamp(vm.Preview3DCloudCirrusGap, 0.0, 512.0);
+        settings.Preview3DCloudCirrusThickness = Math.Clamp(vm.Preview3DCloudCirrusThickness, 0.1, 64.0);
+        settings.Preview3DCloudStyleBias = Math.Clamp(vm.Preview3DCloudStyleBias, 0, 4);
         settings.Preview3DCloudDebugView = Math.Clamp(
             vm.Preview3DCloudDebugView,
             0,
-            (int)PreviewCloudDebugView.AssetProfile);
+            (int)PreviewCloudDebugView.SparseCascadeBlend);
         settings.Preview3DCloudDisableTemporal = vm.Preview3DCloudDisableTemporal;
         settings.Preview3DCloudMarchStepOverride = Math.Clamp(vm.Preview3DCloudMarchStepOverride, 0.0, 64.0);
         settings.Preview3DCloudFreezeWind = vm.Preview3DCloudFreezeWind;
         settings.Preview3DEnablePreviewTaa = vm.Preview3DEnablePreviewTaa;
+        settings.Preview3DEnableScreenSpaceAo = vm.Preview3DEnableScreenSpaceAo;
+        settings.Preview3DAoMode = Math.Clamp(vm.Preview3DAoMode, 0, 2);
+        settings.Preview3DAoStrength = Math.Clamp(vm.Preview3DAoStrength, 0.0, 1.0);
+        settings.Preview3DAoRadius = Math.Clamp(vm.Preview3DAoRadius, 0.05, 8.0);
+        settings.Preview3DAoPower = Math.Clamp(vm.Preview3DAoPower, 0.1, 4.0);
         settings.Preview3DTaaMode = Math.Clamp(vm.Preview3DTaaMode, 0, 4);
         settings.PersistedSettingsGeneration = CurrentPersistedSettingsGeneration;
         settings.Preview3DTaaTemporalScale = Math.Clamp(vm.Preview3DTaaTemporalScale, 0.0, 1.25);
@@ -537,6 +611,7 @@ internal static class UserSettingsSynchronizer
         settings.Preview3DLightPitchDegrees = Math.Clamp(vm.Preview3DLightPitchDegrees, -89.0, 89.0);
         settings.Preview3DEnableShadowCascades = vm.Preview3DEnableShadowCascades;
         settings.Preview3DShadowDistance = Math.Clamp(vm.Preview3DShadowDistance, 32.0, 256.0);
+        settings.Preview3DShadowStrength = Math.Clamp(vm.Preview3DShadowStrength, 0.0, 3.0);
         settings.Preview3DSpritePlaneCount = Math.Clamp(vm.Preview3DSpritePlaneCount, 1, 8);
         settings.Preview3DSpriteThickness = Math.Clamp(
             vm.Preview3DSpriteThickness,
@@ -545,6 +620,7 @@ internal static class UserSettingsSynchronizer
         settings.Preview3DCameraOrbitSensitivity = Math.Clamp(vm.Preview3DCameraOrbitSensitivity, 0.0008, 0.04);
         settings.Preview3DCameraPanSensitivity = Math.Clamp(vm.Preview3DCameraPanSensitivity, 0.0003, 0.02);
         settings.Preview3DCameraZoomSensitivity = Math.Clamp(vm.Preview3DCameraZoomSensitivity, 0.02, 0.5);
+        settings.Preview3DCameraHoldZoomLevel = Math.Clamp(vm.Preview3DCameraHoldZoomLevel, 1.25, 4.0);
         settings.Preview3DCameraOrbitBoomDistance = Math.Clamp(vm.Preview3DCameraOrbitBoomDistance, 1.05, 120.0);
         settings.Preview3DCameraResetKey = string.IsNullOrWhiteSpace(vm.Preview3DCameraResetKey)
             ? "R"

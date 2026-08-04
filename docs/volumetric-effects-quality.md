@@ -152,7 +152,7 @@ backend as CQ1 → CQ2 → CQ3 → CQ4 while preserving the current GLES/ANGLE s
 1. **Sky-view LUT** (`atmo_skyview.frag`) — precomputed in-scatter from sun direction, turbidity, and exposure.
 2. **Sky composite** (`atmo_sky.frag`) — full-screen LUT sample + optional sun-disc bloom.
 3. **Detailed clouds** — flat world-altitude cumulus volume plus a separate wind-sheared cirrus ice layer. Cloud rays are clipped by opaque scene depth; the half-resolution upsample repeats cloud-distance rejection per tap at full resolution.
-4. **God rays** — froxel fog inject + Mie integrate consuming resolved detailed-cloud opacity/depth → half-res history → bilateral/temporal upsample. Detailed clouds composite first, then cloud-aware shaft radiance is added so foreground shafts remain visible while samples behind clouds are attenuated.
+4. **God rays** — froxel fog inject + Mie integrate consuming resolved detailed-cloud opacity/depth → half-res history → bilateral/temporal upsample → foliage-mask refine (cutout occupancy, no sun-cone). Detailed clouds composite first, then cloud-aware shaft radiance is added so foreground shafts remain visible while samples behind clouds are attenuated.
 
 ### Phase 6 visual-correctness contract
 
@@ -187,7 +187,7 @@ Shader-side: soft knee compression before sRGB encode on LUT build and sky draw.
 
 - **Depth-aware radial blur** — single pass from sun UV with depth weights (faster than 64-step march).
 - **Bilateral / depth upsample** — render rays at half-res, upsample with depth edge preservation.
-- **Occluder mask** — use scene luminance + depth discontinuities to weight shafts (trees, buildings).
+- **Occluder mask** — [x] cutout foliage occupancy in `TaaSignal.A`, attenuates froxel inscatter after upsample (no sun-cone march).
 - **Temporal reprojection** — stabilize flicker when the camera moves (jittered march + history clamp).
 
 ### Medium term (quality)

@@ -6,6 +6,8 @@ namespace AutoPBR.App.Rendering.Scene;
 /// Emits tree / cactus geometry into terrain material buckets, preferring
 /// origin-centered meshes baked from each block's model JSON (Explore path),
 /// with cuboid fallback when a template is missing.
+/// Block-space occupancy is identical for Full and LOD bakes; LOD cost levers are
+/// render-side only (mips, alpha/transparency, shadow distance) — never drop blocks.
 /// </summary>
 public static class PreviewTerrainTreeMeshEmitter
 {

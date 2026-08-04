@@ -31,6 +31,30 @@
     <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_noise_shape_128_v2.bin" />
     <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_noise_detail_64_v2.bin" />
     <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_weather_1024_v2.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_humilis_0_32x24x32_rg8_v1.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_humilis_1_32x24x32_rg8_v1.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_humilis_2_32x24x32_rg8_v1.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_mediocris_0_32x24x32_rg8_v1.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_mediocris_1_32x24x32_rg8_v1.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_mediocris_2_32x24x32_rg8_v1.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_congestus_0_32x24x32_rg8_v1.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_congestus_1_32x24x32_rg8_v1.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_congestus_2_32x24x32_rg8_v1.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_stratus_0_32x24x32_rg8_v1.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_stratus_1_32x24x32_rg8_v1.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_stratus_2_32x24x32_rg8_v1.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_humilis_0_32x24x32_rg8_v2.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_humilis_1_32x24x32_rg8_v2.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_humilis_2_32x24x32_rg8_v2.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_mediocris_0_32x24x32_rg8_v2.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_mediocris_1_32x24x32_rg8_v2.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_mediocris_2_32x24x32_rg8_v2.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_congestus_0_32x24x32_rg8_v2.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_congestus_1_32x24x32_rg8_v2.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_cumulus_congestus_2_32x24x32_rg8_v2.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_stratus_0_32x24x32_rg8_v2.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_stratus_1_32x24x32_rg8_v2.bin" />
+    <_PreviewCloudAssetOutput Include="$(ProjectDir)Assets\Preview\cloud_envelope_stratus_2_32x24x32_rg8_v2.bin" />
   </ItemGroup>
 
   <Target Name="GeneratePreviewCloudAssets"

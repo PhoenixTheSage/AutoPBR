@@ -37,6 +37,10 @@
                                                                   ToolTip.Tip="{Binding Strings.Preview3DEnableGodRaysTooltip}">
                                                             <TextBlock Text="{Binding Strings.Preview3DEnableGodRays}" TextWrapping="Wrap" />
                                                         </CheckBox>
+                                                        <CheckBox IsChecked="{Binding Preview3DEnableScreenSpaceGodRays, Mode=TwoWay}"
+                                                                  ToolTip.Tip="{Binding Strings.Preview3DEnableScreenSpaceGodRaysTooltip}">
+                                                            <TextBlock Text="{Binding Strings.Preview3DEnableScreenSpaceGodRays}" TextWrapping="Wrap" />
+                                                        </CheckBox>
                                                         <CheckBox IsChecked="{Binding Preview3DEnableVolumetricClouds, Mode=TwoWay}"
                                                                   ToolTip.Tip="{Binding Strings.Preview3DEnableVolumetricCloudsTooltip}">
                                                             <TextBlock Text="{Binding Strings.Preview3DEnableVolumetricClouds}" TextWrapping="Wrap" />
@@ -44,6 +48,10 @@
                                                         <CheckBox IsChecked="{Binding Preview3DEnablePreviewTaa, Mode=TwoWay}"
                                                                   ToolTip.Tip="{Binding Strings.Preview3DEnablePreviewTaaTooltip}">
                                                             <TextBlock Text="{Binding Strings.Preview3DEnablePreviewTaa}" TextWrapping="Wrap" />
+                                                        </CheckBox>
+                                                        <CheckBox IsChecked="{Binding Preview3DEnableScreenSpaceAo, Mode=TwoWay}"
+                                                                  ToolTip.Tip="{Binding Strings.Preview3DEnableScreenSpaceAoTooltip}">
+                                                            <TextBlock Text="{Binding Strings.Preview3DEnableScreenSpaceAo}" TextWrapping="Wrap" />
                                                         </CheckBox>
                                                         <CheckBox IsChecked="{Binding Preview3DEnableParallax, Mode=TwoWay}"
                                                                   ToolTip.Tip="{Binding Strings.Preview3DEnableParallaxTooltip}">
@@ -53,6 +61,26 @@
                                                                   ToolTip.Tip="{Binding Strings.Preview3DEnableTessellationDisplacementTooltip}">
                                                             <TextBlock Text="{Binding Strings.Preview3DEnableTessellationDisplacement}" TextWrapping="Wrap" />
                                                         </CheckBox>
+                                                    </StackPanel>
+                                                </ctrls:FlyoutSection>
+                                                <ctrls:FlyoutSection Header="{Binding Strings.Preview3DAoSection}" FlyoutMaxWidth="720">
+                                                    <StackPanel Spacing="8">
+                                                        <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
+                                                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DAoMode}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DAoModeTooltip}" />
+                                                            <ComboBox Grid.Column="1" MinWidth="180" HorizontalAlignment="Left" ItemsSource="{Binding Preview3DAoModeOptions}" SelectedIndex="{Binding Preview3DAoMode, Mode=TwoWay}" IsEnabled="{Binding Preview3DEnableScreenSpaceAo}" ToolTip.Tip="{Binding Strings.Preview3DAoModeTooltip}" />
+                                                        </Grid>
+                                                        <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
+                                                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DAoStrength}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DAoStrengthTooltip}" />
+                                                            <ctrls:OverlaySlider Grid.Column="1" Minimum="0.00" Maximum="1.00" SmallChange="0.02" LargeChange="0.10" TickFrequency="0.20" Value="{Binding Preview3DAoStrength, Mode=TwoWay}" Increment="0.02" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DAoStrengthTooltip}" IsEnabled="{Binding Preview3DEnableScreenSpaceAo}" HorizontalAlignment="Left" />
+                                                        </Grid>
+                                                        <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
+                                                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DAoRadius}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DAoRadiusTooltip}" />
+                                                            <ctrls:OverlaySlider Grid.Column="1" Minimum="0.05" Maximum="4.00" SmallChange="0.05" LargeChange="0.25" TickFrequency="0.50" Value="{Binding Preview3DAoRadius, Mode=TwoWay}" Increment="0.05" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DAoRadiusTooltip}" IsEnabled="{Binding Preview3DEnableScreenSpaceAo}" HorizontalAlignment="Left" />
+                                                        </Grid>
+                                                        <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
+                                                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DAoPower}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DAoPowerTooltip}" />
+                                                            <ctrls:OverlaySlider Grid.Column="1" Minimum="0.10" Maximum="4.00" SmallChange="0.05" LargeChange="0.25" TickFrequency="0.50" Value="{Binding Preview3DAoPower, Mode=TwoWay}" Increment="0.05" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DAoPowerTooltip}" IsEnabled="{Binding Preview3DEnableScreenSpaceAo}" HorizontalAlignment="Left" />
+                                                        </Grid>
                                                     </StackPanel>
                                                 </ctrls:FlyoutSection>
                                                 <ctrls:FlyoutSection Header="{Binding Strings.Preview3DTaaSection}" FlyoutMaxWidth="720">
@@ -105,6 +133,10 @@
                                                         <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
                                                             <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DShadowDistance}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DShadowDistanceTooltip}" />
                                                             <ctrls:OverlaySlider Grid.Column="1" Minimum="32" Maximum="256" SmallChange="4" LargeChange="16" TickFrequency="32" Value="{Binding Preview3DShadowDistance, Mode=TwoWay}" Increment="4" FormatString="F0" ToolTip.Tip="{Binding Strings.Preview3DShadowDistanceTooltip}" IsEnabled="{Binding Preview3DEnableShadows}" HorizontalAlignment="Left" />
+                                                        </Grid>
+                                                        <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
+                                                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DShadowStrength}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DShadowStrengthTooltip}" />
+                                                            <ctrls:OverlaySlider Grid.Column="1" Minimum="0.0" Maximum="3.0" SmallChange="0.05" LargeChange="0.25" TickFrequency="0.5" Value="{Binding Preview3DShadowStrength, Mode=TwoWay}" Increment="0.05" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DShadowStrengthTooltip}" IsEnabled="{Binding Preview3DEnableShadows}" HorizontalAlignment="Left" />
                                                         </Grid>
                                                         <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
                                                             <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DTimeOfDayHours}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DTimeOfDayHoursTooltip}" />
@@ -298,8 +330,8 @@
                                                                            TextWrapping="Wrap"
                                                                            ToolTip.Tip="{Binding Strings.Preview3DDistantLodTooltip}" />
                                                                 <ctrls:OverlaySlider Grid.Column="1"
-                                                                                    Minimum="2" Maximum="32"
-                                                                                    SmallChange="1" LargeChange="2"
+                                                                                    Minimum="2" Maximum="1024"
+                                                                                    SmallChange="8" LargeChange="64"
                                                                                     TickFrequency="1"
                                                                                     IsSnapToTickEnabled="True"
                                                                                     Value="{Binding Preview3DLodRingChunks, Mode=TwoWay}"
@@ -415,6 +447,10 @@
                                                             <ctrls:OverlaySlider Grid.Column="1" Minimum="0.04" Maximum="0.35" SmallChange="0.01" LargeChange="0.03" Value="{Binding Preview3DCameraZoomSensitivity, Mode=TwoWay}" Increment="0.01" FormatString="0.##" HorizontalAlignment="Left" />
                                                         </Grid>
                                                         <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCameraHoldZoomLevel}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCameraHoldZoomLevelTooltip}" />
+                                                            <ctrls:OverlaySlider Grid.Column="1" Minimum="1.25" Maximum="4" SmallChange="0.05" LargeChange="0.25" Value="{Binding Preview3DCameraHoldZoomLevel, Mode=TwoWay}" Increment="0.05" FormatString="0.##x" ToolTip.Tip="{Binding Strings.Preview3DCameraHoldZoomLevelTooltip}" HorizontalAlignment="Left" />
+                                                        </Grid>
+                                                        <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
                                                             <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCameraOrbitBoomDistance}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCameraOrbitBoomDistanceTooltip}" />
                                                             <ctrls:OverlaySlider Grid.Column="1" Minimum="1.05" Maximum="120" SmallChange="0.25" LargeChange="2" Value="{Binding Preview3DCameraOrbitBoomDistance, Mode=TwoWay}" Increment="0.25" FormatString="0.##" ToolTip.Tip="{Binding Strings.Preview3DCameraOrbitBoomDistanceTooltip}" HorizontalAlignment="Left" />
                                                         </Grid>
@@ -476,6 +512,22 @@
                                                                     <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DGodRayStrength}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DGodRayStrengthTooltip}" />
                                                                     <ctrls:OverlaySlider Grid.Column="1" Minimum="0.0" Maximum="2.0" SmallChange="0.05" LargeChange="0.25" TickFrequency="0.5" Value="{Binding Preview3DGodRayStrength, Mode=TwoWay}" Increment="0.05" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DGodRayStrengthTooltip}" IsEnabled="{Binding Preview3DEnableGodRays}" HorizontalAlignment="Left" />
                                                                 </Grid>
+                                                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
+                                                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DScreenSpaceGodRayStrength}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DScreenSpaceGodRayStrengthTooltip}" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0.0" Maximum="2.0" SmallChange="0.05" LargeChange="0.25" TickFrequency="0.5" Value="{Binding Preview3DScreenSpaceGodRayStrength, Mode=TwoWay}" Increment="0.05" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DScreenSpaceGodRayStrengthTooltip}" IsEnabled="{Binding Preview3DEnableScreenSpaceGodRays}" HorizontalAlignment="Left" />
+                                                                </Grid>
+                                                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
+                                                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DGodRayConeScale}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DGodRayConeScaleTooltip}" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0.25" Maximum="3.0" SmallChange="0.05" LargeChange="0.25" TickFrequency="0.5" Value="{Binding Preview3DGodRayConeScale, Mode=TwoWay}" Increment="0.05" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DGodRayConeScaleTooltip}" IsEnabled="{Binding Preview3DEnableScreenSpaceGodRays}" HorizontalAlignment="Left" />
+                                                                </Grid>
+                                                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
+                                                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DGodRayFroxelResolution}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DGodRayFroxelResolutionTooltip}" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0.5" Maximum="2.5" SmallChange="0.05" LargeChange="0.25" TickFrequency="0.5" Value="{Binding Preview3DGodRayFroxelResolution, Mode=TwoWay}" Increment="0.05" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DGodRayFroxelResolutionTooltip}" IsEnabled="{Binding Preview3DEnableGodRays}" HorizontalAlignment="Left" />
+                                                                </Grid>
+                                                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0" IsVisible="{Binding IsPreview3D}">
+                                                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DGodRayPhaseDirectivity}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DGodRayPhaseDirectivityTooltip}" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0.0" Maximum="1.0" SmallChange="0.05" LargeChange="0.2" TickFrequency="0.25" Value="{Binding Preview3DGodRayPhaseDirectivity, Mode=TwoWay}" Increment="0.05" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DGodRayPhaseDirectivityTooltip}" IsEnabled="{Binding Preview3DEnableGodRays}" HorizontalAlignment="Left" />
+                                                                </Grid>
                                                             </StackPanel>
                                                         </ctrls:FlyoutSection>
                                                         <ctrls:FlyoutSection Header="{Binding Strings.Preview3DCloudSection}" IsEnabled="{Binding Preview3DEnableVolumetricClouds}" FlyoutMaxWidth="720">
@@ -485,28 +537,60 @@
                                                                     <ComboBox Grid.Column="1" MinWidth="160" HorizontalAlignment="Left" ItemsSource="{Binding Preview3DVolumetricQualityOptions}" SelectedIndex="{Binding Preview3DVolumetricQuality, Mode=TwoWay}" ToolTip.Tip="{Binding Strings.Preview3DVolumetricQualityTooltip}" />
                                                                 </Grid>
                                                                 <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudStyleBias}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudStyleBiasTooltip}" />
+                                                                    <ComboBox Grid.Column="1" MinWidth="160" HorizontalAlignment="Left" ItemsSource="{Binding Preview3DCloudStyleBiasOptions}" SelectedIndex="{Binding Preview3DCloudStyleBias, Mode=TwoWay}" ToolTip.Tip="{Binding Strings.Preview3DCloudStyleBiasTooltip}" />
+                                                                </Grid>
+                                                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
                                                                     <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudDensity}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudDensityTooltip}" />
-                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0" Maximum="2" SmallChange="0.02" LargeChange="0.1" Value="{Binding Preview3DCloudDensity, Mode=TwoWay}" Increment="0.02" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DCloudDensityTooltip}" HorizontalAlignment="Left" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0" Maximum="4" SmallChange="0.02" LargeChange="0.1" Value="{Binding Preview3DCloudDensity, Mode=TwoWay}" Increment="0.02" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DCloudDensityTooltip}" HorizontalAlignment="Left" />
                                                                 </Grid>
                                                                 <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
                                                                     <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudCoverageScale}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudCoverageScaleTooltip}" />
-                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0" Maximum="2" SmallChange="0.02" LargeChange="0.1" Value="{Binding Preview3DCloudCoverageScale, Mode=TwoWay}" Increment="0.02" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DCloudCoverageScaleTooltip}" HorizontalAlignment="Left" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0" Maximum="4" SmallChange="0.02" LargeChange="0.1" Value="{Binding Preview3DCloudCoverageScale, Mode=TwoWay}" Increment="0.02" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DCloudCoverageScaleTooltip}" HorizontalAlignment="Left" />
                                                                 </Grid>
                                                                 <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
                                                                     <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudLayerHeight}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudLayerHeightTooltip}" />
-                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="-12" Maximum="48" SmallChange="0.5" LargeChange="4" Value="{Binding Preview3DCloudLayerHeight, Mode=TwoWay}" Increment="0.5" FormatString="F1" ToolTip.Tip="{Binding Strings.Preview3DCloudLayerHeightTooltip}" HorizontalAlignment="Left" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="-64" Maximum="256" SmallChange="0.5" LargeChange="4" Value="{Binding Preview3DCloudLayerHeight, Mode=TwoWay}" Increment="0.5" FormatString="F1" ToolTip.Tip="{Binding Strings.Preview3DCloudLayerHeightTooltip}" HorizontalAlignment="Left" />
                                                                 </Grid>
                                                                 <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
                                                                     <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudVolumeHeight}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudVolumeHeightTooltip}" />
-                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="4" Maximum="96" SmallChange="1" LargeChange="8" Value="{Binding Preview3DCloudVolumeHeight, Mode=TwoWay}" Increment="1" FormatString="F0" ToolTip.Tip="{Binding Strings.Preview3DCloudVolumeHeightTooltip}" HorizontalAlignment="Left" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="1" Maximum="512" SmallChange="1" LargeChange="8" Value="{Binding Preview3DCloudVolumeHeight, Mode=TwoWay}" Increment="1" FormatString="F0" ToolTip.Tip="{Binding Strings.Preview3DCloudVolumeHeightTooltip}" HorizontalAlignment="Left" />
+                                                                </Grid>
+                                                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudCumulusLayerCount}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudCumulusLayerCountTooltip}" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="1" Maximum="3" SmallChange="1" LargeChange="1" Value="{Binding Preview3DCloudCumulusLayerCount, Mode=TwoWay}" Increment="1" FormatString="F0" ToolTip.Tip="{Binding Strings.Preview3DCloudCumulusLayerCountTooltip}" HorizontalAlignment="Left" />
+                                                                </Grid>
+                                                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudInterDeckGap}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudInterDeckGapTooltip}" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0" Maximum="256" SmallChange="1" LargeChange="8" Value="{Binding Preview3DCloudInterDeckGap, Mode=TwoWay}" Increment="1" FormatString="F0" ToolTip.Tip="{Binding Strings.Preview3DCloudInterDeckGapTooltip}" HorizontalAlignment="Left" />
+                                                                </Grid>
+                                                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudLayerHeightVariance}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudLayerHeightVarianceTooltip}" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0" Maximum="64" SmallChange="0.5" LargeChange="4" Value="{Binding Preview3DCloudLayerHeightVariance, Mode=TwoWay}" Increment="0.5" FormatString="F1" ToolTip.Tip="{Binding Strings.Preview3DCloudLayerHeightVarianceTooltip}" HorizontalAlignment="Left" />
+                                                                </Grid>
+                                                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudUpperThicknessScale}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudUpperThicknessScaleTooltip}" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0.05" Maximum="3" SmallChange="0.05" LargeChange="0.25" Value="{Binding Preview3DCloudUpperThicknessScale, Mode=TwoWay}" Increment="0.05" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DCloudUpperThicknessScaleTooltip}" HorizontalAlignment="Left" />
+                                                                </Grid>
+                                                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudUpperCoverageScale}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudUpperCoverageScaleTooltip}" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0" Maximum="4" SmallChange="0.02" LargeChange="0.1" Value="{Binding Preview3DCloudUpperCoverageScale, Mode=TwoWay}" Increment="0.02" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DCloudUpperCoverageScaleTooltip}" HorizontalAlignment="Left" />
+                                                                </Grid>
+                                                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudUpperDensityScale}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudUpperDensityScaleTooltip}" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0" Maximum="4" SmallChange="0.02" LargeChange="0.1" Value="{Binding Preview3DCloudUpperDensityScale, Mode=TwoWay}" Increment="0.02" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DCloudUpperDensityScaleTooltip}" HorizontalAlignment="Left" />
+                                                                </Grid>
+                                                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudUpperWindSpeedScale}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudUpperWindSpeedScaleTooltip}" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0" Maximum="4" SmallChange="0.05" LargeChange="0.25" Value="{Binding Preview3DCloudUpperWindSpeedScale, Mode=TwoWay}" Increment="0.05" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DCloudUpperWindSpeedScaleTooltip}" HorizontalAlignment="Left" />
                                                                 </Grid>
                                                                 <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
                                                                     <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudVolumeSize}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudVolumeSizeTooltip}" />
-                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="8" Maximum="256" SmallChange="4" LargeChange="32" Value="{Binding Preview3DCloudVolumeSize, Mode=TwoWay}" Increment="4" FormatString="F0" ToolTip.Tip="{Binding Strings.Preview3DCloudVolumeSizeTooltip}" HorizontalAlignment="Left" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="4" Maximum="1024" SmallChange="4" LargeChange="32" Value="{Binding Preview3DCloudVolumeSize, Mode=TwoWay}" Increment="4" FormatString="F0" ToolTip.Tip="{Binding Strings.Preview3DCloudVolumeSizeTooltip}" HorizontalAlignment="Left" />
                                                                 </Grid>
                                                                 <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
                                                                     <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudWindSpeed}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudWindSpeedTooltip}" />
-                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0" Maximum="12" SmallChange="0.1" LargeChange="1" Value="{Binding Preview3DCloudWindSpeed, Mode=TwoWay}" Increment="0.1" FormatString="F1" ToolTip.Tip="{Binding Strings.Preview3DCloudWindSpeedTooltip}" HorizontalAlignment="Left" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0" Maximum="48" SmallChange="0.1" LargeChange="1" Value="{Binding Preview3DCloudWindSpeed, Mode=TwoWay}" Increment="0.1" FormatString="F1" ToolTip.Tip="{Binding Strings.Preview3DCloudWindSpeedTooltip}" HorizontalAlignment="Left" />
                                                                 </Grid>
                                                                 <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
                                                                     <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudWindHeading}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudWindHeadingTooltip}" />
@@ -514,7 +598,15 @@
                                                                 </Grid>
                                                                 <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
                                                                     <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudCirrusStrength}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudCirrusStrengthTooltip}" />
-                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0" Maximum="2" SmallChange="0.02" LargeChange="0.1" Value="{Binding Preview3DCloudCirrusStrength, Mode=TwoWay}" Increment="0.02" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DCloudCirrusStrengthTooltip}" HorizontalAlignment="Left" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0" Maximum="4" SmallChange="0.02" LargeChange="0.1" Value="{Binding Preview3DCloudCirrusStrength, Mode=TwoWay}" Increment="0.02" FormatString="F2" ToolTip.Tip="{Binding Strings.Preview3DCloudCirrusStrengthTooltip}" HorizontalAlignment="Left" />
+                                                                </Grid>
+                                                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudCirrusGap}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudCirrusGapTooltip}" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0" Maximum="512" SmallChange="1" LargeChange="16" Value="{Binding Preview3DCloudCirrusGap, Mode=TwoWay}" Increment="1" FormatString="F0" ToolTip.Tip="{Binding Strings.Preview3DCloudCirrusGapTooltip}" HorizontalAlignment="Left" />
+                                                                </Grid>
+                                                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Strings.Preview3DCloudCirrusThickness}" TextWrapping="Wrap" ToolTip.Tip="{Binding Strings.Preview3DCloudCirrusThicknessTooltip}" />
+                                                                    <ctrls:OverlaySlider Grid.Column="1" Minimum="0.1" Maximum="64" SmallChange="0.1" LargeChange="1" Value="{Binding Preview3DCloudCirrusThickness, Mode=TwoWay}" Increment="0.1" FormatString="F1" ToolTip.Tip="{Binding Strings.Preview3DCloudCirrusThicknessTooltip}" HorizontalAlignment="Left" />
                                                                 </Grid>
                                                             </StackPanel>
                                                         </ctrls:FlyoutSection>

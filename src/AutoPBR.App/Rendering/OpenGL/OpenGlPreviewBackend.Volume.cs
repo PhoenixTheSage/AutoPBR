@@ -36,8 +36,12 @@ public sealed partial class OpenGlPreviewBackend
     private bool _volumePreviousSharedCloudSignal;
     private bool _volumeGroundCloudSignalInitialized;
     private bool _volumePreviousGroundCloudSignal;
+    private int _volumeLastFroxelW;
+    private int _volumeLastFroxelH;
+    private int _volumeLastFroxelSlices;
 
-    private const float VolumeHeightFogScale = 0.42f;
+    private const float VolumeHeightFogScale = 0.85f;
+    private const float VolumeAmbientFillScale = 0.035f;
     private const uint VolumeFroxelImageUnit = 0;
     private const uint VolumeFroxelOccupancyImageUnit = 1;
     private const uint ShaderImageAccessBarrierBit = 0x00000020;
@@ -201,9 +205,11 @@ public sealed partial class OpenGlPreviewBackend
     private static Vector3 ComputeFroxelHalfExtent(float fovRadians, float aspect, float forwardDistance)
     {
         // Match the view frustum lateral extent at the far depth of the froxel box so integrate
-        // does not clip god rays at a visible vertical/horizontal seam (was 0.52/0.62).
-        var halfY = MathF.Tan(fovRadians * 0.5f) * forwardDistance * 1.05f;
-        var halfX = halfY * aspect * 1.05f;
+        // does not clip god rays at a visible vertical/horizontal seam.
+        // Extra margin: screen-corner rays exit a tight AABB before froxelFar, which read as a
+        // hard bottom/side cut that swings with camera pitch.
+        var halfY = MathF.Tan(fovRadians * 0.5f) * forwardDistance * 1.28f;
+        var halfX = halfY * aspect;
         return new Vector3(halfX, halfY, forwardDistance * 0.5f);
     }
 
@@ -231,21 +237,69 @@ public sealed partial class OpenGlPreviewBackend
 
     private static Vector3 ResolveVolumeHalfExtent(ref GlRenderFrame frame)
     {
-        var cam = frame.Scene.Camera;
-        var fovRad = cam.FieldOfViewDegrees * (MathF.PI / 180f);
+        var fovRad = frame.VerticalFieldOfViewRadians > 1e-4f
+            ? frame.VerticalFieldOfViewRadians
+            : frame.Scene.Camera.FieldOfViewDegrees * (MathF.PI / 180f);
         var aspect = frame.Vw / (float)Math.Max(frame.Vh, 1);
         var layerBase = ResolveCloudLayerWorldBase(frame.Settings);
         ComputeCameraBasis(frame.Eye, frame.LookTarget, out _, out _, out var camForward);
 
-        // World-anchor froxel depth to the cloud slab instead of a fixed camera-relative distance.
-        var cloudTop = layerBase + frame.Settings.CloudVolumeHeight;
+        // World-anchor froxel depth to the full cumulus support stack.
+        var stack = PreviewCloudLayerEnvelope.Build(
+            PreviewStageConstants.GroundPlaneWorldY,
+            layerBase,
+            frame.Settings.CloudVolumeHeight,
+            frame.Settings.CloudVolumeSize,
+            frame.Settings.CloudCirrusStrength,
+            frame.Settings.CloudCumulusLayerCount,
+            frame.Settings.CloudInterDeckGap,
+            frame.Settings.CloudLayerHeightVariance,
+            frame.Settings.CloudUpperThicknessScale,
+            frame.Settings.CloudCirrusGap,
+            frame.Settings.CloudCirrusThickness);
+        var cloudTop =
+            PreviewStageConstants.GroundPlaneWorldY + stack.CumulusSupportTop;
         var verticalSpan = Math.Max(cloudTop - frame.Eye.Y, 12f);
         var forwardDist = Math.Clamp(verticalSpan / Math.Max(camForward.Y, 0.12f), 28f, 96f);
+        // Stronger atmospheric fill pushes the froxel far plane out so valley haze reaches mid-ground.
+        if (frame.Settings.EnableAtmosphericSky && frame.Settings.AerialFogStrength > 0f)
+        {
+            var fillPush = Math.Clamp(frame.Settings.AerialFogStrength, 0f, 1.5f);
+            forwardDist = Math.Clamp(forwardDist * (1f + 0.35f * fillPush), 28f, 128f);
+        }
+
         return ComputeFroxelHalfExtent(fovRad, aspect, forwardDist);
     }
 
     private static float ResolveVolumeHeightFogStrength(in PreviewRenderSettingsSnapshot settings) =>
         settings.EnableAtmosphericSky ? settings.AerialFogStrength * VolumeHeightFogScale : 0f;
+
+    private static float ResolveVolumeAmbientFillGain(in PreviewRenderSettingsSnapshot settings) =>
+        settings.EnableAtmosphericSky ? settings.AerialFogStrength * VolumeAmbientFillScale : 0f;
+
+    private static void ResolveScaledFroxelGrid(
+        in PreviewRenderSettingsSnapshot settings,
+        PreviewVolumetricQuality.Profile quality,
+        int viewportW,
+        int viewportH,
+        out int froxelW,
+        out int froxelH,
+        out int froxelSlices)
+    {
+        var scale = Math.Clamp(settings.GodRayFroxelResolution, 0.5f, 2.5f);
+        froxelW = Math.Clamp(
+            (int)MathF.Round(quality.ResolveFroxelWidth(viewportW) * scale),
+            quality.FroxelMinSize,
+            320);
+        froxelH = Math.Clamp(
+            (int)MathF.Round(quality.ResolveFroxelHeight(viewportH) * scale),
+            quality.FroxelMinSize,
+            180);
+        froxelSlices = Math.Clamp(
+            (int)MathF.Round(quality.FroxelSlices * MathF.Sqrt(scale)),
+            8,
+            48);
+    }
 
     private float ResolveFroxelCloudDensity(in PreviewRenderSettingsSnapshot settings)
     {
@@ -337,7 +391,8 @@ public sealed partial class OpenGlPreviewBackend
         SetVec3OnProgramLoc(_volumeInjectProgram, vi.CamUp, camUp);
         SetVec3OnProgramLoc(_volumeInjectProgram, vi.CamForward, camForward);
         SetVec3OnProgramLoc(_volumeInjectProgram, vi.LightDir, frame.LightDir);
-        SetVec3OnProgramLoc(_volumeInjectProgram, vi.LightColor, frame.Scene.Light.Color);
+        SetVec3OnProgramLoc(_volumeInjectProgram, vi.LightColor,
+            PreviewGodRayTod.ResolveVolumeShaftLightColor(frame.Scene.Light.Color, frame.WorldLightDir));
         SetVec3OnProgramLoc(_volumeInjectProgram, vi.HalfExtent, halfExtent);
         SetIntOnProgramLoc(_volumeInjectProgram, vi.SliceCount, _volumeFroxelTarget.Slices);
         if (!_volumeUseLiteShaders)
@@ -469,7 +524,8 @@ public sealed partial class OpenGlPreviewBackend
         SetVec3OnProgramLoc(_volumeInjectComputeProgram, vci.CamUp, camUp);
         SetVec3OnProgramLoc(_volumeInjectComputeProgram, vci.CamForward, camForward);
         SetVec3OnProgramLoc(_volumeInjectComputeProgram, vci.LightDir, frame.LightDir);
-        SetVec3OnProgramLoc(_volumeInjectComputeProgram, vci.LightColor, frame.Scene.Light.Color);
+        SetVec3OnProgramLoc(_volumeInjectComputeProgram, vci.LightColor,
+            PreviewGodRayTod.ResolveVolumeShaftLightColor(frame.Scene.Light.Color, frame.WorldLightDir));
         SetVec3OnProgramLoc(_volumeInjectComputeProgram, vci.HalfExtent, halfExtent);
         SetInt3OnProgramLoc(_volumeInjectComputeProgram, vci.FroxelSize,
             _volumeFroxelTarget.Width, _volumeFroxelTarget.Height, _volumeFroxelTarget.Slices);
@@ -703,6 +759,8 @@ public sealed partial class OpenGlPreviewBackend
         SetVec3OnProgramLoc(_volumeIntegrateProgram, iu.PrevCamUp, _volumePrevCamUp);
         SetVec3OnProgramLoc(_volumeIntegrateProgram, iu.PrevCamForward, _volumePrevCamForward);
         SetVec3OnProgramLoc(_volumeIntegrateProgram, iu.LightDir, frame.LightDir);
+        SetVec3OnProgramLoc(_volumeIntegrateProgram, iu.LightColor,
+            PreviewGodRayTod.ResolveVolumeShaftLightColor(frame.Scene.Light.Color, frame.WorldLightDir));
         SetVec3OnProgramLoc(_volumeIntegrateProgram, iu.HalfExtent, halfExtent);
         SetVec3OnProgramLoc(_volumeIntegrateProgram, iu.PrevHalfExtent, _volumePrevHalfExtent);
         SetIntOnProgramLoc(_volumeIntegrateProgram, iu.SliceCount, _volumeFroxelTarget.Slices);
@@ -777,12 +835,14 @@ public sealed partial class OpenGlPreviewBackend
 
         var halfW = Math.Max(1, frame.Vw / 2);
         var halfH = Math.Max(1, frame.Vh / 2);
-        if (!_volumeIntegrateHistory.EnsureSize(halfW, halfH))
+        var useLinearRayTargets = WantsLinearGodRayTargets();
+        if (!_volumeIntegrateHistory.EnsureSize(halfW, halfH, useLinearRayTargets, floatPreserveAlpha: useLinearRayTargets))
         {
             return false;
         }
 
         _godRayHalfResTarget.BindDraw();
+        frame.Gl.ClearColor(0f, 0f, 0f, 1f);
         frame.Gl.Clear(ClearBufferMask.ColorBufferBit);
         var integrateSw = frame.Settings.LogVolumetricTiming ? Stopwatch.StartNew() : null;
         BindVolumeIntegrateUniforms(frame, halfExtent, frame.Settings.GodRayStrength, marchJitter);
@@ -837,12 +897,22 @@ public sealed partial class OpenGlPreviewBackend
         _volumeGroundCloudSignalInitialized = true;
         var halfExtent = ResolveVolumeHalfExtent(ref frame);
         var quality = PreviewVolumetricQuality.Resolve(frame.Settings.VolumetricQuality);
-        var froxelW = quality.ResolveFroxelWidth(frame.Vw);
-        var froxelH = quality.ResolveFroxelHeight(frame.Vh);
+        ResolveScaledFroxelGrid(frame.Settings, quality, frame.Vw, frame.Vh,
+            out var froxelW, out var froxelH, out var froxelSlices);
+        if (_volumeLastFroxelW != froxelW || _volumeLastFroxelH != froxelH || _volumeLastFroxelSlices != froxelSlices)
+        {
+            _volumeFroxelHistoryValid = false;
+            _volumeIntegrateHistoryValid = false;
+            _godRayHistoryValid = false;
+            _volumeLastFroxelW = froxelW;
+            _volumeLastFroxelH = froxelH;
+            _volumeLastFroxelSlices = froxelSlices;
+        }
+
         var injectOk = false;
         using (BeginPassTimerScope(GlGpuTimerScope.GodRayInject))
         {
-            injectOk = InjectVolumeFroxels(ref frame, halfExtent, froxelW, froxelH, quality.FroxelSlices);
+            injectOk = InjectVolumeFroxels(ref frame, halfExtent, froxelW, froxelH, froxelSlices);
         }
 
         if (!injectOk)
