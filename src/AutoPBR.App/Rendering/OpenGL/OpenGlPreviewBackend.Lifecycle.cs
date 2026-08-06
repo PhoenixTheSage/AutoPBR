@@ -1206,6 +1206,7 @@ public sealed partial class OpenGlPreviewBackend
         _groundMesh = null;
         DisposeTerrainGpuChunks();
         DisposeTerrainMeshPool();
+        DisposeTerrainGpuFullMeshBaker();
         DisposeGroundTextureArrays();
         _terrainStreamer?.Dispose();
         _terrainStreamer = null;
@@ -1275,6 +1276,11 @@ public sealed partial class OpenGlPreviewBackend
         _mesh = null;
         _groundMesh = null;
         _terrainGpuChunks.Clear();
+        _terrainGpuFullMeshBaker = null;
+        _terrainColumnBoardComputeProgram = null;
+        _terrainFullMeshEmitComputeProgram = null;
+        _loggedTerrainGpuMeshCompute = false;
+        _loggedTerrainMeshPoolBudget = false;
         _terrainStreamer?.Dispose();
         _terrainStreamer = null;
         _grassGroundSlots = [];

@@ -73,6 +73,11 @@ uniform int uUseVoxelOcclusion;
 uniform sampler2D uVoxelHeightAtlas;
 uniform ivec2 uVoxelAtlasOrigin;
 uniform ivec2 uVoxelAtlasSize;
+uniform sampler2D uVoxelHeightAtlasCoarse;
+uniform ivec2 uVoxelCoarseOrigin;
+uniform ivec2 uVoxelCoarseSize;
+uniform int uVoxelCoarseCellMeters;
+uniform int uUseVoxelCoarse;
 uniform float uVoxelGroundPlaneY;
 uniform int uVoxelMaxSteps;
 

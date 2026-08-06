@@ -23,6 +23,9 @@ internal sealed class GlShaderCompileContext
         _parallelCompile = new GlParallelShaderCompile(gl);
     }
 
+    /// <summary>Cap KHR parallel shader compiler threads when the extension is present.</summary>
+    public bool LimitCompilerThreads(uint threads) => _parallelCompile.LimitCompilerThreads(threads);
+
     public GlShaderProgram CreateProgram(string vertexFile, string fragmentFile, out string? error,
         string? debugLabel = null, IReadOnlyDictionary<string, int>? defines = null)
     {
@@ -71,6 +74,7 @@ internal sealed class GlShaderCompileContext
         var program = _gl.CreateProgram();
         _gl.AttachShader(program, cs);
         _gl.LinkProgram(program);
+        GlShaderCompileYield.AfterCompile();
         _gl.GetProgram(program, GLEnum.LinkStatus, out var ok);
         _gl.DeleteShader(cs);
         if (ok == 0)
@@ -198,6 +202,7 @@ internal sealed class GlShaderCompileContext
 
         _gl.AttachShader(program, fs);
         _gl.LinkProgram(program);
+        GlShaderCompileYield.AfterCompile();
         _gl.GetProgram(program, GLEnum.LinkStatus, out var ok);
         _gl.DeleteShader(vs);
         if (tcs != 0)
@@ -277,6 +282,7 @@ internal sealed class GlShaderCompileContext
         _gl.ShaderSource(s, source);
         _gl.CompileShader(s);
         _parallelCompile.WaitForShader(s);
+        GlShaderCompileYield.AfterCompile();
         _gl.GetShader(s, GLEnum.CompileStatus, out var ok);
         if (ok == 0)
         {

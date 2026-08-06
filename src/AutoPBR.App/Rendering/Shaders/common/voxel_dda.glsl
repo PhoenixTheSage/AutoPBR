@@ -1,12 +1,17 @@
 // Heightfield column occupancy + Amanatides-Woo DDA for occlusion culling.
 // Expects uniforms:
-//   sampler2D uVoxelHeightAtlas; // RG: surfaceY, bottomY (relative block Y)
-//   ivec2 uVoxelAtlasOrigin;     // world column of texel (0,0)
+//   sampler2D uVoxelHeightAtlas;       // fine RG: surfaceY, bottomY (relative block Y)
+//   ivec2 uVoxelAtlasOrigin;           // world meters of fine texel (0,0)
 //   ivec2 uVoxelAtlasSize;
+//   sampler2D uVoxelHeightAtlasCoarse; // coarse companion (optional)
+//   ivec2 uVoxelCoarseOrigin;
+//   ivec2 uVoxelCoarseSize;
+//   int uVoxelCoarseCellMeters;        // ≥1; ignored when coarse disabled
+//   int uUseVoxelCoarse;
 //   float uVoxelGroundPlaneY;
 //   int uVoxelMaxSteps;
 
-bool voxelColumnSolid(int worldX, int worldZ, int relativeLayerY)
+bool voxelColumnSolidFine(int worldX, int worldZ, int relativeLayerY)
 {
     ivec2 tex = ivec2(worldX - uVoxelAtlasOrigin.x, worldZ - uVoxelAtlasOrigin.y);
     if (any(lessThan(tex, ivec2(0))) || any(greaterThanEqual(tex, uVoxelAtlasSize)))
@@ -18,6 +23,42 @@ bool voxelColumnSolid(int worldX, int worldZ, int relativeLayerY)
     float surface = column.r;
     float bottom = column.g;
     return float(relativeLayerY) >= bottom && float(relativeLayerY) <= surface;
+}
+
+bool voxelColumnSolidCoarse(int worldX, int worldZ, int relativeLayerY)
+{
+    if (uUseVoxelCoarse == 0 || uVoxelCoarseCellMeters <= 0)
+    {
+        return false;
+    }
+
+    int cell = max(1, uVoxelCoarseCellMeters);
+    ivec2 tex = ivec2(
+        (worldX - uVoxelCoarseOrigin.x) / cell,
+        (worldZ - uVoxelCoarseOrigin.y) / cell);
+    if (any(lessThan(tex, ivec2(0))) || any(greaterThanEqual(tex, uVoxelCoarseSize)))
+    {
+        return false;
+    }
+
+    vec2 column = texelFetch(uVoxelHeightAtlasCoarse, tex, 0).rg;
+    float surface = column.r;
+    float bottom = column.g;
+    return float(relativeLayerY) >= bottom && float(relativeLayerY) <= surface;
+}
+
+bool voxelColumnSolid(int worldX, int worldZ, int relativeLayerY)
+{
+    // Prefer fine near-field atlas; fall through to coarse for the far LOD ring.
+    ivec2 fineTex = ivec2(worldX - uVoxelAtlasOrigin.x, worldZ - uVoxelAtlasOrigin.y);
+    bool inFine = all(greaterThanEqual(fineTex, ivec2(0))) &&
+                  all(lessThan(fineTex, uVoxelAtlasSize));
+    if (inFine)
+    {
+        return voxelColumnSolidFine(worldX, worldZ, relativeLayerY);
+    }
+
+    return voxelColumnSolidCoarse(worldX, worldZ, relativeLayerY);
 }
 
 bool voxelRayHitsSolidBefore(vec3 origin, vec3 direction, float maxDistance)

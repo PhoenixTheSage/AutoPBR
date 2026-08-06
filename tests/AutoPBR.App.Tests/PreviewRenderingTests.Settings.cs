@@ -1,4 +1,5 @@
 using AutoPBR.App.Lang;
+using AutoPBR.App.Controls;
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.OpenGL;
 using AutoPBR.App.Rendering.Scene;
@@ -112,6 +113,13 @@ public sealed partial class PreviewRenderingTests
         Assert.Contains("Parallel.Invoke(", ground, StringComparison.Ordinal);
         Assert.Contains("TryPrepareTerrainShadowCasterSelectionsGpu(", ground, StringComparison.Ordinal);
         Assert.Contains("TryDrawTerrainShadowCastersGpu(", ground, StringComparison.Ordinal);
+        Assert.Contains("TerrainShadowRequiresCutoutSupport()", ground, StringComparison.Ordinal);
+        Assert.Contains("PreviewTerrainGrassSlots.VegetationBase", ground, StringComparison.Ordinal);
+        Assert.Contains(
+            "CPU Select (per-material albedo discard)",
+            ground,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("TryEnsureTerrainShadowGpuCutoutPath", ground, StringComparison.Ordinal);
         Assert.Contains("MultiDrawIndirectCount", ground, StringComparison.Ordinal);
         Assert.Contains("GlTerrainMeshPool", ground, StringComparison.Ordinal);
         Assert.Contains("EnsureFrameSubjectGpuUploads(ref frame);", shadow, StringComparison.Ordinal);
@@ -324,6 +332,111 @@ public sealed partial class PreviewRenderingTests
             "(!_settings.DrawPreviewSubject || _terrainStreamingNeedsFrames)",
             source,
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NativeWglContinuousFrames_ReserveCompositorTime()
+    {
+        Assert.Equal(
+            0,
+            PreviewNativeWglPresenter.ResolveContinuousFrameYieldMilliseconds(
+                TimeSpan.FromMilliseconds(10)));
+        Assert.Equal(
+            4,
+            PreviewNativeWglPresenter.ResolveContinuousFrameYieldMilliseconds(
+                TimeSpan.FromMilliseconds(25)));
+        Assert.Equal(
+            8,
+            PreviewNativeWglPresenter.ResolveContinuousFrameYieldMilliseconds(
+                TimeSpan.FromMilliseconds(50)));
+        Assert.Equal(
+            16,
+            PreviewNativeWglPresenter.ResolveContinuousFrameYieldMilliseconds(
+                TimeSpan.FromMilliseconds(100)));
+    }
+
+    [Fact]
+    public void PostCoreTerrainWarmup_SkipsExpensivePostPasses()
+    {
+        var source = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.Render.cs");
+
+        Assert.Contains("ResolveStartupFrameSettings(settings)", source, StringComparison.Ordinal);
+        Assert.Contains("ResolveTerrainInitProgressFraction() >= 1.0", source, StringComparison.Ordinal);
+        Assert.Contains("_terrainStartupReadyLatched = true", source, StringComparison.Ordinal);
+        Assert.Contains("EnableVolumetricClouds = false", source, StringComparison.Ordinal);
+        Assert.Contains("EnablePreviewTaa = false", source, StringComparison.Ordinal);
+        Assert.Contains("EnableScreenSpaceAo = false", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PostCoreTerrainWarmup_DoesNotReenterAfterCameraMovement()
+    {
+        var initSource = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.Init.cs");
+        var terrainSource = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.GroundTerrain.cs");
+
+        Assert.Contains("var terrainFrac = _terrainStartupReadyLatched", initSource, StringComparison.Ordinal);
+        Assert.Contains("!_terrainStartupReadyLatched &&", initSource, StringComparison.Ordinal);
+        Assert.Contains("!_terrainStartupReadyLatched;", terrainSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NativeWglBackendFrameRequests_BypassAvaloniaDispatcher()
+    {
+        var backend = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.cs");
+        var requestStart = backend.IndexOf("private void RequestPreviewFrame()", StringComparison.Ordinal);
+        var requestEnd = backend.IndexOf("public void Resize(", requestStart, StringComparison.Ordinal);
+        Assert.True(requestStart >= 0);
+        Assert.True(requestEnd > requestStart);
+        var request = backend[requestStart..requestEnd];
+        Assert.Contains("if (nativeWglActive)", request, StringComparison.Ordinal);
+        Assert.True(
+            request.IndexOf("request();", StringComparison.Ordinal) <
+            request.IndexOf("Dispatcher.UIThread.Post", StringComparison.Ordinal));
+
+        var control = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Controls",
+            "GlPbrPreviewControl.cs");
+        Assert.Contains(
+            "_backend.SetRequestPreviewFrame(RequestPreviewFrameFromBackend);",
+            control,
+            StringComparison.Ordinal);
+        Assert.Contains("if (Dispatcher.UIThread.CheckAccess())", control, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TerrainInitProgress_CountsOnlyCameraLocalFullChunks()
+    {
+        var source = LoadSource(ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.Init.cs");
+
+        Assert.Contains("var cameraChunk = _terrainStreamer.CameraChunk;", source, StringComparison.Ordinal);
+        Assert.Contains("key.ChebyshevDistanceToChunk(cameraChunk) <= near", source, StringComparison.Ordinal);
     }
 
     [Fact]

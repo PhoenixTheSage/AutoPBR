@@ -6,8 +6,10 @@ namespace AutoPBR.App.Rendering.Scene;
 /// Emits tree / cactus geometry into terrain material buckets, preferring
 /// origin-centered meshes baked from each block's model JSON (Explore path),
 /// with cuboid fallback when a template is missing.
-/// Block-space occupancy is identical for Full and LOD bakes; LOD cost levers are
-/// render-side only (mips, alpha/transparency, shadow distance) — never drop blocks.
+/// Full + LOD1 use Full voxel occupancy. LOD≥2 keeps the same placement roots but may
+/// stamp crossed-plane impostors so distant rings stay VRAM-tractable.
+/// When <c>smartLeaves</c> is on (OptiFine-style), FullVoxel leaf cubes omit faces buried
+/// against adjacent leaf voxels across all placements in the bake.
 /// </summary>
 public static class PreviewTerrainTreeMeshEmitter
 {
@@ -17,7 +19,9 @@ public static class PreviewTerrainTreeMeshEmitter
         float metersPerTile,
         List<float>[] buckets,
         ref int maxRelativeHeight,
-        PreviewTerrainVegetationModelTemplates? modelTemplates = null)
+        PreviewTerrainVegetationModelTemplates? modelTemplates = null,
+        PreviewTerrainVegetationEmitMode emitMode = PreviewTerrainVegetationEmitMode.FullVoxel,
+        bool smartLeaves = true)
     {
         if (placements.Count == 0 || buckets.Length == 0)
         {
@@ -33,19 +37,170 @@ public static class PreviewTerrainTreeMeshEmitter
             ? modelTemplates
             : PreviewTerrainVegetationModelTemplates.Empty;
 
+        HashSet<(int X, int Y, int Z)>? leafVoxels = null;
+        if (emitMode == PreviewTerrainVegetationEmitMode.FullVoxel && smartLeaves)
+        {
+            leafVoxels = new HashSet<(int X, int Y, int Z)>();
+            for (var i = 0; i < placements.Count; i++)
+            {
+                CollectLeafVoxels(placements[i], leafVoxels);
+            }
+        }
+
         var emittedBlocks = 0;
         foreach (var placement in placements)
         {
-            emittedBlocks += EmitOne(
-                placement,
-                surfaceWorldY,
-                metersPerTile,
-                buckets,
-                ref maxRelativeHeight,
-                templates);
+            emittedBlocks += emitMode == PreviewTerrainVegetationEmitMode.Impostor
+                ? EmitImpostor(
+                    placement,
+                    surfaceWorldY,
+                    metersPerTile,
+                    buckets,
+                    ref maxRelativeHeight)
+                : EmitOne(
+                    placement,
+                    surfaceWorldY,
+                    metersPerTile,
+                    buckets,
+                    ref maxRelativeHeight,
+                    templates,
+                    leafVoxels);
         }
 
         return emittedBlocks;
+    }
+
+    /// <summary>
+    /// Crossed vertical planes at the placement root (trunk + canopy). Same XZ as Full voxel
+    /// trees; far cheaper than stamping every canopy block.
+    /// </summary>
+    private static int EmitImpostor(
+        in PreviewTerrainTreePlacer.Placement placement,
+        float surfaceWorldY,
+        float metersPerTile,
+        List<float>[] buckets,
+        ref int maxRelativeHeight)
+    {
+        var shape = PreviewTerrainTreeSpeciesRules.GetShape(placement.Species);
+        var logSlot = placement.Materials.LogSlot;
+        var leafSlot = placement.Materials.LeavesOrTopSlot;
+        var cx = placement.RootX + 0.5f;
+        var cz = placement.RootZ + 0.5f;
+        var yBase = surfaceWorldY + placement.SurfaceHeight;
+        var yTrunkTop = yBase + Math.Max(1, placement.TrunkHeight);
+
+        if (placement.Species == PreviewTerrainTreeSpecies.Cactus ||
+            shape.Kind == PreviewTerrainTreeShapeKind.Column)
+        {
+            EmitVerticalCross(
+                cx, cz, yBase, yTrunkTop, halfWidth: 0.35f, logSlot, metersPerTile, buckets);
+            maxRelativeHeight = Math.Max(maxRelativeHeight, placement.SurfaceHeight + placement.TrunkHeight);
+            return 1;
+        }
+
+        var canopyR = Math.Max(1, shape.CanopyRadius);
+        var half = canopyR + 0.5f;
+        EmitVerticalCross(
+            cx, cz, yBase, yTrunkTop, halfWidth: 0.2f, logSlot, metersPerTile, buckets);
+        var canopyY0 = yTrunkTop - half * 0.35f;
+        var canopyY1 = yTrunkTop + half;
+        EmitVerticalCross(
+            cx, cz, canopyY0, canopyY1, half, leafSlot, metersPerTile, buckets);
+        maxRelativeHeight = Math.Max(
+            maxRelativeHeight,
+            placement.SurfaceHeight + placement.TrunkHeight + canopyR + 1);
+        return 1;
+    }
+
+    private static void EmitVerticalCross(
+        float cx,
+        float cz,
+        float y0,
+        float y1,
+        float halfWidth,
+        int slot,
+        float metersPerTile,
+        List<float>[] buckets)
+    {
+        if (y1 <= y0 + 1e-3f || halfWidth <= 1e-3f)
+        {
+            return;
+        }
+
+        // X-facing plane (extends in Z)
+        EmitWorldQuad(
+            new Vector3(cx, y0, cz - halfWidth),
+            new Vector3(cx, y0, cz + halfWidth),
+            new Vector3(cx, y1, cz + halfWidth),
+            new Vector3(cx, y1, cz - halfWidth),
+            Vector3.UnitX,
+            slot,
+            metersPerTile,
+            buckets);
+        EmitWorldQuad(
+            new Vector3(cx, y0, cz + halfWidth),
+            new Vector3(cx, y0, cz - halfWidth),
+            new Vector3(cx, y1, cz - halfWidth),
+            new Vector3(cx, y1, cz + halfWidth),
+            -Vector3.UnitX,
+            slot,
+            metersPerTile,
+            buckets);
+
+        // Z-facing plane (extends in X)
+        EmitWorldQuad(
+            new Vector3(cx - halfWidth, y0, cz),
+            new Vector3(cx + halfWidth, y0, cz),
+            new Vector3(cx + halfWidth, y1, cz),
+            new Vector3(cx - halfWidth, y1, cz),
+            Vector3.UnitZ,
+            slot,
+            metersPerTile,
+            buckets);
+        EmitWorldQuad(
+            new Vector3(cx + halfWidth, y0, cz),
+            new Vector3(cx - halfWidth, y0, cz),
+            new Vector3(cx - halfWidth, y1, cz),
+            new Vector3(cx + halfWidth, y1, cz),
+            -Vector3.UnitZ,
+            slot,
+            metersPerTile,
+            buckets);
+    }
+
+    private static void EmitWorldQuad(
+        Vector3 c0,
+        Vector3 c1,
+        Vector3 c2,
+        Vector3 c3,
+        Vector3 normal,
+        int slot,
+        float metersPerTile,
+        List<float>[] buckets)
+    {
+        if ((uint)slot >= (uint)buckets.Length)
+        {
+            return;
+        }
+
+        Span<Vector3> corners = stackalloc Vector3[4];
+        Span<Vector2> uvs = stackalloc Vector2[4];
+        corners[0] = c0;
+        corners[1] = c1;
+        corners[2] = c2;
+        corners[3] = c3;
+        for (var i = 0; i < 4; i++)
+        {
+            // Vertical impostors: U along horizontal span, V along height.
+            uvs[i] = MathF.Abs(normal.X) > 0.5f
+                ? new Vector2(corners[i].Z / metersPerTile, corners[i].Y / metersPerTile)
+                : new Vector2(corners[i].X / metersPerTile, corners[i].Y / metersPerTile);
+        }
+
+        var tangent = MathF.Abs(normal.X) > 0.5f
+            ? new Vector3(0, 0, -MathF.Sign(normal.X == 0 ? 1 : normal.X))
+            : Vector3.UnitX;
+        AddSolidFace(normal, tangent, 1f, corners, uvs, buckets[slot]);
     }
 
     private static int EmitOne(
@@ -54,7 +209,8 @@ public static class PreviewTerrainTreeMeshEmitter
         float metersPerTile,
         List<float>[] buckets,
         ref int maxRelativeHeight,
-        PreviewTerrainVegetationModelTemplates templates)
+        PreviewTerrainVegetationModelTemplates templates,
+        HashSet<(int X, int Y, int Z)>? leafVoxels)
     {
         var shape = PreviewTerrainTreeSpeciesRules.GetShape(placement.Species);
         if (placement.Species == PreviewTerrainTreeSpecies.Cactus ||
@@ -67,11 +223,140 @@ public static class PreviewTerrainTreeMeshEmitter
         return shape.Kind switch
         {
             PreviewTerrainTreeShapeKind.Conical =>
-                EmitConical(placement, shape, surfaceWorldY, metersPerTile, buckets, ref maxRelativeHeight, templates),
+                EmitConical(
+                    placement, shape, surfaceWorldY, metersPerTile, buckets, ref maxRelativeHeight,
+                    templates, leafVoxels),
             PreviewTerrainTreeShapeKind.FlatCanopy =>
-                EmitFlatCanopy(placement, shape, surfaceWorldY, metersPerTile, buckets, ref maxRelativeHeight, templates),
-            _ => EmitRoundCanopy(placement, shape, surfaceWorldY, metersPerTile, buckets, ref maxRelativeHeight, templates),
+                EmitFlatCanopy(
+                    placement, shape, surfaceWorldY, metersPerTile, buckets, ref maxRelativeHeight,
+                    templates, leafVoxels),
+            _ => EmitRoundCanopy(
+                placement, shape, surfaceWorldY, metersPerTile, buckets, ref maxRelativeHeight,
+                templates, leafVoxels),
         };
+    }
+
+    private static void CollectLeafVoxels(
+        in PreviewTerrainTreePlacer.Placement placement,
+        HashSet<(int X, int Y, int Z)> leafVoxels)
+    {
+        var shape = PreviewTerrainTreeSpeciesRules.GetShape(placement.Species);
+        if (placement.Species == PreviewTerrainTreeSpecies.Cactus ||
+            shape.Kind == PreviewTerrainTreeShapeKind.Column)
+        {
+            return;
+        }
+
+        switch (shape.Kind)
+        {
+            case PreviewTerrainTreeShapeKind.Conical:
+                CollectConicalLeaves(placement, shape, leafVoxels);
+                break;
+            case PreviewTerrainTreeShapeKind.FlatCanopy:
+                CollectFlatCanopyLeaves(placement, shape, leafVoxels);
+                break;
+            default:
+                CollectRoundCanopyLeaves(placement, shape, leafVoxels);
+                break;
+        }
+    }
+
+    private static void CollectRoundCanopyLeaves(
+        in PreviewTerrainTreePlacer.Placement placement,
+        PreviewTerrainTreeSpeciesRules.ShapeProfile shape,
+        HashSet<(int X, int Y, int Z)> leafVoxels)
+    {
+        var trunkTopY = placement.SurfaceHeight + placement.TrunkHeight;
+        var canopyY = trunkTopY + 1;
+        var radius = shape.CanopyRadius;
+        var r2 = radius * radius + 1;
+        for (var dy = -radius; dy <= radius; dy++)
+        {
+            for (var dz = -radius; dz <= radius; dz++)
+            {
+                for (var dx = -radius; dx <= radius; dx++)
+                {
+                    var by = canopyY + dy;
+                    if (dx == 0 && dz == 0 && by <= trunkTopY)
+                    {
+                        continue;
+                    }
+
+                    var dist2 = dx * dx + dy * dy + dz * dz;
+                    if (dist2 > r2)
+                    {
+                        continue;
+                    }
+
+                    if (dist2 >= r2 - 1 && ((placement.VariantSalt ^ (dx * 31 + dz * 17 + dy)) & 7) == 0)
+                    {
+                        continue;
+                    }
+
+                    leafVoxels.Add((placement.RootX + dx, by, placement.RootZ + dz));
+                }
+            }
+        }
+    }
+
+    private static void CollectConicalLeaves(
+        in PreviewTerrainTreePlacer.Placement placement,
+        PreviewTerrainTreeSpeciesRules.ShapeProfile shape,
+        HashSet<(int X, int Y, int Z)> leafVoxels)
+    {
+        var trunkTopY = placement.SurfaceHeight + placement.TrunkHeight;
+        var baseY = placement.SurfaceHeight + Math.Max(2, placement.TrunkHeight / 3);
+        var tipY = trunkTopY + 2;
+        for (var by = baseY; by <= tipY; by++)
+        {
+            var t = tipY == baseY ? 1f : (tipY - by) / (float)(tipY - baseY);
+            var radius = Math.Max(0, (int)Math.Round(shape.CanopyRadius * t));
+            for (var dz = -radius; dz <= radius; dz++)
+            {
+                for (var dx = -radius; dx <= radius; dx++)
+                {
+                    if (dx == 0 && dz == 0 && by <= trunkTopY)
+                    {
+                        continue;
+                    }
+
+                    if (Math.Abs(dx) + Math.Abs(dz) > radius + 1)
+                    {
+                        continue;
+                    }
+
+                    leafVoxels.Add((placement.RootX + dx, by, placement.RootZ + dz));
+                }
+            }
+        }
+    }
+
+    private static void CollectFlatCanopyLeaves(
+        in PreviewTerrainTreePlacer.Placement placement,
+        PreviewTerrainTreeSpeciesRules.ShapeProfile shape,
+        HashSet<(int X, int Y, int Z)> leafVoxels)
+    {
+        var branchReach = 1 + (placement.VariantSalt & 1);
+        var dir = (placement.VariantSalt >> 2) & 3;
+        var bx = placement.RootX + (dir switch { 0 => branchReach, 1 => -branchReach, _ => 0 });
+        var bz = placement.RootZ + (dir switch { 2 => branchReach, 3 => -branchReach, _ => 0 });
+        var canopyY = placement.SurfaceHeight + placement.TrunkHeight + 1;
+        var radius = shape.CanopyRadius;
+        for (var dy = 0; dy <= 1; dy++)
+        {
+            for (var dz = -radius; dz <= radius; dz++)
+            {
+                for (var dx = -radius; dx <= radius; dx++)
+                {
+                    if (Math.Abs(dx) == radius && Math.Abs(dz) == radius)
+                    {
+                        continue;
+                    }
+
+                    leafVoxels.Add((bx + dx, canopyY + dy, bz + dz));
+                }
+            }
+        }
     }
 
     private static bool TryStampBlock(
@@ -110,19 +395,24 @@ public static class PreviewTerrainTreeMeshEmitter
         float surfaceWorldY,
         float metersPerTile,
         List<float>[] buckets,
-        PreviewTerrainVegetationModelTemplates templates)
+        PreviewTerrainVegetationModelTemplates templates,
+        HashSet<(int X, int Y, int Z)>? leafVoxels = null)
     {
-        if (TryStampBlock(
-                templates,
-                placement.Species,
-                leaves,
-                bx,
-                by,
-                bz,
-                surfaceWorldY,
-                buckets))
+        // Smart-leaves needs per-face neighbor tests; model-JSON stamps emit fixed quads.
+        if (leafVoxels is null || !leaves)
         {
-            return;
+            if (TryStampBlock(
+                    templates,
+                    placement.Species,
+                    leaves,
+                    bx,
+                    by,
+                    bz,
+                    surfaceWorldY,
+                    buckets))
+            {
+                return;
+            }
         }
 
         if (placement.Species == PreviewTerrainTreeSpecies.Cactus)
@@ -131,7 +421,16 @@ public static class PreviewTerrainTreeMeshEmitter
             return;
         }
 
-        EmitBlock(bx, by, bz, sideSlot, ySlot, surfaceWorldY, metersPerTile, buckets);
+        EmitBlock(
+            bx,
+            by,
+            bz,
+            sideSlot,
+            ySlot,
+            surfaceWorldY,
+            metersPerTile,
+            buckets,
+            leaves ? leafVoxels : null);
     }
 
     private static int EmitCactus(
@@ -357,7 +656,8 @@ public static class PreviewTerrainTreeMeshEmitter
         float metersPerTile,
         List<float>[] buckets,
         ref int maxRelativeHeight,
-        PreviewTerrainVegetationModelTemplates templates)
+        PreviewTerrainVegetationModelTemplates templates,
+        HashSet<(int X, int Y, int Z)>? leafVoxels)
     {
         var count = EmitTrunkAndOptionalBranches(
             placement, shape, surfaceWorldY, metersPerTile, buckets, ref maxRelativeHeight, templates);
@@ -398,7 +698,8 @@ public static class PreviewTerrainTreeMeshEmitter
                         surfaceWorldY,
                         metersPerTile,
                         buckets,
-                        templates);
+                        templates,
+                        leafVoxels);
                     maxRelativeHeight = Math.Max(maxRelativeHeight, by);
                     count++;
                 }
@@ -415,7 +716,8 @@ public static class PreviewTerrainTreeMeshEmitter
         float metersPerTile,
         List<float>[] buckets,
         ref int maxRelativeHeight,
-        PreviewTerrainVegetationModelTemplates templates)
+        PreviewTerrainVegetationModelTemplates templates,
+        HashSet<(int X, int Y, int Z)>? leafVoxels)
     {
         var count = EmitTrunkAndOptionalBranches(
             placement, shape, surfaceWorldY, metersPerTile, buckets, ref maxRelativeHeight, templates);
@@ -450,7 +752,8 @@ public static class PreviewTerrainTreeMeshEmitter
                         surfaceWorldY,
                         metersPerTile,
                         buckets,
-                        templates);
+                        templates,
+                        leafVoxels);
                     maxRelativeHeight = Math.Max(maxRelativeHeight, by);
                     count++;
                 }
@@ -467,7 +770,8 @@ public static class PreviewTerrainTreeMeshEmitter
         float metersPerTile,
         List<float>[] buckets,
         ref int maxRelativeHeight,
-        PreviewTerrainVegetationModelTemplates templates)
+        PreviewTerrainVegetationModelTemplates templates,
+        HashSet<(int X, int Y, int Z)>? leafVoxels)
     {
         var count = EmitTrunkAndOptionalBranches(
             placement, shape, surfaceWorldY, metersPerTile, buckets, ref maxRelativeHeight, templates);
@@ -515,7 +819,8 @@ public static class PreviewTerrainTreeMeshEmitter
                         surfaceWorldY,
                         metersPerTile,
                         buckets,
-                        templates);
+                        templates,
+                        leafVoxels);
                     maxRelativeHeight = Math.Max(maxRelativeHeight, by);
                     count++;
                 }
@@ -604,7 +909,8 @@ public static class PreviewTerrainTreeMeshEmitter
         float surfaceWorldY,
         float metersPerTile,
         List<float>[] buckets,
-        PreviewTerrainVegetationModelTemplates templates) =>
+        PreviewTerrainVegetationModelTemplates templates,
+        HashSet<(int X, int Y, int Z)>? leafVoxels = null) =>
         EmitVegetationBlock(
             placement,
             bx,
@@ -616,11 +922,14 @@ public static class PreviewTerrainTreeMeshEmitter
             surfaceWorldY,
             metersPerTile,
             buckets,
-            templates);
+            templates,
+            leafVoxels);
 
     /// <summary>
     /// Emits a 1×1×1 block. Side faces use <paramref name="sideSlot"/>; Y faces use
     /// <paramref name="ySlot"/> (log top / cactus top / leaves).
+    /// When <paramref name="cullAgainstLeaves"/> is set (OptiFine smart leaves), faces whose
+    /// neighbor voxel is also a leaf are omitted.
     /// </summary>
     public static void EmitBlock(
         int bx,
@@ -630,14 +939,41 @@ public static class PreviewTerrainTreeMeshEmitter
         int ySlot,
         float surfaceWorldY,
         float metersPerTile,
-        List<float>[] buckets)
+        List<float>[] buckets,
+        HashSet<(int X, int Y, int Z)>? cullAgainstLeaves = null)
     {
-        EmitFace(axis: 1, positive: true, bx, by, bz, ySlot, surfaceWorldY, metersPerTile, buckets);
-        EmitFace(axis: 1, positive: false, bx, by, bz, ySlot, surfaceWorldY, metersPerTile, buckets);
-        EmitFace(axis: 0, positive: true, bx, by, bz, sideSlot, surfaceWorldY, metersPerTile, buckets);
-        EmitFace(axis: 0, positive: false, bx, by, bz, sideSlot, surfaceWorldY, metersPerTile, buckets);
-        EmitFace(axis: 2, positive: true, bx, by, bz, sideSlot, surfaceWorldY, metersPerTile, buckets);
-        EmitFace(axis: 2, positive: false, bx, by, bz, sideSlot, surfaceWorldY, metersPerTile, buckets);
+        TryEmitFace(axis: 1, positive: true, bx, by, bz, ySlot, surfaceWorldY, metersPerTile, buckets, cullAgainstLeaves);
+        TryEmitFace(axis: 1, positive: false, bx, by, bz, ySlot, surfaceWorldY, metersPerTile, buckets, cullAgainstLeaves);
+        TryEmitFace(axis: 0, positive: true, bx, by, bz, sideSlot, surfaceWorldY, metersPerTile, buckets, cullAgainstLeaves);
+        TryEmitFace(axis: 0, positive: false, bx, by, bz, sideSlot, surfaceWorldY, metersPerTile, buckets, cullAgainstLeaves);
+        TryEmitFace(axis: 2, positive: true, bx, by, bz, sideSlot, surfaceWorldY, metersPerTile, buckets, cullAgainstLeaves);
+        TryEmitFace(axis: 2, positive: false, bx, by, bz, sideSlot, surfaceWorldY, metersPerTile, buckets, cullAgainstLeaves);
+    }
+
+    private static void TryEmitFace(
+        int axis,
+        bool positive,
+        int bx,
+        int by,
+        int bz,
+        int slot,
+        float surfaceWorldY,
+        float metersPerTile,
+        List<float>[] buckets,
+        HashSet<(int X, int Y, int Z)>? cullAgainstLeaves)
+    {
+        if (cullAgainstLeaves is not null)
+        {
+            var nx = bx + (axis == 0 ? (positive ? 1 : -1) : 0);
+            var ny = by + (axis == 1 ? (positive ? 1 : -1) : 0);
+            var nz = bz + (axis == 2 ? (positive ? 1 : -1) : 0);
+            if (cullAgainstLeaves.Contains((nx, ny, nz)))
+            {
+                return;
+            }
+        }
+
+        EmitFace(axis, positive, bx, by, bz, slot, surfaceWorldY, metersPerTile, buckets);
     }
 
     private static void EmitFace(

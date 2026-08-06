@@ -596,8 +596,217 @@ public sealed class PreviewTerrainTests
             PreviewStageConstants.TerrainLodDetailFadeWidthMeters,
             fadeEnd - fadeStart,
             precision: 3);
+        Assert.Equal(32f, PreviewStageConstants.TerrainLodDetailFadeWidthMeters);
+        Assert.Equal(3, TerrainChunkStreamer.ResolveLodFadeOverlapChunks());
         Assert.False(TerrainChunkStreamer.IsOutermostLodLevel(8, 128, 0));
         Assert.True(TerrainChunkStreamer.IsOutermostLodLevel(8, 128, 7));
+    }
+
+    [Fact]
+    public void TerrainChunkStreamer_adjacent_underlay_keeps_lod2_out_of_full_disk()
+    {
+        var cam = new TerrainChunkKey(0, 0);
+        var desired = TerrainChunkStreamer.BuildDesiredResidency(cam, hardRadius: 8, lodRingChunks: 64);
+        Assert.DoesNotContain(
+            desired,
+            kv => kv.Key.LodLevel >= 2 && kv.Key.OverlapsFullDisk(cam, 8));
+        // LOD1 may still underlay the Full outer fade ring.
+        Assert.Contains(
+            desired,
+            kv => kv.Key.LodLevel == 1 && kv.Key.OverlapsFullDisk(cam, 8));
+    }
+
+    [Fact]
+    public void BuildDiskPrefetchResidency_covers_all_active_lod_levels_over_ring()
+    {
+        var cam = new TerrainChunkKey(0, 0);
+        const int hard = 4;
+        const int ring = 64;
+        var levels = TerrainChunkStreamer.ResolveActiveLodLevelCount(ring);
+        Assert.True(levels >= 3);
+
+        var desired = TerrainChunkStreamer.BuildDesiredResidency(cam, hard, ring);
+        var prefetch = TerrainChunkStreamer.BuildDiskPrefetchResidency(cam, hard, ring);
+
+        // Prefetch has every active level; desired is band-primary (+ thin underlay) only.
+        for (byte level = 1; level <= levels; level++)
+        {
+            Assert.Contains(prefetch, kv => kv.Key.LodLevel == level);
+        }
+
+        Assert.True(prefetch.Count > desired.Count(kv => kv.Key.IsLod));
+
+        // A world cell in a mid band should be coverable by both its band LOD and neighbors on disk.
+        Span<TerrainChunkStreamer.LodBand> bands = stackalloc TerrainChunkStreamer.LodBand[TerrainResidencyKey.MaxLodLevel];
+        var bandCount = TerrainChunkStreamer.ResolveLodBands(hard, ring, bands);
+        Assert.True(bandCount >= 2);
+        var mid = bands[1];
+        Assert.Contains(
+            prefetch,
+            kv => kv.Key.LodLevel == mid.Level &&
+                  kv.Key.ChebyshevDistanceToChunk(cam) <= mid.DMax &&
+                  kv.Key.MaxChebyshevDistanceToChunk(cam) >= mid.DMin);
+        Assert.Contains(
+            prefetch,
+            kv => kv.Key.LodLevel != mid.Level &&
+                  kv.Key.LodLevel >= 1 &&
+                  kv.Key.ChebyshevDistanceToChunk(cam) <= mid.DMax &&
+                  kv.Key.MaxChebyshevDistanceToChunk(cam) >= mid.DMin);
+    }
+
+    [Fact]
+    public void TerrainChunkStreamer_disk_prefetch_picks_when_gpu_desired_idle()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "autopbr-lod-prefetch-" + Guid.NewGuid().ToString("N"));
+        using var streamer = new TerrainChunkStreamer(new TerrainLodDiskCache(root));
+        try
+        {
+            streamer.Tick(Vector3.Zero, chunkViewDistance: 2, lodRingChunks: 16);
+            streamer.SetScheduleMaxRingForTests(streamer.LodRadiusChunks);
+            foreach (var (k, want) in streamer.SnapshotDesired())
+            {
+                streamer.NotifyUploaded(k, want);
+            }
+
+            Assert.True(streamer.TryPickJobForTests(out var key, out var lod, allowDiskPrefetch: true));
+            Assert.True(key.IsLod);
+            Assert.True(lod.IsLod());
+            Assert.False(streamer.SnapshotDesired().ContainsKey(key));
+            Assert.True(streamer.SnapshotDiskPrefetchForTests().ContainsKey(key));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void TerrainChunkStreamer_reserved_disk_warm_runs_after_unlocked_window_is_satisfied()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "autopbr-lod-warm-" + Guid.NewGuid().ToString("N"));
+        using var streamer = new TerrainChunkStreamer(new TerrainLodDiskCache(root));
+        try
+        {
+            streamer.Tick(Vector3.Zero, chunkViewDistance: 2, lodRingChunks: 16);
+            streamer.SetScheduleMaxRingForTests(streamer.LodRadiusChunks);
+            foreach (var (k, want) in streamer.SnapshotDesired())
+            {
+                streamer.NotifyUploaded(k, want);
+            }
+
+            Assert.True(streamer.TryPickJobForTests(
+                out var key,
+                out var lod,
+                allowDiskPrefetch: true,
+                preferLodLane: true,
+                preferDiskWarm: true));
+            Assert.True(key.IsLod);
+            Assert.True(lod.IsLod());
+            Assert.False(streamer.SnapshotDesired().ContainsKey(key));
+            Assert.True(streamer.SnapshotDiskPrefetchForTests().ContainsKey(key));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void IsTransitionCoverageKey_protects_seam_not_distant_coarse()
+    {
+        var cam = new TerrainChunkKey(0, 0);
+        const int hard = 8;
+        Assert.True(
+            TerrainChunkStreamer.IsTransitionCoverageKey(TerrainResidencyKey.Full(0, 0), cam, hard));
+        Assert.True(
+            TerrainChunkStreamer.IsTransitionCoverageKey(
+                TerrainResidencyKey.Section(4, 0, lodLevel: 1), cam, hard));
+        // Coarse Lod7 far out must not be treated as seam coverage (old ChunksPerSide bug).
+        Assert.False(
+            TerrainChunkStreamer.IsTransitionCoverageKey(
+                TerrainResidencyKey.Section(8, 0, lodLevel: 7), cam, hard));
+    }
+
+    [Fact]
+    public void TerrainResidencyDiagnostics_separates_gpu_fake_park_and_unlocked()
+    {
+        var cam = new TerrainChunkKey(0, 0);
+        var desired = new Dictionary<TerrainResidencyKey, TerrainChunkLodKind>
+        {
+            [TerrainResidencyKey.Full(0, 0)] = TerrainChunkLodKind.Full,
+            [TerrainResidencyKey.Full(1, 0)] = TerrainChunkLodKind.Full,
+            [TerrainResidencyKey.Section(2, 0, 1)] = TerrainChunkLodKind.Lod1,
+            [TerrainResidencyKey.Section(8, 0, 3)] = TerrainChunkLodKind.Lod3,
+        };
+        var gpu = new HashSet<TerrainResidencyKey> { TerrainResidencyKey.Full(0, 0) };
+        var deferred = new HashSet<TerrainResidencyKey>
+        {
+            TerrainResidencyKey.Full(1, 0), // retry — not streamer-resident
+            TerrainResidencyKey.Section(8, 0, 3), // fake-park — streamer-resident
+        };
+        var streamerResident = new HashSet<TerrainResidencyKey>
+        {
+            TerrainResidencyKey.Full(0, 0),
+            TerrainResidencyKey.Section(8, 0, 3),
+        };
+
+        var counts = TerrainResidencyDiagnostics.Count(
+            desired,
+            gpu,
+            deferred,
+            streamerResident.Contains,
+            cam,
+            scheduleMaxRing: 4);
+
+        Assert.Equal(1, counts.GpuResident);
+        Assert.Equal(1, counts.FakeParked);
+        Assert.Equal(1, counts.DeferredRetry);
+        Assert.Equal(3, counts.UnlockedDesired); // Full×2 + Lod1 ring≤4; Lod3 ring far
+        Assert.Equal(4, counts.DesiredTotal);
+        Assert.Contains("gpuResident=1", counts.Format(), StringComparison.Ordinal);
+        Assert.Contains("fakeParked=1", counts.Format(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EstimateTerrainMeshPoolNeedBytes_impostor_bands_cheaper_than_all_voxel()
+    {
+        // Far ring with impostor LOD≥2 should stay below a naive all-voxel estimate.
+        var need = PreviewStageConstants.EstimateTerrainMeshPoolNeedBytes(8, 256);
+        var reserved = PreviewStageConstants.EstimateTerrainMeshPoolReservedBytes(8, 256);
+        Assert.True(need > reserved);
+        Assert.True(
+            PreviewStageConstants.TerrainMeshPoolEstimateLodImpostorBytesPerWorldChunk <
+            PreviewStageConstants.TerrainMeshPoolEstimateLodVegBytesPerWorldChunk);
+    }
+
+    [Fact]
+    public void EstimateTerrainMeshPoolNeedBytes_keep_thinning_reduces_far_need()
+    {
+        // P11.1 scales impostor cost by keep fraction on LOD≥3; total far need must drop vs
+        // a naive estimate that ignores thinning (reconstructed by temporarily treating keep=1).
+        var thinned = PreviewStageConstants.EstimateTerrainMeshPoolNeedBytes(8, 256);
+        Assert.True(thinned > 0);
+        Assert.Equal(0.25f, PreviewStageConstants.ResolveLodVegetationKeepFraction(5));
+        Assert.True(
+            PreviewStageConstants.ResolveLodVegetationKeepFraction(3) <
+            PreviewStageConstants.ResolveLodVegetationKeepFraction(2));
+    }
+
+    [Fact]
+    public void EstimateTerrainMeshPoolReservedBytes_is_less_than_total_far_need()
+    {
+        var reserved = PreviewStageConstants.EstimateTerrainMeshPoolReservedBytes(8, 256);
+        var total = PreviewStageConstants.EstimateTerrainMeshPoolNeedBytes(8, 256);
+        var distant = PreviewStageConstants.EstimateTerrainMeshPoolDistantLodBytes(8, 256);
+        Assert.True(reserved > 0);
+        Assert.True(total > reserved);
+        Assert.Equal(total - reserved, distant);
     }
 
     [Fact]
@@ -701,9 +910,67 @@ public sealed class PreviewTerrainTests
     }
 
     [Fact]
+    public void TerrainLodDiskCache_round_trips_and_fingerprint_mismatch_misses()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "autopbr-lod-disk-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var disk = new TerrainLodDiskCache(root);
+            var residency = TerrainResidencyKey.Section(2, -1, 2);
+            var fingerprint = TerrainLodCacheFingerprint.From(
+                PreviewTerrainWorldGenSettings.Default,
+                PreviewTerrainGrassBakeSettings.BuiltIn,
+                null);
+            var key = new TerrainLodCacheKey(residency, fingerprint);
+            var mesh = PreviewTerrainLodMeshBaker.BakeLodSection(residency);
+            Assert.NotNull(mesh);
+
+            disk.TryStore(key, mesh);
+            Assert.True(File.Exists(disk.ResolvePath(key)));
+            Assert.Equal(1, disk.SuccessfulStoreCount);
+            Assert.Equal(0, disk.StoreFailureCount);
+            Assert.True(disk.TryLoad(key, out var loaded));
+            Assert.NotNull(loaded);
+            Assert.Equal(mesh.Key, loaded.Key);
+            Assert.Equal(mesh.InterleavedVertices, loaded.InterleavedVertices);
+            Assert.Equal(mesh.Indices, loaded.Indices);
+            Assert.Equal(mesh.DrawBatches.Length, loaded.DrawBatches.Length);
+            Assert.Equal(mesh.MinRelativeHeight, loaded.MinRelativeHeight);
+            Assert.Equal(mesh.MaxRelativeHeight, loaded.MaxRelativeHeight);
+
+            var mismatched = new TerrainLodCacheKey(
+                residency,
+                fingerprint with { Seed = fingerprint.Seed + 1 });
+            Assert.False(disk.TryLoad(mismatched, out _));
+
+            disk.Clear();
+            Assert.False(Directory.Exists(root) && Directory.EnumerateFileSystemEntries(root).Any());
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void TerrainLodDiskCache_default_root_uses_roaming_app_data()
+    {
+        var disk = new TerrainLodDiskCache();
+        var expected = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "AutoPBR",
+            "terrain-lod-cache");
+        Assert.Equal(expected, disk.RootDirectory);
+    }
+
+    [Fact]
     public void TerrainChunkStreamer_InvalidateAll_clears_lod_cache()
     {
-        using var streamer = new TerrainChunkStreamer();
+        var root = Path.Combine(Path.GetTempPath(), "autopbr-lod-inv-" + Guid.NewGuid().ToString("N"));
+        using var streamer = new TerrainChunkStreamer(new TerrainLodDiskCache(root));
         var section = TerrainResidencyKey.Section(0, 1, 1);
         var mesh = PreviewTerrainLodMeshBaker.BakeLodSection(section);
         Assert.NotNull(mesh);
@@ -714,10 +981,52 @@ public sealed class PreviewTerrainTests
                 streamer.GrassBakeSettings,
                 streamer.VegetationBakePlan));
         streamer.LodCache.Store(cacheKey, mesh);
+        streamer.LodDiskCache.TryStore(cacheKey, mesh);
         Assert.Equal(1, streamer.LodCache.Count);
+        Assert.True(File.Exists(streamer.LodDiskCache.ResolvePath(cacheKey)));
 
         streamer.InvalidateAll();
         Assert.Equal(0, streamer.LodCache.Count);
+        Assert.False(File.Exists(streamer.LodDiskCache.ResolvePath(cacheKey)));
+    }
+
+    [Fact]
+    public void TerrainChunkStreamer_InvalidateAll_preserves_schedule_hold()
+    {
+        using var streamer = new TerrainChunkStreamer();
+        streamer.HoldScheduleExpansion = true;
+
+        streamer.InvalidateAll();
+
+        Assert.True(streamer.HoldScheduleExpansion);
+    }
+
+    [Fact]
+    public void TerrainGpuLodMinLevel_keeps_lod1_and_2_on_worker_cpu()
+    {
+        Assert.Equal(3, PreviewStageConstants.TerrainGpuLodMinLevel);
+        Assert.True(PreviewStageConstants.TerrainGpuLodMinLevel > 2);
+    }
+
+    [Fact]
+    public void TerrainGpuLodJob_bake_matches_BakeLodSection()
+    {
+        var section = TerrainResidencyKey.Section(1, 1, PreviewStageConstants.TerrainGpuLodMinLevel);
+        var grass = PreviewTerrainGrassBakeSettings.BuiltIn;
+        var gen = PreviewTerrainWorldGenSettings.Default with { Seed = 42 };
+        var expected = PreviewTerrainLodMeshBaker.BakeLodSection(section, gen, grass);
+        Assert.NotNull(expected);
+
+        var job = new TerrainGpuLodJob(section, grass, gen);
+        var actual = PreviewTerrainLodMeshBaker.BakeLodSection(
+            job.Key,
+            job.WorldGen,
+            job.GrassSettings,
+            job.Vegetation);
+        Assert.NotNull(actual);
+        Assert.Equal(expected.InterleavedVertices.Length, actual.InterleavedVertices.Length);
+        Assert.Equal(expected.Indices.Length, actual.Indices.Length);
+        Assert.Equal(expected.Key, actual.Key);
     }
 
     [Fact]
@@ -764,6 +1073,107 @@ public sealed class PreviewTerrainTests
     }
 
     [Fact]
+    public void HasFullDiskGpuCoverageForLodSection_pins_until_full_chunks_resident()
+    {
+        var cam = new TerrainChunkKey(0, 0);
+        var section = TerrainResidencyKey.Section(0, 0, lodLevel: 2);
+        var resident = new HashSet<TerrainResidencyKey>();
+        Assert.False(
+            TerrainChunkStreamer.HasFullDiskGpuCoverageForLodSection(
+                section, cam, hardRadiusChunks: 8, resident.Contains));
+
+        // Cover only part of the Full footprint — still incomplete.
+        for (var z = 0; z < 2; z++)
+        {
+            for (var x = 0; x < 2; x++)
+            {
+                resident.Add(TerrainResidencyKey.Full(x, z));
+            }
+        }
+
+        Assert.False(
+            TerrainChunkStreamer.HasFullDiskGpuCoverageForLodSection(
+                section, cam, hardRadiusChunks: 8, resident.Contains));
+
+        for (var z = section.OriginChunkZ; z < section.OriginChunkZ + section.ChunksPerSide; z++)
+        {
+            for (var x = section.OriginChunkX; x < section.OriginChunkX + section.ChunksPerSide; x++)
+            {
+                if (Math.Max(Math.Abs(x - cam.X), Math.Abs(z - cam.Z)) <= 8)
+                {
+                    resident.Add(TerrainResidencyKey.Full(x, z));
+                }
+            }
+        }
+
+        Assert.True(
+            TerrainChunkStreamer.HasFullDiskGpuCoverageForLodSection(
+                section, cam, hardRadiusChunks: 8, resident.Contains));
+    }
+
+    [Fact]
+    public void HasFootprintReplacementCoverage_pins_lod_skirt_until_replacement_resident()
+    {
+        var cam = new TerrainChunkKey(0, 0);
+        // LOD2 4×4 section straddling Full disk edge when hardRadius=2.
+        var leaving = TerrainResidencyKey.Section(0, 0, lodLevel: 2);
+        var residents = new HashSet<TerrainResidencyKey> { leaving };
+
+        // Full-disk cells alone are not enough — skirt outside hard radius must be covered too.
+        for (var z = leaving.OriginChunkZ; z < leaving.OriginChunkZ + leaving.ChunksPerSide; z++)
+        {
+            for (var x = leaving.OriginChunkX; x < leaving.OriginChunkX + leaving.ChunksPerSide; x++)
+            {
+                if (Math.Max(Math.Abs(x - cam.X), Math.Abs(z - cam.Z)) <= 2)
+                {
+                    residents.Add(TerrainResidencyKey.Full(x, z));
+                }
+            }
+        }
+
+        Assert.True(
+            TerrainChunkStreamer.HasFullDiskGpuCoverageForLodSection(
+                leaving, cam, hardRadiusChunks: 2, residents.Contains));
+        Assert.False(
+            TerrainChunkStreamer.HasFootprintReplacementCoverage(
+                leaving, cam, keepRadiusChunks: 8, residents));
+
+        // Cover the remaining skirt with a neighbor LOD1 section grid.
+        for (var z = leaving.OriginChunkZ; z < leaving.OriginChunkZ + leaving.ChunksPerSide; z++)
+        {
+            for (var x = leaving.OriginChunkX; x < leaving.OriginChunkX + leaving.ChunksPerSide; x++)
+            {
+                if (Math.Max(Math.Abs(x - cam.X), Math.Abs(z - cam.Z)) <= 2)
+                {
+                    continue;
+                }
+
+                residents.Add(TerrainResidencyKey.FromChunk(new TerrainChunkKey(x, z), lodLevel: 1));
+            }
+        }
+
+        Assert.True(
+            TerrainChunkStreamer.HasFootprintReplacementCoverage(
+                leaving, cam, keepRadiusChunks: 8, residents));
+    }
+
+    [Fact]
+    public void ResolveSoftUnloadHysteresisChunks_scales_with_lod_section_size()
+    {
+        Assert.Equal(
+            PreviewStageConstants.TerrainSoftUnloadHysteresisChunks,
+            TerrainChunkStreamer.ResolveSoftUnloadHysteresisChunks(TerrainResidencyKey.Full(0, 0)));
+        Assert.Equal(
+            Math.Max(PreviewStageConstants.TerrainSoftUnloadHysteresisChunks, 4),
+            TerrainChunkStreamer.ResolveSoftUnloadHysteresisChunks(
+                TerrainResidencyKey.Section(0, 0, lodLevel: 2)));
+        Assert.Equal(
+            Math.Max(PreviewStageConstants.TerrainSoftUnloadHysteresisChunks, 16),
+            TerrainChunkStreamer.ResolveSoftUnloadHysteresisChunks(
+                TerrainResidencyKey.Section(0, 0, lodLevel: 4)));
+    }
+
+    [Fact]
     public void TerrainStreamSchedule_same_ring_orders_clockwise()
     {
         var cam = new TerrainChunkKey(0, 0);
@@ -792,6 +1202,49 @@ public sealed class PreviewTerrainTests
     }
 
     [Fact]
+    public void TerrainChunkStreamer_soft_start_waits_for_stage2_lod_queue()
+    {
+        using var streamer = new TerrainChunkStreamer();
+        streamer.Tick(Vector3.Zero, chunkViewDistance: 4, lodRingChunks: 8);
+        streamer.SetScheduleMaxRingForTests(4);
+        foreach (var (k, want) in streamer.SnapshotDesired())
+        {
+            if (want == TerrainChunkLodKind.Full ||
+                TerrainChunkStreamer.IsSoftStartUngatedKey(k, streamer.CameraChunk, 4) ||
+                TerrainStreamSchedule.RingIndex(k, streamer.CameraChunk) <= 4)
+            {
+                streamer.NotifyUploaded(k, want);
+            }
+        }
+
+        // Window is saturated — Stage-2 LOD queue must still block band unlock.
+        streamer.EnqueueGpuLodJobForTests(new TerrainGpuLodJob(
+            TerrainResidencyKey.Section(20, 20, 3),
+            streamer.GrassBakeSettings,
+            streamer.WorldGenSettings));
+        Assert.Equal(1, streamer.GpuLodJobCount);
+        Assert.False(streamer.TryPickJobForTests(out _, out _));
+        Assert.Equal(4, streamer.ScheduleMaxRing);
+
+        streamer.DrainAbandonedGpuLodJobs();
+        Assert.Equal(0, streamer.GpuLodJobCount);
+        Assert.False(streamer.TryPickJobForTests(out _, out _));
+        var expected = TerrainChunkStreamer.ResolveNextScheduleMaxRing(4, 8, 4);
+        Assert.Equal(expected, streamer.ScheduleMaxRing);
+    }
+
+    [Fact]
+    public void TerrainChunkStreamer_soft_start_does_not_expand_before_first_tick()
+    {
+        using var streamer = new TerrainChunkStreamer();
+        var start = streamer.ScheduleMaxRing;
+
+        Assert.False(streamer.TryPickJobForTests(out _, out _));
+        Assert.Equal(start, streamer.ScheduleMaxRing);
+        Assert.True(streamer.ScheduleMaxRing <= streamer.HardRadiusChunks);
+    }
+
+    [Fact]
     public void TerrainChunkStreamer_soft_start_gates_lod_but_full_always_eligible()
     {
         using var streamer = new TerrainChunkStreamer();
@@ -800,10 +1253,11 @@ public sealed class PreviewTerrainTests
         Assert.True(streamer.ScheduleMaxRing >= 4);
 
         streamer.SetScheduleMaxRingForTests(4);
-        // Saturate Full + LOD within hard radius.
+        // Saturate Full + unlocked LOD + ungated transition seam.
         foreach (var (k, want) in streamer.SnapshotDesired())
         {
             if (want == TerrainChunkLodKind.Full ||
+                TerrainChunkStreamer.IsSoftStartUngatedKey(k, streamer.CameraChunk, 4) ||
                 TerrainStreamSchedule.RingIndex(k, streamer.CameraChunk) <= 4)
             {
                 streamer.NotifyUploaded(k, want);
@@ -811,10 +1265,149 @@ public sealed class PreviewTerrainTests
         }
 
         Assert.False(streamer.TryPickJobForTests(out _, out _));
-        Assert.Equal(5, streamer.ScheduleMaxRing);
+        var expected = TerrainChunkStreamer.ResolveNextScheduleMaxRing(4, 8, 4);
+        Assert.Equal(expected, streamer.ScheduleMaxRing);
         Assert.True(streamer.TryPickJobForTests(out var outer, out var outerLod));
         Assert.True(outerLod.IsLod());
-        Assert.Equal(5, TerrainStreamSchedule.RingIndex(outer, streamer.CameraChunk));
+        Assert.True(TerrainStreamSchedule.RingIndex(outer, streamer.CameraChunk) <= expected);
+        Assert.True(TerrainStreamSchedule.RingIndex(outer, streamer.CameraChunk) > 4);
+    }
+
+    [Fact]
+    public void TerrainChunkStreamer_hold_blocks_schedule_unlock_until_cleared()
+    {
+        using var streamer = new TerrainChunkStreamer();
+        streamer.Tick(Vector3.Zero, chunkViewDistance: 4, lodRingChunks: 8);
+        streamer.SetScheduleMaxRingForTests(4);
+        foreach (var (k, want) in streamer.SnapshotDesired())
+        {
+            if (want == TerrainChunkLodKind.Full ||
+                TerrainChunkStreamer.IsSoftStartUngatedKey(k, streamer.CameraChunk, 4) ||
+                TerrainStreamSchedule.RingIndex(k, streamer.CameraChunk) <= 4)
+            {
+                streamer.NotifyUploaded(k, want);
+            }
+        }
+
+        streamer.HoldScheduleExpansion = true;
+        Assert.False(streamer.TryPickJobForTests(out _, out _));
+        Assert.Equal(4, streamer.ScheduleMaxRing);
+
+        streamer.HoldScheduleExpansion = false;
+        Assert.False(streamer.TryPickJobForTests(out _, out _));
+        Assert.Equal(
+            TerrainChunkStreamer.ResolveNextScheduleMaxRing(4, 8, 4),
+            streamer.ScheduleMaxRing);
+    }
+
+    [Fact]
+    public void TerrainChunkStreamer_reserves_lod_lane_while_hard_full_is_incomplete()
+    {
+        using var streamer = new TerrainChunkStreamer();
+        streamer.Tick(Vector3.Zero, chunkViewDistance: 2, lodRingChunks: 8);
+
+        // Full bakes can be expensive when vegetation is enabled. LOD coverage must not be
+        // globally serialized behind the complete hard Full disk.
+        Assert.True(streamer.TryPickJobForTests(out var key, out var lod, preferLodLane: true));
+        Assert.True(lod.IsLod());
+        Assert.True(key.IsLod);
+
+        // The complementary lane still prioritizes camera-nearest Full.
+        Assert.True(streamer.TryPickJobForTests(out var fullKey, out var fullLod));
+        Assert.Equal(TerrainChunkLodKind.Full, fullLod);
+        Assert.True(fullKey.IsFull);
+    }
+
+    [Fact]
+    public void TerrainChunkStreamer_soft_start_does_not_race_while_full_pending()
+    {
+        using var streamer = new TerrainChunkStreamer();
+        streamer.Tick(Vector3.Zero, chunkViewDistance: 8, lodRingChunks: 512);
+        var start = streamer.ScheduleMaxRing;
+        Assert.True(start <= streamer.HardRadiusChunks);
+
+        // With Full still pending, picks must not unlock the entire 520-chunk lod radius.
+        Assert.True(streamer.TryPickJobForTests(out _, out _));
+        Assert.True(streamer.TryPickJobForTests(out _, out _, preferLodLane: true));
+        Assert.Equal(start, streamer.ScheduleMaxRing);
+        Assert.True(streamer.ScheduleMaxRing < streamer.LodRadiusChunks);
+    }
+
+    [Fact]
+    public void TerrainChunkStreamer_disk_warm_does_not_steal_while_full_pending()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "autopbr-lod-warm-steal-" + Guid.NewGuid().ToString("N"));
+        using var streamer = new TerrainChunkStreamer(new TerrainLodDiskCache(root));
+        try
+        {
+            streamer.Tick(Vector3.Zero, chunkViewDistance: 8, lodRingChunks: 512);
+            Assert.True(streamer.TryPickJobForTests(
+                out var key,
+                out var lod,
+                allowDiskPrefetch: true,
+                preferDiskWarm: true));
+            Assert.True(key.IsFull);
+            Assert.Equal(TerrainChunkLodKind.Full, lod);
+            Assert.True(streamer.ScheduleMaxRing <= streamer.HardRadiusChunks);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void TerrainChunkStreamer_transition_lod_picks_when_schedule_ring_is_low()
+    {
+        using var streamer = new TerrainChunkStreamer();
+        streamer.Tick(Vector3.Zero, chunkViewDistance: 4, lodRingChunks: 8);
+        streamer.SetScheduleMaxRingForTests(0);
+        // Saturate Full so the next pick can be ungated transition LOD.
+        foreach (var (k, want) in streamer.SnapshotDesired())
+        {
+            if (want == TerrainChunkLodKind.Full)
+            {
+                streamer.NotifyUploaded(k, want);
+            }
+        }
+
+        Assert.True(streamer.TryPickJobForTests(out var key, out var lod));
+        Assert.True(lod.IsLod());
+        Assert.True(
+            TerrainChunkStreamer.IsSoftStartUngatedKey(key, streamer.CameraChunk, 4),
+            $"expected ungated transition LOD, got {key}");
+    }
+
+    [Fact]
+    public void ResolveNextScheduleMaxRing_jumps_to_band_end()
+    {
+        const int hard = 4;
+        const int ring = 64;
+        Span<TerrainChunkStreamer.LodBand> bands =
+            stackalloc TerrainChunkStreamer.LodBand[TerrainResidencyKey.MaxLodLevel];
+        var n = TerrainChunkStreamer.ResolveLodBands(hard, ring, bands);
+        Assert.True(n >= 2);
+        var fromHard = TerrainChunkStreamer.ResolveNextScheduleMaxRing(hard, ring, hard);
+        Assert.Equal(bands[0].DMax, fromHard);
+        var fromFirstBand = TerrainChunkStreamer.ResolveNextScheduleMaxRing(hard, ring, bands[0].DMax);
+        Assert.Equal(bands[1].DMax, fromFirstBand);
+    }
+
+    [Fact]
+    public void ApplyDesiredMembershipHysteresis_keeps_prior_lod_near_band_edge()
+    {
+        var cam = new TerrainChunkKey(0, 0);
+        var prior = TerrainChunkStreamer.BuildDesiredResidency(cam, hardRadius: 4, lodRingChunks: 32);
+        var nextCam = new TerrainChunkKey(1, 0);
+        var next = TerrainChunkStreamer.BuildDesiredResidency(nextCam, hardRadius: 4, lodRingChunks: 32);
+        var freshCount = next.Count;
+        TerrainChunkStreamer.ApplyDesiredMembershipHysteresis(
+            next, prior, nextCam, hardRadius: 4, lodRingChunks: 32);
+        Assert.True(next.Count >= freshCount);
+        Assert.Contains(next, kv => kv.Key.IsLod && prior.ContainsKey(kv.Key));
     }
 
     [Fact]
@@ -869,8 +1462,74 @@ public sealed class PreviewTerrainTests
         var extreme = PreviewStageConstants.ResolveTerrainMeshPoolBudgetBytes(8, 1024);
         Assert.True(small >= PreviewStageConstants.TerrainMeshPoolBudgetDefaultBytes);
         Assert.True(extreme > small);
-        Assert.Equal(PreviewStageConstants.TerrainMeshPoolBudgetCeilingBytes, extreme);
-        Assert.True(small <= PreviewStageConstants.TerrainMeshPoolBudgetCeilingBytes);
+        Assert.True(extreme <= PreviewStageConstants.TerrainMeshPoolBudgetUnknownCeilingBytes);
+        Assert.True(small <= PreviewStageConstants.TerrainMeshPoolBudgetUnknownCeilingBytes);
+    }
+
+    [Fact]
+    public void EstimateTerrainMeshPoolNeedBytes_is_veg_aware_and_grows_with_full_disk()
+    {
+        var near = PreviewStageConstants.EstimateTerrainMeshPoolNeedBytes(4, 8);
+        var far = PreviewStageConstants.EstimateTerrainMeshPoolNeedBytes(8, 1024);
+        Assert.True(far > near);
+
+        // Full disk alone at hard=8: 17² × ~384 KiB ≈ 108 MiB before LOD/headroom.
+        var fullOnly = PreviewStageConstants.EstimateTerrainMeshPoolNeedBytes(8, 0);
+        var fullSide = 2L * 8 + 1;
+        var fullFloor = fullSide * fullSide * PreviewStageConstants.TerrainMeshPoolEstimateFullChunkBytes;
+        Assert.True(fullOnly >= fullFloor);
+
+        // High-water feedback raises the soft target when uploads already exceeded the a-priori need.
+        const long highWater = 2L * 1024 * 1024 * 1024;
+        var withHw = PreviewStageConstants.ResolveTerrainMeshPoolBudgetBytes(4, 8, 0, highWater);
+        var withoutHw = PreviewStageConstants.ResolveTerrainMeshPoolBudgetBytes(4, 8);
+        Assert.True(withHw > withoutHw);
+        Assert.Equal(
+            Math.Min(
+                PreviewStageConstants.TerrainMeshPoolBudgetUnknownCeilingBytes,
+                (long)(highWater * PreviewStageConstants.TerrainMeshPoolBudgetHeadroom)),
+            withHw);
+    }
+
+    [Fact]
+    public void TerrainLodCacheFingerprint_bake_revision_covers_lod_veg_policy()
+    {
+        Assert.True(TerrainLodCacheFingerprint.CurrentBakeRevision >= 11);
+    }
+
+    [Fact]
+    public void ResolveTerrainMeshPoolBudgetBytes_clamps_to_detected_vram_fraction()
+    {
+        // 8 GiB dedicated → usable 7.25 GiB → 35% ≈ 2598 MiB
+        const long vram8GiB = 8L * 1024 * 1024 * 1024;
+        var ceiling = PreviewStageConstants.ResolveTerrainMeshPoolCeilingBytes(vram8GiB);
+        var expected = (long)((vram8GiB - PreviewStageConstants.TerrainMeshPoolVramReserveBytes) *
+                              PreviewStageConstants.TerrainMeshPoolVramFraction);
+        Assert.Equal(expected, ceiling);
+
+        var extreme = PreviewStageConstants.ResolveTerrainMeshPoolBudgetBytes(8, 1024, vram8GiB);
+        Assert.Equal(ceiling, extreme);
+        Assert.True(extreme < PreviewStageConstants.TerrainMeshPoolBudgetAbsoluteCeilingBytes);
+    }
+
+    [Fact]
+    public void ResolveTerrainMeshPoolBudgetBytes_large_vram_can_exceed_legacy_3gib_unknown_cap()
+    {
+        const long vram24GiB = 24L * 1024 * 1024 * 1024;
+        var ceiling = PreviewStageConstants.ResolveTerrainMeshPoolCeilingBytes(vram24GiB);
+        Assert.True(ceiling > PreviewStageConstants.TerrainMeshPoolBudgetUnknownCeilingBytes);
+        Assert.True(ceiling <= PreviewStageConstants.TerrainMeshPoolBudgetAbsoluteCeilingBytes);
+
+        // With Full-identical LOD vegetation again, a-priori need for far rings can exceed
+        // the legacy 3 GiB ladder when dedicated VRAM allows it.
+        var fromNeed = PreviewStageConstants.ResolveTerrainMeshPoolBudgetBytes(8, 1024, vram24GiB);
+        Assert.True(fromNeed <= ceiling);
+
+        const long highWater = 4L * 1024 * 1024 * 1024;
+        var budget = PreviewStageConstants.ResolveTerrainMeshPoolBudgetBytes(
+            8, 1024, vram24GiB, highWater);
+        Assert.True(budget > PreviewStageConstants.TerrainMeshPoolBudgetUnknownCeilingBytes);
+        Assert.True(budget <= ceiling);
     }
 
     [Fact]
@@ -880,6 +1539,8 @@ public sealed class PreviewTerrainTests
         streamer.Start();
         Assert.Equal(TerrainChunkStreamer.ResolveWorkerCount(), streamer.WorkerCount);
         Assert.True(streamer.WorkerCount >= 1);
+        Assert.True(streamer.WorkerCount <= 2);
+        Assert.Equal(12, PreviewStageConstants.TerrainMaxBakeJobsAhead);
 
         streamer.Tick(Vector3.Zero, chunkViewDistance: 2);
         var uploads = new List<PreviewTerrainChunkMesh>();

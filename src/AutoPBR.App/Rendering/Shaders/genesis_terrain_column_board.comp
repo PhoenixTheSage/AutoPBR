@@ -1,0 +1,82 @@
+#version 430 core
+
+// Stage-2: fill an 18x18 halo column board (height + biome materials) for one Full chunk.
+// Runs outside PassScene budgets; GLES/ANGLE keeps CPU BakeFullChunk.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+struct TerrainGpuColumn
+{
+    int height;
+    int bottom;
+    int biome;
+    int surface;
+    int subsurface;
+    int deep;
+    int _pad0;
+    int _pad1;
+};
+
+layout(std430, binding = 0) writeonly buffer ColumnBoard
+{
+    TerrainGpuColumn columns[];
+};
+
+uniform ivec2 uBoardOrigin; // world XZ of board[0,0] (chunk origin - 1)
+uniform int uBoardSide;     // 18
+uniform int uSeed;
+uniform float uBiomeSize;
+uniform float uAmplification;
+uniform float uErosionStrength;
+uniform float uContinentalness;
+uniform int uFlatPadHalfExtent;
+uniform int uTransitionBlocks;
+uniform int uFillDepth;
+
+//!include "common/terrain_height_sample.glsl"
+
+void main()
+{
+    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
+    if (local.x >= uBoardSide || local.y >= uBoardSide)
+    {
+        return;
+    }
+
+    int worldX = uBoardOrigin.x + local.x;
+    int worldZ = uBoardOrigin.y + local.y;
+    int height;
+    int bottom;
+    int biome;
+    int surface;
+    int subsurface;
+    int deep;
+    thsSampleColumnBoard(
+        worldX,
+        worldZ,
+        uSeed,
+        uBiomeSize,
+        uAmplification,
+        uErosionStrength,
+        uContinentalness,
+        uFlatPadHalfExtent,
+        uTransitionBlocks,
+        uFillDepth,
+        height,
+        bottom,
+        biome,
+        surface,
+        subsurface,
+        deep);
+
+    TerrainGpuColumn col;
+    col.height = height;
+    col.bottom = bottom;
+    col.biome = biome;
+    col.surface = surface;
+    col.subsurface = subsurface;
+    col.deep = deep;
+    col._pad0 = 0;
+    col._pad1 = 0;
+    columns[local.y * uBoardSide + local.x] = col;
+}

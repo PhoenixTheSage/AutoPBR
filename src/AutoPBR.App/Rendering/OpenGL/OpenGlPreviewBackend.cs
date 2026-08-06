@@ -3,6 +3,7 @@ using System.Numerics;
 using AutoPBR.App.Lang;
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.Scene;
+using AutoPBR.App.Services;
 using AutoPBR.Core.Models;
 
 using Avalonia.Threading;
@@ -164,6 +165,7 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private GlTerrainShadowCuller? _terrainShadowCuller;
     private bool _terrainShadowCullCompileDisabled;
     private bool _loggedTerrainShadowGpuCull;
+    private bool _loggedTerrainShadowCutoutCpuFallback;
     private bool _frameSubjectGpuUploadsReady;
     private bool _frameSubjectUseMaterialDrawRecords;
     private bool _frameSubjectUseIndirectDrawCommands;
@@ -387,11 +389,8 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     {
         lock (_sync)
         {
-            if (_gl is null)
-            {
-                return;
-            }
-
+            // Raise even before the WGL sidecar finishes creating _gl — otherwise the overlay
+            // freezes during the long pending-sidecar window while CPU prewarm is still running.
             RaiseGpuInitProgress(
                 PreviewShaderPrewarm.IsComplete
                     ? (_gpuBootstrap is not null ? _gpuBootstrap.Phase : PreviewGpuInitPhases.Preparing)
@@ -400,7 +399,11 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
         }
     }
 
-    /// <summary>Shader/renderer diagnostics (same sink as main log UI). Invoked from the GL thread.</summary>
+    /// <summary>
+    /// Optional UI sink for user-relevant preview indicators. Verbose shader/GL detail is always
+    /// written to categorical files under <see cref="Services.LogService.LogsDirectory"/>.
+    /// Invoked from the GL thread when a line is UI-visible.
+    /// </summary>
     public void SetDiagnosticLog(Action<string>? log)
     {
         lock (_sync)
@@ -411,6 +414,12 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
 
     private void EmitDiagnostic(string message)
     {
+        var userVisible = LogService.WritePreviewDiagnostic(message);
+        if (!userVisible)
+        {
+            return;
+        }
+
         Action<string>? log;
         lock (_sync)
         {
@@ -434,13 +443,24 @@ public sealed partial class OpenGlPreviewBackend : IRenderPreviewBackend
     private void RequestPreviewFrame()
     {
         Action? request;
+        bool nativeWglActive;
         lock (_sync)
         {
             request = _requestPreviewFrame;
+            nativeWglActive = _nativeWglPresenterActive;
         }
 
         if (request is null)
         {
+            return;
+        }
+
+        if (nativeWglActive)
+        {
+            // The native callback queues directly onto AutoPBR.WglOwner and is frame-deduped.
+            // Routing it through Avalonia floods Background dispatcher work while the owner
+            // thread is already self-pumping continuous terrain/cloud/TAA frames.
+            request();
             return;
         }
 

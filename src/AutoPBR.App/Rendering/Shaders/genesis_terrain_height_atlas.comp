@@ -1,0 +1,53 @@
+#version 430 core
+
+// Desktop GL compute fill for the P5.4 RG32F terrain height atlas.
+// GLES/ANGLE keeps the CPU Parallel.For + TexSubImage path.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(rg32f, binding = 0) writeonly uniform image2D uAtlas;
+
+uniform ivec2 uOrigin;
+uniform ivec2 uSize;
+uniform ivec2 uTileOrigin;
+uniform ivec2 uTileSize;
+uniform int uSeed;
+uniform float uBiomeSize;
+uniform float uAmplification;
+uniform float uErosionStrength;
+uniform float uContinentalness;
+uniform int uFlatPadHalfExtent;
+uniform int uTransitionBlocks;
+uniform int uFillDepth;
+
+//!include "common/terrain_height_sample.glsl"
+
+void main()
+{
+    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
+    if (local.x >= uTileSize.x || local.y >= uTileSize.y)
+    {
+        return;
+    }
+
+    ivec2 tex = uTileOrigin + local;
+    if (tex.x < 0 || tex.y < 0 || tex.x >= uSize.x || tex.y >= uSize.y)
+    {
+        return;
+    }
+
+    int worldX = uOrigin.x + tex.x;
+    int worldZ = uOrigin.y + tex.y;
+    vec2 column = thsSampleColumnSurfaceBottom(
+        worldX,
+        worldZ,
+        uSeed,
+        uBiomeSize,
+        uAmplification,
+        uErosionStrength,
+        uContinentalness,
+        uFlatPadHalfExtent,
+        uTransitionBlocks,
+        uFillDepth);
+    imageStore(uAtlas, tex, vec4(column, 0.0, 1.0));
+}

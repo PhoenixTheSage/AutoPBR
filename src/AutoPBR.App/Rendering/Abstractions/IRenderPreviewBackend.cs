@@ -47,7 +47,7 @@ public interface IRenderPreviewBackend : IDisposable
     void InvalidateShaderCachesAndReload();
 
     /// <summary>
-    /// Clears the in-memory distant LOD section cache and resident streamed terrain meshes
+    /// Clears the in-memory and on-disk distant LOD section caches and resident streamed terrain meshes
     /// so the next frames rebake. Does not wipe the shader program binary cache.
     /// </summary>
     void ClearTerrainLodCache();

@@ -11,6 +11,7 @@ using AutoPBR.App.Lang;
 using AutoPBR.App.Rendering;
 using AutoPBR.App.Rendering.Abstractions;
 using AutoPBR.App.Rendering.OpenGL;
+using AutoPBR.App.Services;
 
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -219,12 +220,20 @@ public partial class MainWindowViewModel
 
     private void OnPreviewShaderPrewarmProgress()
     {
-        if (_glPreview is not null || !IsPreview3D)
+        if (!IsPreview3D)
         {
             return;
         }
 
-        ApplyEarlyPrewarmOverlay();
+        if (_glPreview is null)
+        {
+            ApplyEarlyPrewarmOverlay();
+            return;
+        }
+
+        // Backend may still be creating the WGL sidecar (_gl null) while CPU prewarm runs;
+        // keep the overlay alive from the backend progress events raised without a GL context.
+        ApplyPreviewGpuInitOverlay(_glPreview.Backend.GpuInitProgress);
     }
 
     private void ApplyEarlyPrewarmOverlay()
@@ -288,6 +297,8 @@ public partial class MainWindowViewModel
     {
         _glPreview = glPreview;
         glPreview.SetRendererLog(line => RunOnUiThread(() => AddLogLine(line)));
+        LogService.EnsureSessionStarted();
+        AddLogLine($"[Logs] Preview detail (shaders, terrain, clouds, GPU): {LogService.LogsDirectory}");
         glPreview.Backend.GpuInitProgressChanged += OnPreviewGpuInitProgressChanged;
         glPreview.HdrProbeUpdated += OnPreviewHdrProbeUpdated;
         ApplyPreviewGpuInitOverlay(glPreview.Backend.GpuInitProgress);
@@ -340,9 +351,9 @@ public partial class MainWindowViewModel
 
     private void ApplyPreviewGpuInitOverlay(PreviewGpuInitProgress progress)
     {
-        // CoreReady is enough to show the idle stage (terrain/sky). Waiting for IsFullyReady
-        // kept a full-screen dim overlay up through cloud/TAA compile and looked like "no terrain".
-        Preview3DGpuInitOverlayVisible = IsPreview3D && !progress.CoreReady;
+        // Keep the overlay through god-rays / clouds / TAA / AO compiles — hiding at CoreReady
+        // left a black preview while those programs were still linking.
+        Preview3DGpuInitOverlayVisible = IsPreview3D && !progress.IsFullyReady;
         Preview3DGpuInitOverlayText = progress.Phase;
         Preview3DGpuInitProgressFraction = progress.ProgressFraction;
         Preview3DGpuInitProgressIndeterminate = progress.ProgressFraction <= 0.001;

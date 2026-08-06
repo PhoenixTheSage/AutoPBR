@@ -977,7 +977,7 @@
     <value>Clear LOD cache</value>
   </data>
   <data name="ClearLodCacheTooltip" xml:space="preserve">
-    <value>Clears the in-memory distant LOD section cache and resident streamed terrain meshes so they rebake. Does not delete the shader binary cache. Also cleared automatically on new seed, terrain modifications, and shader invalidation.</value>
+    <value>Clears the in-memory and on-disk distant LOD section caches and resident streamed terrain meshes so they rebake. Does not delete the shader binary cache. Also cleared automatically on new seed, terrain modifications, and shader invalidation.</value>
   </data>
   <data name="LodCacheClearedLog" xml:space="preserve">
     <value>Distant LOD cache cleared; terrain will rebake.</value>

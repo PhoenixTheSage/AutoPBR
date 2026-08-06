@@ -202,11 +202,18 @@ internal static class GlslPreparedSourceCache
             work[i++] = (file, type, true, defines);
         }
 
-        Parallel.ForEach(work, item =>
-        {
-            _ = GetOrPrepare(item.File, item.Type, item.Es, item.Defines);
-            onItemComplete?.Invoke();
-        });
+        Parallel.ForEach(
+            work,
+            new ParallelOptions
+            {
+                // Leave headroom for UI / other apps during startup CPU prewarm.
+                MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2),
+            },
+            item =>
+            {
+                _ = GetOrPrepare(item.File, item.Type, item.Es, item.Defines);
+                onItemComplete?.Invoke();
+            });
     }
 
     public static string ComputeProgramKey(string vertexFile, string fragmentFile, bool useOpenGlEs, string cacheIdentity)

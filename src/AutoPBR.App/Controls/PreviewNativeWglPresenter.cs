@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 using AutoPBR.App.Rendering.OpenGL;
 
 using Avalonia.OpenGL;
@@ -181,6 +183,7 @@ internal sealed class PreviewNativeWglPresenter : IDisposable
 
     private void RenderFrameOnOwnerThread()
     {
+        var frameStarted = Stopwatch.GetTimestamp();
         Interlocked.Exchange(ref _frameQueued, 0);
         var context = _context;
         if (context is null || !_ready || _disposed)
@@ -210,6 +213,15 @@ internal sealed class PreviewNativeWglPresenter : IDisposable
 
         if (_backend.NeedsContinuousRendering)
         {
+            // This is a dedicated WGL thread, but an immediate endless submit loop can still
+            // monopolize the GPU and make Avalonia's compositor appear frozen. Reserve a small
+            // scheduling gap, increasing it when a frame is already badly over budget.
+            var yieldMilliseconds = ResolveContinuousFrameYieldMilliseconds(
+                Stopwatch.GetElapsedTime(frameStarted));
+            if (yieldMilliseconds > 0)
+            {
+                Thread.Sleep(yieldMilliseconds);
+            }
             // Stay on the owner thread (per-frame UI hops starve Avalonia). PostDeferred avoids
             // stack overflow from inline Post-on-owner re-entry.
             RequestFrame();
@@ -217,6 +229,28 @@ internal sealed class PreviewNativeWglPresenter : IDisposable
         }
 
         Dispatcher.UIThread.Post(_owner.OnNativeWglFrameCompleted, DispatcherPriority.Background);
+    }
+
+    internal static int ResolveContinuousFrameYieldMilliseconds(TimeSpan frameElapsed)
+    {
+        if (frameElapsed >= TimeSpan.FromMilliseconds(100))
+        {
+            return 16;
+        }
+
+        if (frameElapsed >= TimeSpan.FromMilliseconds(50))
+        {
+            return 8;
+        }
+
+        if (frameElapsed >= TimeSpan.FromMilliseconds(25))
+        {
+            return 4;
+        }
+
+        // Fast frames are already paced by SwapBuffers when VSync is enabled. Thread.Sleep(1)
+        // can round to a ~15.6 ms Windows scheduler quantum and impose an accidental 60 FPS cap.
+        return 0;
     }
 
     private void NotifyFallback()

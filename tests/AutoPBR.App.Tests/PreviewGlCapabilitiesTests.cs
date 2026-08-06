@@ -27,6 +27,8 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.False(caps.CanUseMaterialDrawRecordSsbo);
         Assert.False(caps.ComputeShaders);
         Assert.False(caps.CanUseComputeFroxelInject);
+        Assert.False(caps.CanUseComputeTerrainHeightAtlas);
+        Assert.False(caps.CanUseComputeTerrainMeshing);
         Assert.False(caps.ImageLoadStore);
         Assert.False(caps.CanUseIndirectDrawCommands);
         Assert.False(caps.ShaderDrawParameters);
@@ -51,6 +53,8 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.Contains("entitySsbo=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("materialDrawSsbo=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("computeFroxels=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
+        Assert.Contains("terrainHeightAtlasCompute=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
+        Assert.Contains("terrainMeshCompute=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("indirectDraws=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("multiDrawGroups=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("gpuCommandCompaction=off", caps.FormatDiagnostic(), StringComparison.Ordinal);
@@ -73,9 +77,13 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.Contains("draw uniforms", caps.FormatContextSuffix(), StringComparison.Ordinal);
         Assert.Contains("material samplers", caps.FormatContextSuffix(), StringComparison.Ordinal);
         Assert.Contains("fragment froxels", caps.FormatContextSuffix(), StringComparison.Ordinal);
+        Assert.Contains("CPU terrain atlas", caps.FormatContextSuffix(), StringComparison.Ordinal);
+        Assert.Contains("CPU terrain mesh", caps.FormatContextSuffix(), StringComparison.Ordinal);
         Assert.Contains("RGBA8 clouds", caps.FormatContextSuffix(), StringComparison.Ordinal);
         Assert.Contains("direct draws", caps.FormatContextSuffix(), StringComparison.Ordinal);
         Assert.Contains("no GPU timers", caps.FormatContextSuffix(), StringComparison.Ordinal);
+        Assert.Contains("VRAM unknown", caps.FormatContextSuffix(), StringComparison.Ordinal);
+        Assert.Contains("dedicatedVram=unknown", caps.FormatDiagnostic(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -108,6 +116,8 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.False(caps.CanUseMaterialTextureArrays);
         Assert.False(caps.ComputeShaders);
         Assert.False(caps.CanUseComputeFroxelInject);
+        Assert.False(caps.CanUseComputeTerrainHeightAtlas);
+        Assert.False(caps.CanUseComputeTerrainMeshing);
         Assert.False(caps.MultiDrawIndirect);
         Assert.False(caps.CanUseIndirectDrawCommands);
         Assert.False(caps.CanUseMultiDrawIndirectGroups);
@@ -139,6 +149,8 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.False(caps.CanUseMaterialTextureArrays);
         Assert.False(caps.ComputeShaders);
         Assert.False(caps.CanUseComputeFroxelInject);
+        Assert.False(caps.CanUseComputeTerrainHeightAtlas);
+        Assert.False(caps.CanUseComputeTerrainMeshing);
         Assert.False(caps.ImageLoadStore);
         Assert.False(caps.SpirV);
         Assert.False(caps.CanUseSpirVShaderBinaries);
@@ -169,6 +181,8 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.True(caps.ComputeShaders);
         Assert.True(caps.ImageLoadStore);
         Assert.True(caps.CanUseComputeFroxelInject);
+        Assert.True(caps.CanUseComputeTerrainHeightAtlas);
+        Assert.True(caps.CanUseComputeTerrainMeshing);
         Assert.True(caps.ShaderAtomics);
         Assert.True(caps.MultiDrawIndirect);
         Assert.True(caps.CanUseIndirectDrawCommands);
@@ -199,6 +213,8 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.Contains("entitySsbo=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("materialDrawSsbo=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("computeFroxels=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
+        Assert.Contains("terrainHeightAtlasCompute=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
+        Assert.Contains("terrainMeshCompute=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("indirectDraws=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("multiDrawGroups=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
         Assert.Contains("gpuCommandCompaction=on", caps.FormatDiagnostic(), StringComparison.Ordinal);
@@ -220,10 +236,14 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.Contains("draw SSBO", caps.FormatContextSuffix(), StringComparison.Ordinal);
         Assert.Contains("material arrays", caps.FormatContextSuffix(), StringComparison.Ordinal);
         Assert.Contains("compute froxels", caps.FormatContextSuffix(), StringComparison.Ordinal);
+        Assert.Contains("compute terrain atlas", caps.FormatContextSuffix(), StringComparison.Ordinal);
+        Assert.Contains("compute terrain mesh", caps.FormatContextSuffix(), StringComparison.Ordinal);
         Assert.Contains("FP cloud targets", caps.FormatContextSuffix(), StringComparison.Ordinal);
         Assert.Contains("sparse-cloud capable", caps.FormatContextSuffix(), StringComparison.Ordinal);
         Assert.Contains("multi-draw groups", caps.FormatContextSuffix(), StringComparison.Ordinal);
         Assert.Contains("GPU timers", caps.FormatContextSuffix(), StringComparison.Ordinal);
+        Assert.Contains("VRAM unknown", caps.FormatContextSuffix(), StringComparison.Ordinal);
+        Assert.Contains("dedicatedVram=unknown", caps.FormatDiagnostic(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -244,6 +264,8 @@ public sealed class PreviewGlCapabilitiesTests
         Assert.True(caps.ComputeShaders);
         Assert.True(caps.ImageLoadStore);
         Assert.True(caps.CanUseComputeFroxelInject);
+        Assert.True(caps.CanUseComputeTerrainHeightAtlas);
+        Assert.True(caps.CanUseComputeTerrainMeshing);
         Assert.True(caps.MultiDrawIndirect);
         Assert.True(caps.CanUseIndirectDrawCommands);
         Assert.False(caps.ShaderDrawParameters);

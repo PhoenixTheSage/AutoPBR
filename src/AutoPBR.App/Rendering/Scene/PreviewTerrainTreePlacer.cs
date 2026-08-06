@@ -105,6 +105,73 @@ public static class PreviewTerrainTreePlacer
         return result;
     }
 
+    /// <summary>
+    /// Stable subset of Full roots for distant LOD. Keep-mask 1 retains all; larger masks thin
+    /// by root hash. If thinning would empty a non-empty forested set, force-keeps one root
+    /// nearest the section center so horizons never go bald.
+    /// </summary>
+    public static List<Placement> FilterForLodKeep(
+        IReadOnlyList<Placement> fullRoots,
+        byte lodLevel,
+        int sectionCenterX,
+        int sectionCenterZ)
+    {
+        var mask = PreviewStageConstants.ResolveLodVegetationKeepMask(lodLevel);
+        if (mask <= 1 || fullRoots.Count == 0)
+        {
+            return fullRoots is List<Placement> list ? list : [.. fullRoots];
+        }
+
+        var keepBits = mask - 1;
+        var kept = new List<Placement>((fullRoots.Count + mask - 1) / mask);
+        foreach (var p in fullRoots)
+        {
+            if ((StableKeepHash(p.RootX, p.RootZ) & keepBits) == 0)
+            {
+                kept.Add(p);
+            }
+        }
+
+        if (kept.Count == 0)
+        {
+            // Floor: never drop every tree from a forested section.
+            var best = fullRoots[0];
+            var bestDist = long.MaxValue;
+            foreach (var p in fullRoots)
+            {
+                var dx = (long)p.RootX - sectionCenterX;
+                var dz = (long)p.RootZ - sectionCenterZ;
+                var d = dx * dx + dz * dz;
+                if (d < bestDist ||
+                    (d == bestDist &&
+                     (p.RootX < best.RootX || (p.RootX == best.RootX && p.RootZ < best.RootZ))))
+                {
+                    bestDist = d;
+                    best = p;
+                }
+            }
+
+            kept.Add(best);
+        }
+
+        return kept;
+    }
+
+    /// <summary>True when <paramref name="root"/> survives the LOD keep-mask (ignores floor).</summary>
+    public static bool ShouldKeepRootForLod(int rootX, int rootZ, byte lodLevel)
+    {
+        var mask = PreviewStageConstants.ResolveLodVegetationKeepMask(lodLevel);
+        if (mask <= 1)
+        {
+            return true;
+        }
+
+        return (StableKeepHash(rootX, rootZ) & (mask - 1)) == 0;
+    }
+
+    private static int StableKeepHash(int x, int z) =>
+        HashInt(x, z, PreviewStageConstants.TerrainVegetationSeedSalt ^ unchecked((int)0x4BEEF001));
+
     private static bool TrySelectSpecies(
         in PreviewTerrainColumnSample column,
         int x,

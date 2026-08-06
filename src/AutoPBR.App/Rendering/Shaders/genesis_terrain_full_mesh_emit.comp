@@ -1,0 +1,410 @@
+#version 430 core
+
+// Stage-2 v1: emit one quad per exposed solid face (non-greedy) into append SSBOs.
+// Matches CPU BakeFullChunkSolidsPerFace silhouette/materials (vegetation off).
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+struct TerrainGpuColumn
+{
+    int height;
+    int bottom;
+    int biome;
+    int surface;
+    int subsurface;
+    int deep;
+    int _pad0;
+    int _pad1;
+};
+
+layout(std430, binding = 0) readonly buffer ColumnBoard
+{
+    TerrainGpuColumn columns[];
+};
+
+// Append buffer: [material:int-as-float bits unused] then 48 floats per quad.
+// Layout per quad: int material, int unused, float verts[48] packed as floats after two ints
+// via a flat float buffer with atomic float-index (48+2 = 50 floats, material as floatBits).
+layout(std430, binding = 1) buffer QuadAppend
+{
+    float quadData[];
+};
+
+layout(std430, binding = 2) buffer Counters
+{
+    uint uQuadCount;
+    uint uOverflow;
+    int uMinHeight;
+    int uMaxHeight;
+};
+
+uniform int uBoardSide; // 18
+uniform ivec2 uChunkOrigin; // world XZ of chunk (0,0)
+uniform int uChunkSize; // 16
+uniform int uFillDepth;
+uniform float uSurfaceWorldY;
+uniform float uMetersPerTile;
+uniform int uGrassMode; // 0 BuiltInSingleTop, 1 BlockModelFaces
+uniform int uBetterGrass;
+uniform int uEmitOverlay;
+uniform int uCliffDelta; // TerrainCliffDeltaBlocks
+uniform uint uMaxQuads;
+uniform int uSolidFloorRelativeY; // TerrainSolidFloorRelativeY — skip underside at this layer
+
+const int SlotTop = 0;
+const int SlotSide = 1;
+const int SlotDirt = 2;
+const int SlotOverlay = 3;
+const int SlotStone = 4;
+const int SlotSand = 5;
+const int SlotGravel = 6;
+
+const int BlockGrass = 0;
+const int BlockDirt = 1;
+const int BlockSand = 2;
+const int BlockGravel = 3;
+const int BlockStone = 4;
+
+const int BiomePlains = 0;
+const int BiomeDesert = 1;
+const int BiomeBeach = 2;
+const int BiomeMountains = 3;
+
+const int FloatsPerVertex = 12;
+const int FloatsPerQuadPayload = 50; // material(floatBits) + pad + 48 verts
+
+TerrainGpuColumn boardAt(int lx, int lz)
+{
+    return columns[lz * uBoardSide + lx];
+}
+
+bool isSolidBoard(int lx, int lz, int by)
+{
+    if (lx < 0 || lz < 0 || lx >= uBoardSide || lz >= uBoardSide)
+    {
+        return false;
+    }
+
+    TerrainGpuColumn c = boardAt(lx, lz);
+    return by >= c.bottom && by <= c.height;
+}
+
+int blockKindToSlot(int kind)
+{
+    if (kind == BlockSand)
+    {
+        return SlotSand;
+    }
+
+    if (kind == BlockStone)
+    {
+        return SlotStone;
+    }
+
+    if (kind == BlockGravel)
+    {
+        return SlotGravel;
+    }
+
+    if (kind == BlockDirt)
+    {
+        return SlotDirt;
+    }
+
+    return SlotTop;
+}
+
+int resolveYFaceMaterial(bool positiveUp, TerrainGpuColumn col)
+{
+    if (positiveUp)
+    {
+        if (uGrassMode != 1 && col.surface == BlockGrass)
+        {
+            return SlotTop;
+        }
+
+        return blockKindToSlot(col.surface);
+    }
+
+    if (col.biome == BiomeMountains || col.biome == BiomeDesert)
+    {
+        return SlotStone;
+    }
+
+    return SlotDirt;
+}
+
+int resolveGrassSurfaceSide(int columnH, int neighborH)
+{
+    if (uGrassMode != 1)
+    {
+        return SlotTop;
+    }
+
+    if (uBetterGrass != 0 && neighborH < columnH)
+    {
+        return SlotTop;
+    }
+
+    return SlotSide;
+}
+
+int resolveHorizontalFaceMaterial(
+    TerrainGpuColumn col,
+    int by,
+    TerrainGpuColumn neighbor)
+{
+    int columnH = col.height;
+    if (by != columnH)
+    {
+        int depthFromSurface = columnH - by;
+        return blockKindToSlot(depthFromSurface <= 1 ? col.subsurface : col.deep);
+    }
+
+    int delta = columnH - neighbor.height;
+    if (col.biome == BiomeMountains && delta >= uCliffDelta)
+    {
+        return delta >= uCliffDelta + 2 ? SlotGravel : SlotStone;
+    }
+
+    if (col.surface == BlockSand)
+    {
+        return SlotSand;
+    }
+
+    if (col.surface == BlockStone)
+    {
+        return SlotStone;
+    }
+
+    if (col.surface == BlockGravel)
+    {
+        return SlotGravel;
+    }
+
+    if (col.surface == BlockDirt)
+    {
+        return SlotDirt;
+    }
+
+    return resolveGrassSurfaceSide(columnH, neighbor.height);
+}
+
+void writeVertex(inout uint base, vec3 p, vec3 n, vec2 uv, vec3 t, float wSign)
+{
+    quadData[base++] = p.x;
+    quadData[base++] = p.y;
+    quadData[base++] = p.z;
+    quadData[base++] = n.x;
+    quadData[base++] = n.y;
+    quadData[base++] = n.z;
+    quadData[base++] = uv.x;
+    quadData[base++] = uv.y;
+    quadData[base++] = t.x;
+    quadData[base++] = t.y;
+    quadData[base++] = t.z;
+    quadData[base++] = wSign;
+}
+
+void emitQuad(int material, vec3 c0, vec3 c1, vec3 c2, vec3 c3, vec3 n, vec2 uv0, vec2 uv1, vec2 uv2, vec2 uv3, vec3 tangent, float wSign)
+{
+    uint qi = atomicAdd(uQuadCount, 1u);
+    if (qi >= uMaxQuads)
+    {
+        atomicMax(uOverflow, 1u);
+        return;
+    }
+
+    uint base = qi * uint(FloatsPerQuadPayload);
+    // Store material as a plain float so readback cannot flush denormal int-bit patterns.
+    quadData[base++] = float(material);
+    quadData[base++] = 0.0;
+    writeVertex(base, c0, n, uv0, tangent, wSign);
+    writeVertex(base, c1, n, uv1, tangent, wSign);
+    writeVertex(base, c2, n, uv2, tangent, wSign);
+    writeVertex(base, c3, n, uv3, tangent, wSign);
+}
+
+void emitYFace(bool positive, int bx, int by, int bz, int lx, int lz, TerrainGpuColumn col)
+{
+    int mat = resolveYFaceMaterial(positive, col);
+    float y = positive ? uSurfaceWorldY + float(by) : uSurfaceWorldY + float(by) - 1.0;
+    float x0 = float(bx);
+    float z0 = float(bz);
+    float x1 = x0 + 1.0;
+    float z1 = z0 + 1.0;
+    vec3 n;
+    vec3 t = vec3(1.0, 0.0, 0.0);
+    float wSign = 1.0;
+    vec3 c0, c1, c2, c3;
+    if (positive)
+    {
+        n = vec3(0.0, 1.0, 0.0);
+        c0 = vec3(x0, y, z0);
+        c1 = vec3(x1, y, z0);
+        c2 = vec3(x1, y, z1);
+        c3 = vec3(x0, y, z1);
+    }
+    else
+    {
+        n = vec3(0.0, -1.0, 0.0);
+        wSign = -1.0;
+        c0 = vec3(x0, y, z1);
+        c1 = vec3(x1, y, z1);
+        c2 = vec3(x1, y, z0);
+        c3 = vec3(x0, y, z0);
+    }
+
+    vec2 uv0 = vec2(c0.x / uMetersPerTile, c0.z / uMetersPerTile);
+    vec2 uv1 = vec2(c1.x / uMetersPerTile, c1.z / uMetersPerTile);
+    vec2 uv2 = vec2(c2.x / uMetersPerTile, c2.z / uMetersPerTile);
+    vec2 uv3 = vec2(c3.x / uMetersPerTile, c3.z / uMetersPerTile);
+    emitQuad(mat, c0, c1, c2, c3, n, uv0, uv1, uv2, uv3, t, wSign);
+}
+
+void emitXFace(bool positive, int bx, int by, int bz, int lx, int lz, TerrainGpuColumn col)
+{
+    int nlx = lx + (positive ? 1 : -1);
+    TerrainGpuColumn neighbor = boardAt(nlx, lz);
+    int mat = resolveHorizontalFaceMaterial(col, by, neighbor);
+    float x = positive ? float(bx) + 1.0 : float(bx);
+    float y0 = uSurfaceWorldY + float(by) - 1.0;
+    float y1 = uSurfaceWorldY + float(by);
+    float z0 = float(bz);
+    float z1 = z0 + 1.0;
+    vec3 n;
+    vec3 t;
+    float wSign = 1.0;
+    vec3 c0, c1, c2, c3;
+    if (positive)
+    {
+        n = vec3(1.0, 0.0, 0.0);
+        t = vec3(0.0, 0.0, -1.0);
+        c0 = vec3(x, y0, z1);
+        c1 = vec3(x, y0, z0);
+        c2 = vec3(x, y1, z0);
+        c3 = vec3(x, y1, z1);
+    }
+    else
+    {
+        n = vec3(-1.0, 0.0, 0.0);
+        t = vec3(0.0, 0.0, 1.0);
+        c0 = vec3(x, y0, z0);
+        c1 = vec3(x, y0, z1);
+        c2 = vec3(x, y1, z1);
+        c3 = vec3(x, y1, z0);
+    }
+
+    vec2 uv0 = vec2(c0.z / uMetersPerTile, c0.y / uMetersPerTile);
+    vec2 uv1 = vec2(c1.z / uMetersPerTile, c1.y / uMetersPerTile);
+    vec2 uv2 = vec2(c2.z / uMetersPerTile, c2.y / uMetersPerTile);
+    vec2 uv3 = vec2(c3.z / uMetersPerTile, c3.y / uMetersPerTile);
+    emitQuad(mat, c0, c1, c2, c3, n, uv0, uv1, uv2, uv3, t, wSign);
+
+    if (uEmitOverlay != 0 && mat == SlotSide)
+    {
+        emitQuad(SlotOverlay, c0, c1, c2, c3, n, uv0, uv1, uv2, uv3, t, wSign);
+    }
+}
+
+void emitZFace(bool positive, int bx, int by, int bz, int lx, int lz, TerrainGpuColumn col)
+{
+    int nlz = lz + (positive ? 1 : -1);
+    TerrainGpuColumn neighbor = boardAt(lx, nlz);
+    int mat = resolveHorizontalFaceMaterial(col, by, neighbor);
+    float z = positive ? float(bz) + 1.0 : float(bz);
+    float x0 = float(bx);
+    float x1 = x0 + 1.0;
+    float y0 = uSurfaceWorldY + float(by) - 1.0;
+    float y1 = uSurfaceWorldY + float(by);
+    vec3 n;
+    vec3 t;
+    float wSign = 1.0;
+    vec3 c0, c1, c2, c3;
+    if (positive)
+    {
+        n = vec3(0.0, 0.0, 1.0);
+        t = vec3(1.0, 0.0, 0.0);
+        c0 = vec3(x0, y0, z);
+        c1 = vec3(x1, y0, z);
+        c2 = vec3(x1, y1, z);
+        c3 = vec3(x0, y1, z);
+    }
+    else
+    {
+        n = vec3(0.0, 0.0, -1.0);
+        t = vec3(-1.0, 0.0, 0.0);
+        c0 = vec3(x1, y0, z);
+        c1 = vec3(x0, y0, z);
+        c2 = vec3(x0, y1, z);
+        c3 = vec3(x1, y1, z);
+    }
+
+    vec2 uv0 = vec2(c0.x / uMetersPerTile, c0.y / uMetersPerTile);
+    vec2 uv1 = vec2(c1.x / uMetersPerTile, c1.y / uMetersPerTile);
+    vec2 uv2 = vec2(c2.x / uMetersPerTile, c2.y / uMetersPerTile);
+    vec2 uv3 = vec2(c3.x / uMetersPerTile, c3.y / uMetersPerTile);
+    emitQuad(mat, c0, c1, c2, c3, n, uv0, uv1, uv2, uv3, t, wSign);
+
+    if (uEmitOverlay != 0 && mat == SlotSide)
+    {
+        emitQuad(SlotOverlay, c0, c1, c2, c3, n, uv0, uv1, uv2, uv3, t, wSign);
+    }
+}
+
+void main()
+{
+    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
+    if (local.x >= uChunkSize || local.y >= uChunkSize)
+    {
+        return;
+    }
+
+    int lx = local.x + 1;
+    int lz = local.y + 1;
+    int bx = uChunkOrigin.x + local.x;
+    int bz = uChunkOrigin.y + local.y;
+    TerrainGpuColumn col = boardAt(lx, lz);
+
+    atomicMin(uMinHeight, col.height);
+    atomicMax(uMaxHeight, col.height);
+
+    for (int by = col.bottom; by <= col.height; by++)
+    {
+        // +Y
+        if (!isSolidBoard(lx, lz, by + 1))
+        {
+            emitYFace(true, bx, by, bz, lx, lz, col);
+        }
+
+        // -Y
+        if (by > uSolidFloorRelativeY && !isSolidBoard(lx, lz, by - 1))
+        {
+            emitYFace(false, bx, by, bz, lx, lz, col);
+        }
+
+        // +X
+        if (!isSolidBoard(lx + 1, lz, by))
+        {
+            emitXFace(true, bx, by, bz, lx, lz, col);
+        }
+
+        // -X
+        if (!isSolidBoard(lx - 1, lz, by))
+        {
+            emitXFace(false, bx, by, bz, lx, lz, col);
+        }
+
+        // +Z
+        if (!isSolidBoard(lx, lz + 1, by))
+        {
+            emitZFace(true, bx, by, bz, lx, lz, col);
+        }
+
+        // -Z
+        if (!isSolidBoard(lx, lz - 1, by))
+        {
+            emitZFace(false, bx, by, bz, lx, lz, col);
+        }
+    }
+}

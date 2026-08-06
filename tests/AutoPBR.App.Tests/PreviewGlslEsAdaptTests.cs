@@ -709,7 +709,10 @@ public class PreviewGlslEsAdaptTests
         Assert.Contains("uniform int uHdrPresent", moon, StringComparison.Ordinal);
         Assert.Contains("moonHdrPreserveContrast", moon, StringComparison.Ordinal);
         Assert.Contains("moonSceneReferredRadiance", moon, StringComparison.Ordinal);
-        // Strength must stay mode-agnostic (no paper-white dim that breaks the shared slider).
+        Assert.Contains("MOON_SDR_STRENGTH_GAIN", moon, StringComparison.Ordinal);
+        Assert.Contains("moonApplyStrength", moon, StringComparison.Ordinal);
+        Assert.Contains("2.15", moon, StringComparison.Ordinal);
+        // Strength must stay mode-aware without paper-white dim that broke the shared slider.
         Assert.DoesNotContain("uHdrPaperWhiteNits", moon, StringComparison.Ordinal);
         Assert.DoesNotContain("moonHdrPaperScaleUndo", moon, StringComparison.Ordinal);
         // GLES/ANGLE: single FragColor write via outRgb/outAlpha (no early return paths).

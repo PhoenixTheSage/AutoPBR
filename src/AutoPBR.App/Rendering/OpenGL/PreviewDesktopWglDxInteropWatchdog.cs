@@ -134,6 +134,9 @@ internal sealed class PreviewDesktopWglDxInteropWatchdog : IDisposable
         var message = sb.ToString();
         try
         {
+            Services.LogService.Write(Services.AppLogCategory.PreviewGl, "[DX hang] " + message);
+            Services.LogService.AppendEmergencyDiagnostic("D3D11/WGL interop hang", message);
+            // Keep TEMP copy for quick debugger pickup when AppData is locked/unavailable.
             var path = Path.Combine(Path.GetTempPath(), "autopbr-dx-interop-hang.log");
             File.AppendAllText(path, $"{DateTime.Now:O} {message}{Environment.NewLine}");
         }

@@ -61,6 +61,14 @@ public sealed class TerrainLodSectionCache
         }
     }
 
+    public bool Contains(in TerrainLodCacheKey key)
+    {
+        lock (_gate)
+        {
+            return _entries.ContainsKey(key);
+        }
+    }
+
     public bool TryGet(in TerrainLodCacheKey key, [NotNullWhen(true)] out PreviewTerrainChunkMesh? mesh)
     {
         lock (_gate)
@@ -164,10 +172,11 @@ public readonly record struct TerrainLodCacheFingerprint(
     bool HasSand,
     bool HasGravel,
     string VegetationIdentity,
-    int BakeRevision = 0)
+    int BakeRevision = 0,
+    bool SmartLeavesEnabled = true)
 {
     /// <summary>Bump when LOD mesh topology/sampling contract changes (skirts, max-height cells, …).</summary>
-    public const int CurrentBakeRevision = 6;
+    public const int CurrentBakeRevision = 11;
 
     public static TerrainLodCacheFingerprint From(
         in PreviewTerrainWorldGenSettings worldGen,
@@ -191,6 +200,15 @@ public readonly record struct TerrainLodCacheFingerprint(
             grass.HasSand,
             grass.HasGravel,
             vegId,
-            CurrentBakeRevision);
+            CurrentBakeRevision,
+            grass.SmartLeavesEnabled);
     }
+
+    /// <summary>
+    /// Stable string covering every fingerprint field that affects mesh bytes (disk file identity).
+    /// </summary>
+    public string ContentIdentity =>
+        string.Create(
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"{Seed}|{BiomeSize:G9}|{Amplification:G9}|{ErosionStrength:G9}|{Continentalness:G9}|{(int)Mode}|{(BetterGrassEnabled ? 1 : 0)}|{(EmitOverlay ? 1 : 0)}|{(HasStone ? 1 : 0)}|{(HasSand ? 1 : 0)}|{(HasGravel ? 1 : 0)}|{VegetationIdentity ?? ""}|{BakeRevision}|{(SmartLeavesEnabled ? 1 : 0)}");
 }

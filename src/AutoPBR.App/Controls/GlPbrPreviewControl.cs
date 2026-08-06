@@ -160,7 +160,7 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         };
 
         // Watchdog / idle recovery: unstick only when OnOpenGlRender has been silent.
-        _backend.SetRequestPreviewFrame(RecoverPreviewFrame);
+        _backend.SetRequestPreviewFrame(RequestPreviewFrameFromBackend);
         EnsureBackendInitialized();
         PointerPressed += OnPreviewPointerPressed;
         PointerMoved += OnPreviewPointerMoved;
@@ -194,7 +194,10 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         return logicalWidth > 0.0 && logicalHeight > 0.0;
     }
 
-    /// <summary>Routes shader and GL init messages into the main app log (invoked from the GL thread).</summary>
+    /// <summary>
+    /// Optional UI sink for user-relevant preview indicators. Verbose shader/GL diagnostics are
+    /// always written to categorical files under AppData\Roaming\AutoPBR\logs (invoked from the GL thread).
+    /// </summary>
     public void SetRendererLog(Action<string>? log) => _backend.SetDiagnosticLog(log);
 
     public void InvalidateShaderCaches() => _backend.InvalidateShaderCachesAndReload();
@@ -672,10 +675,34 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
     /// <summary>
     /// Recovery path for present-idle / user input when Avalonia left <c>_updateQueued</c> stuck.
     /// </summary>
+    private void RequestPreviewFrameFromBackend()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (_nativeWglPresenter is { } nativePresenter)
+        {
+            // Thread-safe and frame-deduped; bypass Avalonia for the dedicated WGL owner path.
+            nativePresenter.RequestFrame();
+            return;
+        }
+
+        RecoverPreviewFrame();
+    }
+
     private void RecoverPreviewFrame()
     {
         if (_disposed)
         {
+            return;
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            TryUnstickUpdateQueuedIfStale();
+            RequestNextFrameRenderingCore();
             return;
         }
 

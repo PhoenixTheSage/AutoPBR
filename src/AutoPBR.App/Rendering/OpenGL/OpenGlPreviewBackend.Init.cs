@@ -35,14 +35,20 @@ public sealed partial class OpenGlPreviewBackend
         var bootstrapFrac = _gpuBootstrap?.Fraction ?? (_gpuAlive ? 1.0 : 0.0);
         var tierFrac = ComputeTierProgressFraction(desired);
         var prewarmFrac = PreviewShaderPrewarm.Fraction;
+        // Terrain first-fill + post-core tiers own a large share so the bar does not jump to
+        // ~near-complete at CoreReady while the viewport is still black.
+        var terrainFrac = _terrainStartupReadyLatched
+            ? 1.0
+            : ResolveTerrainInitProgressFraction();
         var progressFraction = Math.Clamp(
-            prewarmFrac * 0.18 + bootstrapFrac * 0.52 + tierFrac * 0.30,
+            prewarmFrac * 0.10 + bootstrapFrac * 0.30 + tierFrac * 0.30 + terrainFrac * 0.30,
             0.0,
             1.0);
         var fullyReady = PreviewShaderPrewarm.IsComplete &&
                          _gpuAlive &&
                          _gpuBootstrap is null &&
-                         _gpuInitTier.HasAll(desired);
+                         _gpuInitTier.HasAll(desired) &&
+                         terrainFrac >= 1.0;
         var progress = new PreviewGpuInitProgress
         {
             ShaderSourcesReady = PreviewShaderPrewarm.IsComplete,
@@ -132,6 +138,49 @@ public sealed partial class OpenGlPreviewBackend
         return total == 0 ? 1.0 : (double)ready / total;
     }
 
+    /// <summary>
+    /// 0..1 for first Full-disk fill after CoreReady. Overlay stays up until a paintable set of
+    /// Full chunks is GPU-resident (avoids dismissing into a black/empty viewport).
+    /// </summary>
+    private double ResolveTerrainInitProgressFraction()
+    {
+        if (!_settings.ShowGroundMesh)
+        {
+            return 1.0;
+        }
+
+        if (!_gpuInitTier.HasAll(PreviewGpuInitTier.Core) || _terrainStreamer is null)
+        {
+            return 0.0;
+        }
+
+        // Paintable near pad — not the whole hard disk. Overlay should hide once the viewport
+        // is no longer empty/black; Full catch-up continues without blocking "ready".
+        var hard = Math.Max(0, _terrainStreamer.HardRadiusChunks);
+        var near = Math.Min(hard, 2);
+        var target = Math.Max(9, (2 * near + 1) * (2 * near + 1));
+        var fullResident = 0;
+        var cameraChunk = _terrainStreamer.CameraChunk;
+        foreach (var key in _terrainGpuChunks.Keys)
+        {
+            // Distant Full uploads do not make the viewport usable. Only hide the overlay after
+            // the camera-local pad is present; the old global count could report ready while
+            // cameraChunkResident was still false and the preview showed only sky.
+            if (key.IsFull &&
+                key.ChebyshevDistanceToChunk(cameraChunk) <= near)
+            {
+                fullResident++;
+            }
+        }
+
+        if (fullResident >= target)
+        {
+            return 1.0;
+        }
+
+        return Math.Clamp(fullResident / (double)target, 0.0, 0.99);
+    }
+
     private static PreviewGpuInitTier ComputeDesiredGpuTier(in PreviewRenderSettingsSnapshot settings)
     {
         var tier = PreviewGpuInitTier.Core;
@@ -181,14 +230,14 @@ public sealed partial class OpenGlPreviewBackend
                 TryInitCloudGpuTierIfNeeded(settings, _previewPixelWidth, _previewPixelHeight);
             }
 
-            RaiseGpuInitProgress(_gpuInitTier.HasAll(desired) ? PreviewGpuInitPhases.Ready : PreviewGpuInitPhases.PreviewReady, settings);
+            RaiseGpuInitProgress(ResolvePostCoreInitPhase(desired), settings);
             return;
         }
 
         if ((desired & PreviewGpuInitTier.Clouds) != 0 && !_gpuInitTier.HasAll(PreviewGpuInitTier.Clouds))
         {
             TryInitCloudGpuTierIfNeeded(settings, _previewPixelWidth, _previewPixelHeight);
-            RaiseGpuInitProgress(_gpuInitTier.HasAll(desired) ? PreviewGpuInitPhases.Ready : PreviewGpuInitPhases.PreviewReady, settings);
+            RaiseGpuInitProgress(ResolvePostCoreInitPhase(desired), settings);
             return;
         }
 
@@ -197,7 +246,7 @@ public sealed partial class OpenGlPreviewBackend
             RaiseGpuInitProgress(PreviewGpuInitPhases.LoadingTaa, settings);
             TryInitPreviewTaa(_gl, _useOpenGlEs);
             _gpuInitTier |= PreviewGpuInitTier.PreviewTaa;
-            RaiseGpuInitProgress(_gpuInitTier.HasAll(desired) ? PreviewGpuInitPhases.Ready : PreviewGpuInitPhases.PreviewReady, settings);
+            RaiseGpuInitProgress(ResolvePostCoreInitPhase(desired), settings);
             return;
         }
 
@@ -217,7 +266,27 @@ public sealed partial class OpenGlPreviewBackend
             }
         }
 
-        RaiseGpuInitProgress(_gpuInitTier.HasAll(desired) ? PreviewGpuInitPhases.Ready : PreviewGpuInitPhases.PreviewReady, settings);
+        RaiseGpuInitProgress(ResolvePostCoreInitPhase(desired), settings);
+    }
+
+    /// <summary>
+    /// Prefer UploadingMeshes over Ready/PreviewReady while the Full pad is still empty so the
+    /// overlay text matches a still-black viewport after shader tiers finish.
+    /// </summary>
+    private string ResolvePostCoreInitPhase(PreviewGpuInitTier desired)
+    {
+        if (!_gpuInitTier.HasAll(desired))
+        {
+            return PreviewGpuInitPhases.PreviewReady;
+        }
+
+        if (!_terrainStartupReadyLatched &&
+            ResolveTerrainInitProgressFraction() < 1.0)
+        {
+            return PreviewGpuInitPhases.UploadingMeshes;
+        }
+
+        return PreviewGpuInitPhases.Ready;
     }
 
     private void InitShaderCompileContext(GL gl, bool useOpenGlEs)

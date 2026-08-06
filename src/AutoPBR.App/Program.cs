@@ -17,6 +17,7 @@ sealed class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        LogService.EnsureSessionStarted();
         RegisterEmergencyExceptionLogging();
         RegisterSatelliteAssemblyResolver();
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
@@ -78,7 +79,8 @@ sealed class Program
             .UsePlatformDetect()
             .With(PreviewOpenGlPlatformConfigurator.CreateWin32PlatformOptions(settings))
             .WithInterFont()
-            .LogToTrace()
+            // Avalonia framework noise stays out of the console; Warning+ only.
+            .LogToTrace(Avalonia.Logging.LogEventLevel.Warning)
             .AfterSetup(_ => RegisterDispatcherExceptionLogging());
     }
 }

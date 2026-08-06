@@ -737,9 +737,13 @@ internal sealed partial class PreviewDesktopWglContext
             var log = _dxDiagnosticLog;
             if (log is not null)
             {
+                // Typically OpenGlPreviewBackend.EmitDiagnostic — categorical files + UI filter.
                 log(message);
+                return;
             }
-            else
+
+            // Early init before the preview sink is wired: persist, Debug only if user-relevant.
+            if (Services.LogService.WritePreviewDiagnostic(message))
             {
                 Debug.WriteLine(message);
             }

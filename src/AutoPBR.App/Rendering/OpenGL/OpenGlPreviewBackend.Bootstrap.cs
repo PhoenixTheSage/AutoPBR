@@ -11,6 +11,7 @@ public sealed partial class OpenGlPreviewBackend
     private bool _pendingShaderReload;
     private int _gpuGenesisPrewarmIndex;
     private string _glVersionString = "(unknown)";
+    private bool _terrainStartupReadyLatched;
 
     public string? ActiveContextSummary { get; private set; }
 
@@ -37,10 +38,12 @@ public sealed partial class OpenGlPreviewBackend
 
                 _step++;
                 // Terrain streaming (step 3) starts the occluder bake; pump uploads while later
-                // steps run so DDA can be valid on the first real scene frame.
+                // steps run so DDA can be valid on the first real scene frame. Also warm Full
+                // chunk bake/upload so CoreReady is not followed by an empty black pad.
                 if (_step > 3)
                 {
                     backend.PumpTerrainOccluderAtlasBootstrap();
+                    backend.WarmStartTerrainStreamingBootstrap();
                 }
             }
         }
@@ -92,6 +95,7 @@ public sealed partial class OpenGlPreviewBackend
     private void ReleaseGpuResourceObjectsLocked()
     {
         _gpuAlive = false;
+        _terrainStartupReadyLatched = false;
         _mesh?.Dispose();
         _mesh = null;
         _groundMesh?.Dispose();
@@ -178,6 +182,10 @@ public sealed partial class OpenGlPreviewBackend
         {
             case 0:
                 InitShaderCompileContext(gl, _useOpenGlEs);
+                var compilerThreadsLimited = _shaderCtx?.LimitCompilerThreads(1) == true;
+                EmitDiagnostic(
+                    $"[3D preview] Parallel shader compiler CPU cap: " +
+                    $"{(compilerThreadsLimited ? "1 thread" : "extension unavailable")}.");
                 EmitDiagnostic(_useOpenGlEs
                     ? $"[3D preview] Context: {_glVersionString} (Genesis shader path, GLSL ES 3.0)."
                     : $"[3D preview] Context: {_glVersionString} (Genesis shader path, GLSL 330 core).");

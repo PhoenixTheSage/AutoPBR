@@ -8,9 +8,8 @@ namespace AutoPBR.App.Rendering.Scene;
 /// <summary>
 /// Distant Horizons / Voxy–style combined LOD: stepped column silhouette (tops + vertical steps)
 /// as one aggressively greedy-merged mesh per section. No fill-depth underground solids.
-/// Vegetation is block-space 1:1 with Full (same 1 m roots, trunks, canopy blocks, model stamps).
-/// Allowed LOD cost levers are render-side only: texture mips, transparency/alpha policy,
-/// and shadow caster distance — never drop or simplify vegetation voxels for budget.
+/// Vegetation roots are a stable subset of Full placements (LOD1–2 keep full cardinality;
+/// LOD≥3 applies a mild hash keep-mask). LOD≥2 stamps impostors; never emit-off / bare silhouette.
 /// </summary>
 public static class PreviewTerrainLodMeshBaker
 {
@@ -74,7 +73,7 @@ public static class PreviewTerrainLodMeshBaker
             key.OriginWorldZ(chunkSize),
             worldSize,
             sampleStep,
-            emitVegetation: true,
+            emitVegetation: PreviewStageConstants.ShouldEmitLodBlockSpaceVegetation(key.LodLevel),
             worldGen,
             grassSettings,
             vegetation,
@@ -207,12 +206,14 @@ public static class PreviewTerrainLodMeshBaker
 
         if (emitVegetation && vegPlan.HasAny && grassSettings.EmitVegetation)
         {
-            // Exact 1 m columns match Full spawn decisions (density + positions). LOD hull
-            // sampling alone would shift biome/surface and thin/shift trees at the fade.
+            // Exact 1 m columns match Full spawn decisions (density + positions) on every LOD
+            // level so distant trees and fade underlays share the same roots.
             PreviewTerrainColumnSample ExactColumn(int x, int z) =>
                 PreviewTerrainBiomeSampler.Sample(x, z, gen, flatPadHalfExtent, transitionBlocks);
 
-            var placements = PreviewTerrainTreePlacer.CollectForChunk(
+            // Collect Full-density roots, then apply a stable keep-mask for coarse LOD so distant
+            // rings stay populated without Full cardinality cost (P11.1).
+            var fullPlacements = PreviewTerrainTreePlacer.CollectForChunk(
                 cx0,
                 cz0,
                 cx1,
@@ -222,13 +223,20 @@ public static class PreviewTerrainLodMeshBaker
                 vegPlan,
                 flatPadHalfExtent,
                 placementStep: 1);
+            var placements = PreviewTerrainTreePlacer.FilterForLodKeep(
+                fullPlacements,
+                key.LodLevel,
+                sectionCenterX: (cx0 + cx1) / 2,
+                sectionCenterZ: (cz0 + cz1) / 2);
             PreviewTerrainTreeMeshEmitter.EmitPlacements(
                 placements,
                 surfaceWorldY,
                 metersPerTile,
                 buckets,
                 ref maxH,
-                vegPlan.ModelTemplates);
+                vegPlan.ModelTemplates,
+                PreviewStageConstants.ResolveLodVegetationEmitMode(key.LodLevel),
+                grassSettings.SmartLeavesEnabled);
         }
 
         if (!PreviewTerrainMeshBaker.TryConcatMaterialBuckets(buckets, out var verts, out var indices, out var batches) ||

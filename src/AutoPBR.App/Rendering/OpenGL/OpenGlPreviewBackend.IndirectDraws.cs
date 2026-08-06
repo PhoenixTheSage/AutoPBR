@@ -111,7 +111,8 @@ public sealed partial class OpenGlPreviewBackend
 
         var useVoxel = enableVoxelOcclusion &&
                        _voxelDdaReadyThisFrame &&
-                       _terrainOccluderAtlas is { IsValid: true } &&
+                       (_terrainOccluderAtlas is { IsValid: true } ||
+                        _terrainOccluderAtlasCoarse is { IsValid: true }) &&
                        passLabel is "main";
         var useHiZ = !useVoxel &&
                      enableHiZ &&
@@ -142,7 +143,9 @@ public sealed partial class OpenGlPreviewBackend
                 hiZTextureUnit: HiZSamplerUnit,
                 enableVoxelOcclusion: useVoxel,
                 voxelAtlas: useVoxel ? _terrainOccluderAtlas : null,
-                voxelTextureUnit: VoxelOccluderSamplerUnit))
+                voxelTextureUnit: VoxelOccluderSamplerUnit,
+                voxelCoarseAtlas: useVoxel ? _terrainOccluderAtlasCoarse : null,
+                voxelCoarseTextureUnit: VoxelOccluderCoarseSamplerUnit))
         {
             return false;
         }
@@ -417,6 +420,7 @@ public sealed partial class OpenGlPreviewBackend
         _loggedMultiDrawIndirectGroups = false;
         _loggedGpuCompactedDrawSubmission = false;
         _loggedTerrainShadowGpuCull = false;
+        _loggedTerrainShadowCutoutCpuFallback = false;
         _gpuDrawCommandCompactionCompileDisabled = false;
         _terrainShadowCullCompileDisabled = false;
     }
@@ -432,6 +436,7 @@ public sealed partial class OpenGlPreviewBackend
         _loggedMultiDrawIndirectGroups = false;
         _loggedGpuCompactedDrawSubmission = false;
         _loggedTerrainShadowGpuCull = false;
+        _loggedTerrainShadowCutoutCpuFallback = false;
         _gpuDrawCommandCompactionCompileDisabled = false;
         _terrainShadowCullCompileDisabled = false;
     }

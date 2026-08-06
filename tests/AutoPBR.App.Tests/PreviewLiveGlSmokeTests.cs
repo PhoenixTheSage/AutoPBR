@@ -92,6 +92,9 @@ public sealed class PreviewLiveGlSmokeTests
                 RunImageHistogramIfSupported(gl, caps, diagnostics);
                 RunMaterialTextureArrayIfSupported(gl, caps, diagnostics);
                 RunPersistentOverlayUploadIfSupported(gl, caps, diagnostics);
+                RunTerrainUploadStagingIfSupported(gl, caps, diagnostics);
+                RunTerrainHeightAtlasComputeParityIfSupported(gl, caps, diagnostics);
+                RunTerrainFullMeshComputeParityIfSupported(gl, caps, diagnostics);
                 RunGpuTimerQueryIfSupported(gl, caps, diagnostics);
                 EvaluateShaderToolchainPlan(caps, diagnostics);
                 RunSeparableProgramPipelineIfSupported(gl, caps, diagnostics);
@@ -241,6 +244,229 @@ public sealed class PreviewLiveGlSmokeTests
         gl.Finish();
         Assert.Equal(GLEnum.NoError, gl.GetError());
         diagnostics.Add("[3D preview] Persistent mapped overlay VBO ring rendered without GL errors.");
+    }
+
+    private static void RunTerrainUploadStagingIfSupported(
+        GL gl,
+        PreviewGlCapabilities caps,
+        List<string> diagnostics)
+    {
+        if (!caps.CanUsePersistentUploadRing)
+        {
+            diagnostics.Add("[3D preview] P10.1 terrain upload staging skipped (persistentUpload off).");
+            return;
+        }
+
+        using var staging = new GlTerrainUploadStagingRing(gl, preferPersistent: true);
+        using var pool = new GlTerrainMeshPool(gl);
+        Assert.True(staging.IsValid);
+        // Tiny synthetic chunk: 4 verts × 12 floats, 6 indices.
+        var verts = new float[4 * 12];
+        for (var i = 0; i < 4; i++)
+        {
+            verts[i * 12 + 0] = i;
+            verts[i * 12 + 1] = 0f;
+            verts[i * 12 + 2] = 0f;
+            verts[i * 12 + 3] = 0f;
+            verts[i * 12 + 4] = 1f;
+            verts[i * 12 + 5] = 0f;
+        }
+
+        uint[] indices = [0, 1, 2, 0, 2, 3];
+        while (gl.GetError() != GLEnum.NoError)
+        {
+        }
+
+        var viaStaging = pool.Upload(verts, indices, staging);
+        Assert.False(viaStaging.IsEmpty, "Staging upload failed: " + pool.LastFailureReason);
+        staging.EndFrame();
+        var viaDirect = pool.Upload(verts, indices, staging: null);
+        Assert.False(viaDirect.IsEmpty, "Direct SubData upload failed: " + pool.LastFailureReason);
+        Assert.Equal(viaStaging.IndexCount, viaDirect.IndexCount);
+        Assert.Equal(viaStaging.VertexFloatCount, viaDirect.VertexFloatCount);
+        gl.Finish();
+        Assert.Equal(GLEnum.NoError, gl.GetError());
+        diagnostics.Add(
+            "[3D preview] P10.1 terrain upload staging ring copied a chunk into the mesh pool " +
+            $"({(staging.UsesPersistentMapping ? "persistent" : "SubData-fallback")}).");
+    }
+
+    private static void RunTerrainHeightAtlasComputeParityIfSupported(
+        GL gl,
+        PreviewGlCapabilities caps,
+        List<string> diagnostics)
+    {
+        if (!caps.CanUseComputeTerrainHeightAtlas)
+        {
+            diagnostics.Add("[3D preview] P10.0 terrain height atlas compute skipped (capability off).");
+            return;
+        }
+
+        var compile = new GlShaderCompileContext(gl, useOpenGlEs: false, caps.Vendor, caps.Renderer);
+        using var program = compile.CreateComputeProgram(
+            "genesis_terrain_height_atlas.comp",
+            out var error,
+            "p10-terrain-height-atlas");
+        Assert.True(program.IsValid, "Terrain height atlas compute failed: " + error);
+
+        const int size = 64;
+        const int originX = -32;
+        const int originZ = -32;
+        var gen = PreviewTerrainWorldGenSettings.Default;
+        using var atlas = new GlTerrainOccluderAtlas(gl);
+        atlas.ConfigureCompute(program, enabled: true);
+        // Bypass debounce/hysteresis by using a tiny view distance so EnsureFilled starts immediately.
+        var camera = new TerrainChunkKey(0, 0);
+        // Force compute fill via EnsureFilled with settings that require a bake.
+        // View distance 2 → atlasLodRing min 2 → radius 4 → 9 chunks → 144 columns — still large.
+        // For a tight 64×64 parity we dispatch manually through Pump after configuring a job
+        // by using EnsureFilled at origin and pumping until valid, then read back a 64×64 window.
+        atlas.EnsureFilled(camera, chunkViewDistance: 2, gen, worldGenRevision: 42, lodRingChunks: 2);
+        var deadline = DateTime.UtcNow.AddSeconds(8);
+        while (!atlas.IsValid && DateTime.UtcNow < deadline)
+        {
+            atlas.PumpUpload();
+            atlas.EnsureFilled(camera, chunkViewDistance: 2, gen, worldGenRevision: 42, lodRingChunks: 2);
+        }
+
+        Assert.True(
+            atlas.IsValid,
+            "Timed out waiting for compute terrain atlas; " +
+            $"inFlight={atlas.IsBakeInFlight}, usesCompute={atlas.UsesComputeFill}, " +
+            $"failure={atlas.LastFailureDiagnostic}");
+        Assert.True(atlas.UsesComputeFill);
+
+        // Compare a 64×64 window inside the atlas against the CPU oracle.
+        var texels = new float[checked(atlas.Width * atlas.Height * 2)];
+        gl.BindTexture(TextureTarget.Texture2D, atlas.TextureHandle);
+        unsafe
+        {
+            fixed (float* ptr = texels)
+            {
+                gl.GetTexImage(TextureTarget.Texture2D, 0, PixelFormat.RG, PixelType.Float, ptr);
+            }
+        }
+
+        gl.BindTexture(TextureTarget.Texture2D, 0);
+        Assert.Equal(GLEnum.NoError, gl.GetError());
+
+        var sampleOriginX = Math.Max(atlas.OriginX, originX);
+        var sampleOriginZ = Math.Max(atlas.OriginZ, originZ);
+        var maxDiff = 0f;
+        var compared = 0;
+        for (var z = 0; z < size; z++)
+        {
+            for (var x = 0; x < size; x++)
+            {
+                var worldX = sampleOriginX + x;
+                var worldZ = sampleOriginZ + z;
+                var u = worldX - atlas.OriginX;
+                var v = worldZ - atlas.OriginZ;
+                if ((uint)u >= (uint)atlas.Width || (uint)v >= (uint)atlas.Height)
+                {
+                    continue;
+                }
+
+                var expectedSurface = PreviewTerrainHeightfield.SampleColumn(worldX, worldZ, gen);
+                var expectedBottom = PreviewVoxelDdaMath.SolidBottomY(expectedSurface);
+                var i = (v * atlas.Width + u) * 2;
+                var gpuSurface = texels[i];
+                var gpuBottom = texels[i + 1];
+                maxDiff = Math.Max(maxDiff, Math.Abs(gpuSurface - expectedSurface));
+                maxDiff = Math.Max(maxDiff, Math.Abs(gpuBottom - expectedBottom));
+                compared++;
+            }
+        }
+
+        Assert.True(compared > 0, "No atlas texels overlapped the sample window.");
+        Assert.True(
+            maxDiff <= TerrainHeightAtlasParityTests.AbsoluteRelativeYEpsilon,
+            $"Compute atlas vs CPU max |Δ|={maxDiff} exceeded epsilon " +
+            $"{TerrainHeightAtlasParityTests.AbsoluteRelativeYEpsilon} over {compared} columns.");
+        diagnostics.Add(
+            $"[3D preview] P10.0 terrain height atlas compute parity passed " +
+            $"(compared={compared}, maxAbsDelta={maxDiff:G4}, atlas={atlas.Width}x{atlas.Height}).");
+    }
+
+    private static void RunTerrainFullMeshComputeParityIfSupported(
+        GL gl,
+        PreviewGlCapabilities caps,
+        List<string> diagnostics)
+    {
+        if (!caps.CanUseComputeTerrainMeshing)
+        {
+            diagnostics.Add("[3D preview] P10.2 terrain Full mesh compute skipped (capability off).");
+            return;
+        }
+
+        var compile = new GlShaderCompileContext(gl, useOpenGlEs: false, caps.Vendor, caps.Renderer);
+        using var board = compile.CreateComputeProgram(
+            "genesis_terrain_column_board.comp",
+            out var boardErr,
+            "p102-terrain-column-board");
+        Assert.True(board.IsValid, "Terrain column board compute failed: " + boardErr);
+        using var emit = compile.CreateComputeProgram(
+            "genesis_terrain_full_mesh_emit.comp",
+            out var emitErr,
+            "p102-terrain-full-mesh-emit");
+        Assert.True(emit.IsValid, "Terrain Full mesh emit compute failed: " + emitErr);
+
+        using var baker = new GlTerrainGpuFullMeshBaker(gl);
+        baker.ConfigurePrograms(board, emit);
+        Assert.True(baker.IsHealthy, baker.LastError ?? "baker unhealthy");
+
+        var key = new TerrainChunkKey(1, -1);
+        var grass = AutoPBR.Preview.PreviewTerrainGrassBakeSettings.BuiltIn;
+        var worldGen = PreviewTerrainWorldGenSettings.Default;
+        var cpu = PreviewTerrainMeshBaker.BakeFullChunkSolidsPerFace(key, grass, worldGen);
+        Assert.NotNull(cpu);
+
+        while (gl.GetError() != GLEnum.NoError)
+        {
+        }
+
+        var gpu = baker.TryBakeGpuPerFace(new TerrainGpuFullJob(key, grass, worldGen));
+        Assert.NotNull(gpu);
+        Assert.Equal(GLEnum.NoError, gl.GetError());
+        TerrainGpuFullMeshParityTests.AssertPerFaceParity(cpu!, gpu!);
+        diagnostics.Add(
+            $"[3D preview] P10.2 terrain Full mesh compute parity passed " +
+            $"(indices={gpu!.Indices.Length}, verts={gpu.InterleavedVertices.Length / 12}, " +
+            $"h=[{gpu.MinRelativeHeight},{gpu.MaxRelativeHeight}]).");
+
+        RunTerrainLodBoardParityIfSupported(gl, compile, diagnostics);
+    }
+
+    private static void RunTerrainLodBoardParityIfSupported(
+        GL gl,
+        GlShaderCompileContext compile,
+        List<string> diagnostics)
+    {
+        using var board = compile.CreateComputeProgram(
+            "genesis_terrain_lod_board.comp",
+            out var boardErr,
+            "p114-terrain-lod-board");
+        Assert.True(board.IsValid, "Terrain LOD board compute failed: " + boardErr);
+
+        using var baker = new GlTerrainGpuLodMeshBaker(gl);
+        baker.ConfigurePrograms(board);
+        Assert.True(baker.IsHealthy, baker.LastError ?? "lod baker unhealthy");
+
+        var key = TerrainResidencyKey.Section(1, 0, PreviewStageConstants.TerrainGpuLodMinLevel);
+        var grass = AutoPBR.Preview.PreviewTerrainGrassBakeSettings.BuiltIn;
+        var worldGen = PreviewTerrainWorldGenSettings.Default;
+        while (gl.GetError() != GLEnum.NoError)
+        {
+        }
+
+        var mesh = baker.TryBakeGpuBoardParity(new TerrainGpuLodJob(key, grass, worldGen));
+        Assert.NotNull(mesh);
+        Assert.Equal(GLEnum.NoError, gl.GetError());
+        Assert.Equal(key, mesh!.Key);
+        diagnostics.Add(
+            $"[3D preview] P11.4 terrain LOD board parity passed " +
+            $"(lod={key.LodLevel}, indices={mesh.Indices.Length}, " +
+            $"h=[{mesh.MinRelativeHeight},{mesh.MaxRelativeHeight}]).");
     }
 
     private static void RunGpuTimerQueryIfSupported(
@@ -735,101 +961,130 @@ public sealed class PreviewLiveGlSmokeTests
         }
 
         using var atlas = new GlTerrainOccluderAtlas(gl);
-        var cameraChunk = new TerrainChunkKey(0, 0);
-        atlas.EnsureFilled(
-            cameraChunk,
-            chunkViewDistance: 2,
-            PreviewTerrainWorldGenSettings.Default,
-            worldGenRevision: 1);
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!atlas.IsValid && DateTime.UtcNow < deadline)
+        GlShaderProgram? heightProgram = null;
+        try
         {
-            Thread.Sleep(10);
-            atlas.PumpUpload();
-            // Match production Tick: keep requesting so a stuck bake latch can recover.
+            if (caps.CanUseComputeTerrainHeightAtlas)
+            {
+                var compile = new GlShaderCompileContext(gl, useOpenGlEs: false, caps.Vendor, caps.Renderer);
+                heightProgram = compile.CreateComputeProgram(
+                    "genesis_terrain_height_atlas.comp",
+                    out var heightError,
+                    "p54-dda-height-atlas");
+                if (heightProgram.IsValid)
+                {
+                    atlas.ConfigureCompute(heightProgram, enabled: true);
+                }
+                else
+                {
+                    diagnostics.Add(
+                        "[3D preview] P5.4 height atlas compute unavailable (" +
+                        (heightError ?? "link failed") + "); using CPU fill.");
+                    heightProgram.Dispose();
+                    heightProgram = null;
+                }
+            }
+
+            var cameraChunk = new TerrainChunkKey(0, 0);
             atlas.EnsureFilled(
                 cameraChunk,
                 chunkViewDistance: 2,
                 PreviewTerrainWorldGenSettings.Default,
                 worldGenRevision: 1);
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (!atlas.IsValid && DateTime.UtcNow < deadline)
+            {
+                Thread.Sleep(10);
+                atlas.PumpUpload();
+                // Match production Tick: keep requesting so a stuck bake latch can recover.
+                atlas.EnsureFilled(
+                    cameraChunk,
+                    chunkViewDistance: 2,
+                    PreviewTerrainWorldGenSettings.Default,
+                    worldGenRevision: 1);
+            }
+
+            Assert.True(
+                atlas.IsValid,
+                "Timed out waiting for async voxel occluder atlas bake; " +
+                $"inFlight={atlas.IsBakeInFlight}, elapsedMs={atlas.BakeElapsedMilliseconds}, " +
+                $"lastFailure={atlas.LastFailureDiagnostic}.");
+
+            PreviewDrawBatch[] batches =
+            [
+                // Buried inside the solid stack under the flat pad → occluded by DDA.
+                new(0, 3, 0)
+                {
+                    BoundsCenter = new Vector3(
+                        1.5f,
+                        PreviewStageConstants.GroundPlaneWorldY - 2f,
+                        1.5f),
+                    BoundsRadius = 0.2f,
+                },
+                // Above the pad surface → should remain visible.
+                new(3, 3, 0)
+                {
+                    BoundsCenter = new Vector3(
+                        1.5f,
+                        PreviewStageConstants.GroundPlaneWorldY + 4f,
+                        1.5f),
+                    BoundsRadius = 0.2f,
+                },
+                new(6, 3, 0)
+                {
+                    BoundsCenter = new Vector3(
+                        3.5f,
+                        PreviewStageConstants.GroundPlaneWorldY + 4f,
+                        1.5f),
+                    BoundsRadius = 0.2f,
+                },
+                new(9, 3, 0)
+                {
+                    BoundsCenter = new Vector3(
+                        5.5f,
+                        PreviewStageConstants.GroundPlaneWorldY + 4f,
+                        1.5f),
+                    BoundsRadius = 0.2f,
+                },
+            ];
+            using var source = new GlIndirectDrawCommandBuffer(gl);
+            Assert.True(source.Upload(batches));
+            Vector4[] planes =
+            [
+                new(1f, 0f, 0f, 40f),
+                new(-1f, 0f, 0f, 40f),
+                new(0f, 1f, 0f, 40f),
+                new(0f, -1f, 0f, 40f),
+                new(0f, 0f, 1f, 40f),
+                new(0f, 0f, -1f, 40f),
+            ];
+            var camera = new Vector3(1.5f, PreviewStageConstants.GroundPlaneWorldY + 8f, 1.5f);
+            Assert.True(
+                compactor.DispatchWithGpuCulling(
+                    compactProgram,
+                    source,
+                    batches,
+                    planes,
+                    camera,
+                    readBackCounter: true,
+                    collectDiagnostics: true,
+                    enableVoxelOcclusion: true,
+                    voxelAtlas: atlas,
+                    voxelTextureUnit: 11));
+            var snap = compactor.ReadReductionDiagnostics();
+            Assert.True(snap.IsConsistent, snap.FormatDiagnostic());
+            Assert.True(
+                snap.OcclusionCulledCommands >= 1,
+                "Expected buried sphere to be DDA-occluded: " + snap.FormatDiagnostic());
+            Assert.True(
+                snap.WrittenCommands >= 1,
+                "Expected above-ground spheres to remain visible: " + snap.FormatDiagnostic());
+            diagnostics.Add("[3D preview] P5.4 voxel DDA occlusion compaction passed: " + snap.FormatDiagnostic() + ".");
         }
-
-        Assert.True(
-            atlas.IsValid,
-            "Timed out waiting for async voxel occluder atlas bake; " +
-            $"inFlight={atlas.IsBakeInFlight}, elapsedMs={atlas.BakeElapsedMilliseconds}, " +
-            $"lastFailure={atlas.LastFailureDiagnostic}.");
-
-        PreviewDrawBatch[] batches =
-        [
-            // Buried inside the solid stack under the flat pad → occluded by DDA.
-            new(0, 3, 0)
-            {
-                BoundsCenter = new Vector3(
-                    1.5f,
-                    PreviewStageConstants.GroundPlaneWorldY - 2f,
-                    1.5f),
-                BoundsRadius = 0.2f,
-            },
-            // Above the pad surface → should remain visible.
-            new(3, 3, 0)
-            {
-                BoundsCenter = new Vector3(
-                    1.5f,
-                    PreviewStageConstants.GroundPlaneWorldY + 4f,
-                    1.5f),
-                BoundsRadius = 0.2f,
-            },
-            new(6, 3, 0)
-            {
-                BoundsCenter = new Vector3(
-                    3.5f,
-                    PreviewStageConstants.GroundPlaneWorldY + 4f,
-                    1.5f),
-                BoundsRadius = 0.2f,
-            },
-            new(9, 3, 0)
-            {
-                BoundsCenter = new Vector3(
-                    5.5f,
-                    PreviewStageConstants.GroundPlaneWorldY + 4f,
-                    1.5f),
-                BoundsRadius = 0.2f,
-            },
-        ];
-        using var source = new GlIndirectDrawCommandBuffer(gl);
-        Assert.True(source.Upload(batches));
-        Vector4[] planes =
-        [
-            new(1f, 0f, 0f, 40f),
-            new(-1f, 0f, 0f, 40f),
-            new(0f, 1f, 0f, 40f),
-            new(0f, -1f, 0f, 40f),
-            new(0f, 0f, 1f, 40f),
-            new(0f, 0f, -1f, 40f),
-        ];
-        var camera = new Vector3(1.5f, PreviewStageConstants.GroundPlaneWorldY + 8f, 1.5f);
-        Assert.True(
-            compactor.DispatchWithGpuCulling(
-                compactProgram,
-                source,
-                batches,
-                planes,
-                camera,
-                readBackCounter: true,
-                collectDiagnostics: true,
-                enableVoxelOcclusion: true,
-                voxelAtlas: atlas,
-                voxelTextureUnit: 11));
-        var snap = compactor.ReadReductionDiagnostics();
-        Assert.True(snap.IsConsistent, snap.FormatDiagnostic());
-        Assert.True(
-            snap.OcclusionCulledCommands >= 1,
-            "Expected buried sphere to be DDA-occluded: " + snap.FormatDiagnostic());
-        Assert.True(
-            snap.WrittenCommands >= 1,
-            "Expected above-ground spheres to remain visible: " + snap.FormatDiagnostic());
-        diagnostics.Add("[3D preview] P5.4 voxel DDA occlusion compaction passed: " + snap.FormatDiagnostic() + ".");
+        finally
+        {
+            heightProgram?.Dispose();
+        }
     }
 
     private static void RunHierarchicalZOcclusionIfSupported(

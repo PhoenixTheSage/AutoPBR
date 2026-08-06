@@ -294,9 +294,12 @@ void main()
 
     // Distant LOD detail fade: dither the *finer* level out at its outer edge over solid
     // coarser underlay. Never fade-in the only coverage — that punches sky holes.
+    // Use Chebyshev XZ distance so the morph matches the square Full/LOD residency disk
+    // (Euclidean length() made a circular cut that fog then exaggerated).
     if (uIsGroundPass > 0 && uTerrainLodFadeEnable > 0)
     {
-        float lodDist = length(vWorldPos.xz - uCameraPos.xz);
+        vec2 lodDelta = abs(vWorldPos.xz - uCameraPos.xz);
+        float lodDist = max(lodDelta.x, lodDelta.y);
         float lodKeep = 1.0 - smoothstep(
             uTerrainLodFadeStart,
             max(uTerrainLodFadeEnd, uTerrainLodFadeStart + 1e-3),

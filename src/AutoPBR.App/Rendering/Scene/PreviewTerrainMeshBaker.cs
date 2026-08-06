@@ -267,8 +267,134 @@ public static class PreviewTerrainMeshBaker
                 metersPerTile,
                 buckets,
                 ref maxH,
-                vegPlan.ModelTemplates);
+                vegPlan.ModelTemplates,
+                PreviewTerrainVegetationEmitMode.FullVoxel,
+                grassSettings.SmartLeavesEnabled);
         }
+
+        if (!TryConcatMaterialBuckets(buckets, out var verts, out var indices, out var batches) ||
+            indices.Length == 0)
+        {
+            return null;
+        }
+
+        var minY = surfaceWorldY + layerMin - 1;
+        var maxY = surfaceWorldY + maxH;
+        var boundsMin = new Vector3(cx0, minY, cz0);
+        var boundsMax = new Vector3(cx1, maxY, cz1);
+        var center = (boundsMin + boundsMax) * 0.5f;
+        return new PreviewTerrainChunkMesh
+        {
+            Key = TerrainResidencyKey.Full(key),
+            Lod = TerrainChunkLodKind.Full,
+            InterleavedVertices = verts,
+            Indices = indices,
+            DrawBatches = batches,
+            BoundsCenter = center,
+            BoundsRadius = Vector3.Distance(center, boundsMax),
+            MinRelativeHeight = layerMin,
+            MaxRelativeHeight = maxH
+        };
+    }
+
+    /// <summary>
+    /// Stage-2 oracle / CPU demote twin: Full solids with one quad per exposed face (no greedy merge,
+    /// no vegetation). Matches <c>genesis_terrain_full_mesh_emit.comp</c> silhouette and materials.
+    /// </summary>
+    public static PreviewTerrainChunkMesh? BakeFullChunkSolidsPerFace(
+        TerrainChunkKey key,
+        PreviewTerrainGrassBakeSettings grassSettings = default,
+        PreviewTerrainWorldGenSettings worldGen = default,
+        int chunkSize = PreviewStageConstants.TerrainChunkSize,
+        int fillDepth = PreviewStageConstants.TerrainFillDepth,
+        float metersPerTile = PreviewStageConstants.MetersPerGrassTile,
+        float surfaceWorldY = PreviewStageConstants.GroundPlaneWorldY,
+        int flatPadHalfExtent = PreviewStageConstants.TerrainFlatPadHalfExtent,
+        int transitionBlocks = PreviewStageConstants.TerrainTransitionBlocks,
+        int seed = PreviewStageConstants.TerrainHeightSeed)
+    {
+        // Strip vegetation identity so solids-only demote cannot stamp trees.
+        grassSettings = grassSettings with { VegetationIdentity = "" };
+        if (grassSettings is
+            {
+                Mode: PreviewTerrainGrassMode.BuiltInSingleTop,
+                BetterGrassEnabled: false,
+                EmitOverlay: false
+            })
+        {
+            grassSettings = PreviewTerrainGrassBakeSettings.BuiltIn;
+        }
+
+        var gen = worldGen.BiomeSize > 0f || worldGen.Amplification > 0f || worldGen.Seed != 0
+            ? PreviewTerrainWorldGenSettings.Resolve(worldGen)
+            : PreviewTerrainWorldGenSettings.Default with { Seed = seed };
+
+        chunkSize = Math.Max(1, chunkSize);
+        fillDepth = Math.Max(1, fillDepth);
+        if (metersPerTile <= 1e-6f)
+        {
+            metersPerTile = PreviewStageConstants.MetersPerGrassTile;
+        }
+
+        var cx0 = key.OriginX(chunkSize);
+        var cz0 = key.OriginZ(chunkSize);
+        var cx1 = cx0 + chunkSize;
+        var cz1 = cz0 + chunkSize;
+
+        var side = chunkSize + 2;
+        var board = new PreviewTerrainColumnSample[side * side];
+        var ox = cx0 - 1;
+        var oz = cz0 - 1;
+        var minH = int.MaxValue;
+        var maxH = int.MinValue;
+        for (var lz = 0; lz < side; lz++)
+        {
+            for (var lx = 0; lx < side; lx++)
+            {
+                var sample = PreviewTerrainBiomeSampler.Sample(
+                    ox + lx, oz + lz, gen, flatPadHalfExtent, transitionBlocks);
+                board[lz * side + lx] = sample;
+                if (lx > 0 && lx < side - 1 && lz > 0 && lz < side - 1)
+                {
+                    minH = Math.Min(minH, sample.Height);
+                    maxH = Math.Max(maxH, sample.Height);
+                }
+            }
+        }
+
+        if (minH == int.MaxValue)
+        {
+            return null;
+        }
+
+        var layerMin = ResolveLayerMin(minH, fillDepth);
+        PreviewTerrainColumnSample ColumnAt(int x, int z)
+        {
+            var lx = x - ox;
+            var lz = z - oz;
+            if ((uint)lx >= (uint)side || (uint)lz >= (uint)side)
+            {
+                return PreviewTerrainBiomeSampler.Sample(
+                    x, z, gen, flatPadHalfExtent, transitionBlocks);
+            }
+
+            return board[lz * side + lx];
+        }
+
+        int HeightAt(int x, int z) => ColumnAt(x, z).Height;
+
+        var buckets = CreateMaterialBuckets(PreviewTerrainGrassSlots.MaxCount);
+        EmitChunkPerFace(
+            HeightAt,
+            ColumnAt,
+            fillDepth,
+            layerMin,
+            maxH,
+            cx0, cx1, cz0, cz1,
+            surfaceWorldY,
+            metersPerTile,
+            grassSettings,
+            buckets);
 
         if (!TryConcatMaterialBuckets(buckets, out var verts, out var indices, out var batches) ||
             indices.Length == 0)
@@ -360,6 +486,113 @@ public static class PreviewTerrainMeshBaker
         indices = [.. indexList];
         batches = [.. batchList];
         return true;
+    }
+
+    /// <summary>Non-greedy exposed-face quads (Stage-2 GPU emit twin).</summary>
+    private static void EmitChunkPerFace(
+        Func<int, int, int> heightAt,
+        Func<int, int, PreviewTerrainColumnSample> columnAt,
+        int fillDepth,
+        int layerMin,
+        int layerMax,
+        int cx0,
+        int cx1,
+        int cz0,
+        int cz1,
+        float surfaceWorldY,
+        float metersPerTile,
+        PreviewTerrainGrassBakeSettings grassSettings,
+        List<float>[] buckets)
+    {
+        _ = layerMax;
+        for (var bz = cz0; bz < cz1; bz++)
+        {
+            for (var bx = cx0; bx < cx1; bx++)
+            {
+                var col = columnAt(bx, bz);
+                var bottom = SolidBottomY(col.Height, fillDepth);
+                for (var by = bottom; by <= col.Height; by++)
+                {
+                    if (!IsSolid(heightAt, fillDepth, bx, by + 1, bz))
+                    {
+                        var mat = ResolveYFaceMaterial(true, col, grassSettings);
+                        EmitMergedQuad(
+                            axis: 1, positive: true, w: by, u: bx - cx0, v: bz - cz0,
+                            width: 1, height: 1, cx0, cz0, layerMin,
+                            surfaceWorldY, metersPerTile, buckets[mat]);
+                    }
+
+                    // Skip the shared world-floor underside (infinite dark plane under hills).
+                    if (by > PreviewStageConstants.TerrainSolidFloorRelativeY &&
+                        !IsSolid(heightAt, fillDepth, bx, by - 1, bz))
+                    {
+                        var mat = ResolveYFaceMaterial(false, col, grassSettings);
+                        EmitMergedQuad(
+                            axis: 1, positive: false, w: by, u: bx - cx0, v: bz - cz0,
+                            width: 1, height: 1, cx0, cz0, layerMin,
+                            surfaceWorldY, metersPerTile, buckets[mat]);
+                    }
+
+                    EmitPerFaceHorizontal(
+                        heightAt, columnAt, fillDepth, bx, by, bz, cx0, cz0, layerMin,
+                        surfaceWorldY, metersPerTile, grassSettings, buckets,
+                        axis: 0, positive: true, neighborX: bx + 1, neighborZ: bz);
+                    EmitPerFaceHorizontal(
+                        heightAt, columnAt, fillDepth, bx, by, bz, cx0, cz0, layerMin,
+                        surfaceWorldY, metersPerTile, grassSettings, buckets,
+                        axis: 0, positive: false, neighborX: bx - 1, neighborZ: bz);
+                    EmitPerFaceHorizontal(
+                        heightAt, columnAt, fillDepth, bx, by, bz, cx0, cz0, layerMin,
+                        surfaceWorldY, metersPerTile, grassSettings, buckets,
+                        axis: 2, positive: true, neighborX: bx, neighborZ: bz + 1);
+                    EmitPerFaceHorizontal(
+                        heightAt, columnAt, fillDepth, bx, by, bz, cx0, cz0, layerMin,
+                        surfaceWorldY, metersPerTile, grassSettings, buckets,
+                        axis: 2, positive: false, neighborX: bx, neighborZ: bz - 1);
+                }
+            }
+        }
+    }
+
+    private static void EmitPerFaceHorizontal(
+        Func<int, int, int> heightAt,
+        Func<int, int, PreviewTerrainColumnSample> columnAt,
+        int fillDepth,
+        int bx,
+        int by,
+        int bz,
+        int cx0,
+        int cz0,
+        int layerMin,
+        float surfaceWorldY,
+        float metersPerTile,
+        PreviewTerrainGrassBakeSettings grassSettings,
+        List<float>[] buckets,
+        int axis,
+        bool positive,
+        int neighborX,
+        int neighborZ)
+    {
+        if (IsSolid(heightAt, fillDepth, neighborX, by, neighborZ))
+        {
+            return;
+        }
+
+        var mat = ResolveHorizontalFaceMaterial(
+            columnAt, bx, by, bz, neighborX, neighborZ, grassSettings);
+        var u = axis == 0 ? by - layerMin : bx - cx0;
+        var v = axis == 0 ? bz - cz0 : by - layerMin;
+        var w = axis == 0 ? bx : bz;
+        EmitMergedQuad(
+            axis, positive, w, u, v, width: 1, height: 1, cx0, cz0, layerMin,
+            surfaceWorldY, metersPerTile, buckets[mat]);
+
+        if (grassSettings.EmitOverlay && mat == PreviewTerrainGrassSlots.Side && axis != 1)
+        {
+            EmitMergedQuad(
+                axis, positive, w, u, v, width: 1, height: 1, cx0, cz0, layerMin,
+                surfaceWorldY, metersPerTile, buckets[PreviewTerrainGrassSlots.Overlay]);
+        }
     }
 
     private static void EmitChunkGreedy(
@@ -615,6 +848,12 @@ public static class PreviewTerrainMeshBaker
                         var bx = cx0 + u;
                         var bz = cz0 + v;
                         if (!IsSolid(heightAt, fillDepth, bx, by, bz))
+                        {
+                            continue;
+                        }
+
+                        // Shared world-floor underside is never drawn (infinite plane artifact).
+                        if (!positive && by <= PreviewStageConstants.TerrainSolidFloorRelativeY)
                         {
                             continue;
                         }

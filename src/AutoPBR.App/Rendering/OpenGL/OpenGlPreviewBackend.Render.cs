@@ -334,12 +334,14 @@ public sealed partial class OpenGlPreviewBackend
         {
             // Multi-frame bootstrap: drain any completed occluder bake between steps.
             PumpTerrainOccluderAtlasBootstrap();
+            WarmStartTerrainStreamingBootstrap();
             gl.ClearColor(0.01f, 0.012f, 0.02f, 1f);
             gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
             return;
         }
 
         EnsureGpuTier(settings);
+        var frameSettings = ResolveStartupFrameSettings(settings);
 
         scene ??= PreviewStageSceneFactory.CreateIdle(settings);
 
@@ -351,7 +353,7 @@ public sealed partial class OpenGlPreviewBackend
             VpY = vpY,
             Vw = vw,
             Vh = vh,
-            Settings = settings,
+            Settings = frameSettings,
             SettingsRevision = settingsRevision,
             Scene = scene,
             Material = material,
@@ -411,6 +413,35 @@ public sealed partial class OpenGlPreviewBackend
             FinishFrameSubjectGpuUploads();
             EndPassTimerFrame(renderTime);
         }
+    }
+
+    private PreviewRenderSettingsSnapshot ResolveStartupFrameSettings(
+        in PreviewRenderSettingsSnapshot settings)
+    {
+        if (_terrainStartupReadyLatched)
+        {
+            return settings;
+        }
+
+        if (!settings.ShowGroundMesh || ResolveTerrainInitProgressFraction() >= 1.0)
+        {
+            // Startup readiness is one-way for this GL resource lifetime. Camera movement can
+            // temporarily reduce local Full residency, but must never toggle post shaders off.
+            _terrainStartupReadyLatched = true;
+            return settings;
+        }
+
+        // Compile requested post tiers normally, but do not execute the expensive cloud/TAA/AO
+        // pipeline against a sky-only viewport. This keeps the WGL driver and terrain latency
+        // lane responsive until the camera-local Full pad is paintable.
+        return settings with
+        {
+            EnableGodRays = false,
+            EnableVolumetricClouds = false,
+            EnableScreenSpaceGodRays = false,
+            EnablePreviewTaa = false,
+            EnableScreenSpaceAo = false,
+        };
     }
 
     private void HandleUnhandledRenderException(int framebuffer, int pixelWidth, int pixelHeight, Exception exception)

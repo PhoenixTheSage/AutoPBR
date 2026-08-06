@@ -152,16 +152,41 @@ public static class PreviewStageConstants
     public const int TerrainLodRingPresetExtreme = 1024;
 
     /// <summary>
-    /// Occluder height atlas only covers Full + this much LOD ring. Extreme LOD rings are far
-    /// larger than a practical RG32F atlas; DDA stays near-field.
+    /// Occluder height atlas fine ring: Full + this much LOD ring at 1 m columns.
+    /// Extreme LOD rings use the separate coarse multi-res atlas instead.
     /// </summary>
     public const int TerrainOccluderAtlasMaxLodRingChunks = 16;
+
+    /// <summary>Minimum cell size (meters) for the coarse DDA height atlas.</summary>
+    public const int TerrainOccluderCoarseMinCellMeters = 8;
+
+    /// <summary>
+    /// Coarse DDA atlas cell size: at least <see cref="TerrainOccluderCoarseMinCellMeters"/>,
+    /// otherwise the sample step of the coarsest active LOD band so Extreme rings stay tiny.
+    /// </summary>
+    public static int ResolveCoarseOccluderCellMeters(int lodRingChunks)
+    {
+        var levels = TerrainChunkStreamer.ResolveActiveLodLevelCount(lodRingChunks);
+        if (levels <= 0)
+        {
+            return TerrainOccluderCoarseMinCellMeters;
+        }
+
+        var coarsest = TerrainResidencyKey.SampleStepMetersForLevel((byte)levels);
+        return Math.Max(TerrainOccluderCoarseMinCellMeters, coarsest);
+    }
 
     /// <summary>Max CPU LOD section meshes retained in <c>TerrainLodSectionCache</c>.</summary>
     public const int TerrainLodCacheMaxEntries = 2048;
 
     /// <summary>Approx CPU LOD section cache byte budget (vertices + indices).</summary>
     public const long TerrainLodCacheMaxBytes = 384L * 1024L * 1024L;
+
+    /// <summary>Max on-disk LOD section mesh files retained under terrain-lod-cache.</summary>
+    public const int TerrainLodDiskCacheMaxEntries = 2048;
+
+    /// <summary>Approx on-disk LOD section cache byte budget.</summary>
+    public const long TerrainLodDiskCacheMaxBytes = 2L * 1024L * 1024L * 1024L;
 
     /// <summary>Legacy alias for <see cref="TerrainDefaultLodRingChunks"/>.</summary>
     public const int TerrainLodRingChunks = TerrainDefaultLodRingChunks;
@@ -184,8 +209,23 @@ public static class PreviewStageConstants
     /// </summary>
     public const long TerrainMaxUploadBytesPerFrameCatchUp = 16L * 1024L * 1024L;
 
-    /// <summary>Max LongRunning bake workers (pool size is also capped by ProcessorCount-1).</summary>
-    public const int TerrainMaxBakeWorkers = 8;
+    /// <summary>
+    /// Max BelowNormal LongRunning bake workers. Two lanes keep terrain generation from
+    /// saturating the CPU while the WGL driver is compiling/warming post effects.
+    /// </summary>
+    public const int TerrainMaxBakeWorkers = 2;
+
+    /// <summary>
+    /// Maximum claimed/ready terrain meshes ahead of GPU upload. Prevents post-Core shader
+    /// initialization from accumulating an entire hard disk of CPU meshes that may be invalidated.
+    /// </summary>
+    public const int TerrainMaxBakeJobsAhead = 12;
+
+    /// <summary>
+    /// Min LOD level eligible for Stage-2 budgeted LOD meshing (LOD1–2 stay on worker CPU
+    /// for Full fade-seam parity).
+    /// </summary>
+    public const byte TerrainGpuLodMinLevel = 3;
 
     /// <summary>If frustum cull yields zero chunks, draw this many nearest by XZ (never blank the pad).</summary>
     public const int TerrainFrustumDrawFallbackCount = 64;
@@ -205,30 +245,135 @@ public static class PreviewStageConstants
     /// <summary>
     /// World-meter blend width where each finer detail level dithers out at its outer edge
     /// over solid coarser LOD underneath (never dither the only coverage — that punches sky holes).
+    /// Kept modest for VRAM underlay cost; wide enough to hide Full↔LOD1 Chebyshev seams.
     /// </summary>
-    public const float TerrainLodDetailFadeWidthMeters = 48f;
+    public const float TerrainLodDetailFadeWidthMeters = 32f;
 
     /// <summary>
-    /// LOD vegetation / detail contract: block-space occupancy stays 1:1 with Full meshes.
-    /// Budget levers that are allowed to differ by distance: texture mip bias, transparency /
-    /// alpha testing, and shadow caster range. Do not thin placements or drop voxels for VRAM.
+    /// Max LOD level that stamps Full voxel vegetation meshes. LOD≥2 keeps the same placement
+    /// roots but uses crossed-plane impostors for VRAM.
+    /// </summary>
+    public const byte TerrainLodVegetationFullVoxelMaxLevel = 1;
+
+    /// <summary>
+    /// Max LOD level that stamps vegetation *placements* from the Full root set (stable subset).
+    /// Mesh density may use impostors beyond <see cref="TerrainLodVegetationFullVoxelMaxLevel"/>.
+    /// </summary>
+    public const byte TerrainLodVegetationBlockSpaceMaxLevel = TerrainResidencyKey.MaxLodLevel;
+
+    /// <summary>
+    /// LOD vegetation contract: every kept root is a stable member of the Full placement set.
+    /// Full + LOD1 share full cardinality and voxel occupancy; LOD2 keeps full cardinality with
+    /// impostors; LOD≥3 may thin to a hash subset (never emit-off / bare silhouette).
     /// </summary>
     public const bool TerrainLodVegetationBlockSpaceIdentity = true;
 
     /// <summary>
-    /// Soft-start unlock radius (Chebyshev chunks from camera). Bakers only claim keys with
-    /// ring ≤ this, then expand by one when the unlocked window has no pending work.
+    /// LOD levels at or below this keep 100% of Full vegetation roots (LOD1 voxel, LOD2 impostor).
+    /// </summary>
+    public const byte TerrainLodVegetationFullKeepMaxLevel = 2;
+
+    /// <summary>
+    /// LOD levels at or below this (and above <see cref="TerrainLodVegetationFullKeepMaxLevel"/>)
+    /// keep 50% of Full roots; coarser levels keep 25%.
+    /// </summary>
+    public const byte TerrainLodVegetationHalfKeepMaxLevel = 4;
+
+    /// <summary>Whether a LOD section bake should stamp vegetation (voxel or impostor).</summary>
+    public static bool ShouldEmitLodBlockSpaceVegetation(byte lodLevel) =>
+        lodLevel > 0 && lodLevel <= TerrainLodVegetationBlockSpaceMaxLevel;
+
+    /// <summary>Vegetation mesh mode for a streamed LOD section.</summary>
+    public static PreviewTerrainVegetationEmitMode ResolveLodVegetationEmitMode(byte lodLevel) =>
+        lodLevel <= TerrainLodVegetationFullVoxelMaxLevel
+            ? PreviewTerrainVegetationEmitMode.FullVoxel
+            : PreviewTerrainVegetationEmitMode.Impostor;
+
+    /// <summary>
+    /// Power-of-two keep mask for distant LOD vegetation thinning. Keep a Full root when
+    /// <c>(stableHash(root) &amp; (mask - 1)) == 0</c>. Mask 1 = 100%, 2 = 50%, 4 = 25%.
+    /// </summary>
+    public static int ResolveLodVegetationKeepMask(byte lodLevel)
+    {
+        if (lodLevel <= TerrainLodVegetationFullKeepMaxLevel)
+        {
+            return 1;
+        }
+
+        if (lodLevel <= TerrainLodVegetationHalfKeepMaxLevel)
+        {
+            return 2;
+        }
+
+        return 4;
+    }
+
+    /// <summary>Expected keep fraction for budget estimates (inverse of keep mask).</summary>
+    public static float ResolveLodVegetationKeepFraction(byte lodLevel) =>
+        1f / ResolveLodVegetationKeepMask(lodLevel);
+
+    /// <summary>
+    /// Soft-start unlock radius (Chebyshev chunks from camera). Transition Full/LOD1/LOD2 seam
+    /// keys are always eligible; coarser LOD unlocks by band when the window is idle.
     /// </summary>
     public const int TerrainStreamSoftStartInitialRing = 2;
+
+    /// <summary>Steady-state Full chunk GPU uploads per frame.</summary>
+    public const int TerrainMaxFullUploadsPerFrame = 2;
+
+    /// <summary>Steady-state LOD section GPU uploads per frame (separate from Full).</summary>
+    public const int TerrainMaxLodUploadsPerFrame = 2;
+
+    /// <summary>Catch-up Full uploads per frame while streaming is behind.</summary>
+    public const int TerrainMaxFullUploadsPerFrameCatchUp = 4;
+
+    /// <summary>Catch-up LOD uploads per frame while streaming is behind.</summary>
+    public const int TerrainMaxLodUploadsPerFrameCatchUp = 4;
+
+    /// <summary>Steady-state Full upload byte budget per frame.</summary>
+    public const long TerrainMaxFullUploadBytesPerFrame = 4L * 1024L * 1024L;
+
+    /// <summary>Steady-state LOD upload byte budget per frame.</summary>
+    public const long TerrainMaxLodUploadBytesPerFrame = 4L * 1024L * 1024L;
+
+    /// <summary>Catch-up Full upload byte budget per frame.</summary>
+    public const long TerrainMaxFullUploadBytesPerFrameCatchUp = 8L * 1024L * 1024L;
+
+    /// <summary>Catch-up LOD upload byte budget per frame.</summary>
+    public const long TerrainMaxLodUploadBytesPerFrameCatchUp = 8L * 1024L * 1024L;
+
+    /// <summary>Throttle for flying residency diagnostic lines (seconds).</summary>
+    public const double TerrainResidencyDiagIntervalSeconds = 2.0;
 
     /// <summary>Floor for the shared terrain mesh-pool VRAM ceiling.</summary>
     public const long TerrainMeshPoolBudgetFloorBytes = 1024L * 1024L * 1024L;
 
-    /// <summary>Default / starting terrain mesh-pool VRAM ceiling.</summary>
+    /// <summary>Default / starting terrain mesh-pool VRAM ceiling when adapter memory is unknown.</summary>
     public const long TerrainMeshPoolBudgetDefaultBytes = 1536L * 1024L * 1024L;
 
-    /// <summary>Hard cap — pool may grow toward this under large LOD rings, never beyond.</summary>
-    public const long TerrainMeshPoolBudgetCeilingBytes = 3072L * 1024L * 1024L;
+    /// <summary>
+    /// Ceiling used when dedicated VRAM cannot be queried (legacy fixed ladder).
+    /// </summary>
+    public const long TerrainMeshPoolBudgetUnknownCeilingBytes = 3072L * 1024L * 1024L;
+
+    /// <summary>
+    /// Absolute safety rail even on very large GPUs — overflow stays on CPU bake + defer/evict,
+    /// not unbounded GL buffer growth.
+    /// </summary>
+    public const long TerrainMeshPoolBudgetAbsoluteCeilingBytes = 12L * 1024L * 1024L * 1024L;
+
+    /// <summary>Backward-compatible alias for the unknown-VRAM ceiling.</summary>
+    public const long TerrainMeshPoolBudgetCeilingBytes = TerrainMeshPoolBudgetUnknownCeilingBytes;
+
+    /// <summary>
+    /// Fraction of (dedicated VRAM − reserve) allowed for the terrain mesh pool working set.
+    /// </summary>
+    public const float TerrainMeshPoolVramFraction = 0.35f;
+
+    /// <summary>
+    /// Headroom reserved for framebuffers, shadows, clouds, atlases, and other preview GPU use.
+    /// </summary>
+    public const long TerrainMeshPoolVramReserveBytes = 768L * 1024L * 1024L;
 
     /// <summary>Enter budget-pressure thrash controls at this fraction of the active ceiling.</summary>
     public const float TerrainMeshPoolPressureEnterRatio = 0.90f;
@@ -236,22 +381,158 @@ public static class PreviewStageConstants
     /// <summary>Leave budget-pressure thrash controls below this fraction (hysteresis).</summary>
     public const float TerrainMeshPoolPressureExitRatio = 0.70f;
 
+    /// <summary>~MiB per Full chunk (greedy solids + 1:1 vegetation).</summary>
+    public const long TerrainMeshPoolEstimateFullChunkBytes = 384L * 1024L;
+
     /// <summary>
-    /// Scales the terrain mesh-pool ceiling with view distance + LOD ring so extreme horizons
-    /// can grow headroom instead of thrashing a fixed 1.5 GiB limit (chunk flash).
+    /// Extra VRAM per world-chunk of LOD that still stamps Full voxel vegetation (LOD1).
     /// </summary>
-    public static long ResolveTerrainMeshPoolBudgetBytes(int hardRadiusChunks, int lodRingChunks)
+    public const long TerrainMeshPoolEstimateLodVegBytesPerWorldChunk = 256L * 1024L;
+
+    /// <summary>
+    /// Extra VRAM per world-chunk of LOD that stamps impostor vegetation (LOD≥2).
+    /// </summary>
+    public const long TerrainMeshPoolEstimateLodImpostorBytesPerWorldChunk = 16L * 1024L;
+
+    /// <summary>Hull-only LOD section baseline (before vegetation).</summary>
+    public const long TerrainMeshPoolEstimateLodHullSectionBytes = 96L * 1024L;
+
+    /// <summary>Headroom multiplier over the a-priori / high-water need.</summary>
+    public const float TerrainMeshPoolBudgetHeadroom = 1.15f;
+
+    /// <summary>
+    /// Veg-aware estimate of resident Full + LOD mesh bytes for the current hard/LOD radii,
+    /// including adjacent-only fade underlay on each LOD band.
+    /// </summary>
+    public static long EstimateTerrainMeshPoolNeedBytes(int hardRadiusChunks, int lodRingChunks)
     {
         hardRadiusChunks = Math.Max(0, hardRadiusChunks);
         lodRingChunks = Math.Max(0, lodRingChunks);
-        // ~2 MiB per Chebyshev ring unit — coarse estimate for combined Full+LOD residency.
-        var scaled = TerrainMeshPoolBudgetFloorBytes +
-                     ((long)hardRadiusChunks + lodRingChunks) * 2L * 1024L * 1024L;
+
+        var fullSide = 2L * hardRadiusChunks + 1;
+        var need = fullSide * fullSide * TerrainMeshPoolEstimateFullChunkBytes;
+
+        Span<TerrainChunkStreamer.LodBand> bands =
+            stackalloc TerrainChunkStreamer.LodBand[TerrainResidencyKey.MaxLodLevel];
+        var bandCount = TerrainChunkStreamer.ResolveLodBands(hardRadiusChunks, lodRingChunks, bands);
+        if (bandCount > 0)
+        {
+            var fade = TerrainChunkStreamer.ResolveLodFadeOverlapChunks();
+            for (var i = 0; i < bandCount; i++)
+            {
+                var band = bands[i];
+                var scale = TerrainResidencyKey.ChunksPerSideForLevel(band.Level);
+                // Adjacent underlay only: expand into the previous band (Full for LOD1), not deeper.
+                var underlayFloor = i == 0 ? 0 : bands[i - 1].DMin;
+                var dMin = Math.Max(underlayFloor, band.DMin - fade);
+                var dMax = band.DMax;
+                var sections = EstimateChebyshevSectionCount(dMin, dMax, scale);
+                var vegPerChunk = band.Level <= TerrainLodVegetationFullVoxelMaxLevel
+                    ? TerrainMeshPoolEstimateLodVegBytesPerWorldChunk
+                    : (long)(TerrainMeshPoolEstimateLodImpostorBytesPerWorldChunk *
+                             ResolveLodVegetationKeepFraction(band.Level));
+                var perSection = TerrainMeshPoolEstimateLodHullSectionBytes +
+                                 vegPerChunk * scale * scale;
+                need += sections * perSection;
+            }
+        }
+
+        return (long)(need * TerrainMeshPoolBudgetHeadroom);
+    }
+
+    /// <summary>
+    /// Bytes that must stay available for Full + LOD1 fade underlay (seam coverage).
+    /// Distant coarse LOD fills only the remainder of the soft ceiling.
+    /// </summary>
+    public static long EstimateTerrainMeshPoolReservedBytes(int hardRadiusChunks, int lodRingChunks)
+    {
+        hardRadiusChunks = Math.Max(0, hardRadiusChunks);
+        lodRingChunks = Math.Max(0, lodRingChunks);
+
+        var fullSide = 2L * hardRadiusChunks + 1;
+        var need = fullSide * fullSide * TerrainMeshPoolEstimateFullChunkBytes;
+
+        Span<TerrainChunkStreamer.LodBand> bands =
+            stackalloc TerrainChunkStreamer.LodBand[TerrainResidencyKey.MaxLodLevel];
+        var bandCount = TerrainChunkStreamer.ResolveLodBands(hardRadiusChunks, lodRingChunks, bands);
+        if (bandCount > 0)
+        {
+            var fade = TerrainChunkStreamer.ResolveLodFadeOverlapChunks();
+            var band = bands[0];
+            var scale = TerrainResidencyKey.ChunksPerSideForLevel(band.Level);
+            var dMin = Math.Max(0, band.DMin - fade);
+            var dMax = band.DMax;
+            var sections = EstimateChebyshevSectionCount(dMin, dMax, scale);
+            need += sections * (TerrainMeshPoolEstimateLodHullSectionBytes +
+                                TerrainMeshPoolEstimateLodVegBytesPerWorldChunk * scale * scale);
+        }
+
+        return (long)(need * TerrainMeshPoolBudgetHeadroom);
+    }
+
+    /// <summary>Estimated distant LOD (beyond reserved Full + LOD1 underlay) working set.</summary>
+    public static long EstimateTerrainMeshPoolDistantLodBytes(int hardRadiusChunks, int lodRingChunks)
+    {
+        var total = EstimateTerrainMeshPoolNeedBytes(hardRadiusChunks, lodRingChunks);
+        var reserved = EstimateTerrainMeshPoolReservedBytes(hardRadiusChunks, lodRingChunks);
+        return Math.Max(0L, total - reserved);
+    }
+
+    /// <summary>
+    /// Approximate section count covering Chebyshev distances [dMin, dMax] at the given
+    /// chunks-per-side scale.
+    /// </summary>
+    public static long EstimateChebyshevSectionCount(int dMin, int dMax, int chunksPerSide)
+    {
+        dMin = Math.Max(0, dMin);
+        dMax = Math.Max(dMin, dMax);
+        chunksPerSide = Math.Max(1, chunksPerSide);
+        var outer = 2L * dMax + 1;
+        var inner = dMin == 0 ? 0L : 2L * (dMin - 1) + 1;
+        var chunkCells = outer * outer - inner * inner;
+        var scaleArea = (long)chunksPerSide * chunksPerSide;
+        return Math.Max(1L, (chunkCells + scaleArea - 1) / scaleArea);
+    }
+
+    /// <summary>
+    /// Scales the terrain mesh-pool ceiling with view distance + LOD ring (veg-aware), then
+    /// clamps to a hardware-derived VRAM fraction when dedicated memory is known (else the
+    /// unknown ceiling). Optional live high-water prevents undersizing after real uploads.
+    /// Overflow stays on CPU residency / defer / evict — not page-file-backed GL buffers.
+    /// </summary>
+    public static long ResolveTerrainMeshPoolBudgetBytes(
+        int hardRadiusChunks,
+        int lodRingChunks,
+        long dedicatedVideoMemoryBytes = 0,
+        long liveHighWaterBytes = 0)
+    {
+        var scaled = EstimateTerrainMeshPoolNeedBytes(hardRadiusChunks, lodRingChunks);
         scaled = Math.Max(scaled, TerrainMeshPoolBudgetDefaultBytes);
+        if (liveHighWaterBytes > 0)
+        {
+            scaled = Math.Max(
+                scaled,
+                (long)(liveHighWaterBytes * TerrainMeshPoolBudgetHeadroom));
+        }
+
+        var ceiling = ResolveTerrainMeshPoolCeilingBytes(dedicatedVideoMemoryBytes);
+        return Math.Clamp(scaled, TerrainMeshPoolBudgetFloorBytes, ceiling);
+    }
+
+    /// <summary>Effective growth ceiling from detected VRAM (or the unknown-VRAM ladder).</summary>
+    public static long ResolveTerrainMeshPoolCeilingBytes(long dedicatedVideoMemoryBytes)
+    {
+        if (dedicatedVideoMemoryBytes <= 0)
+        {
+            return TerrainMeshPoolBudgetUnknownCeilingBytes;
+        }
+
+        var usable = Math.Max(0L, dedicatedVideoMemoryBytes - TerrainMeshPoolVramReserveBytes);
+        var vramCap = (long)(usable * TerrainMeshPoolVramFraction);
         return Math.Clamp(
-            scaled,
+            vramCap,
             TerrainMeshPoolBudgetFloorBytes,
-            TerrainMeshPoolBudgetCeilingBytes);
+            TerrainMeshPoolBudgetAbsoluteCeilingBytes);
     }
 
     /// <summary>Minimum vertical skirt depth (blocks) on LOD section edges to hide cracks.</summary>

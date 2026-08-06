@@ -27,7 +27,9 @@ internal sealed record PreviewGlCapabilities(
     bool SpirV,
     bool SeparablePrograms,
     int MaxColorAttachments,
-    int MaxDrawBuffers)
+    int MaxDrawBuffers,
+    long DedicatedVideoMemoryBytes = 0,
+    string VideoMemorySource = "unavailable")
 {
     public bool CanUsePersistentUploadRing => !IsOpenGlEs && PersistentMappedBuffers;
 
@@ -36,6 +38,19 @@ internal sealed record PreviewGlCapabilities(
     public bool CanUseMaterialDrawRecordSsbo => !IsOpenGlEs && ShaderStorageBuffers;
 
     public bool CanUseComputeFroxelInject => !IsOpenGlEs && ComputeShaders && ImageLoadStore;
+
+    /// <summary>
+    /// Desktop compute + image load/store for the P5.4 RG32F terrain height atlas fill.
+    /// GLES/ANGLE and compile demotion keep the CPU worker + TexSubImage path.
+    /// </summary>
+    public bool CanUseComputeTerrainHeightAtlas => !IsOpenGlEs && ComputeShaders && ImageLoadStore;
+
+    /// <summary>
+    /// Desktop compute + SSBO atomics for Stage-2 Full-chunk solid meshing.
+    /// GLES/ANGLE and compile demotion keep CPU <c>BakeFullChunk</c>.
+    /// </summary>
+    public bool CanUseComputeTerrainMeshing =>
+        !IsOpenGlEs && ComputeShaders && ShaderStorageBuffers && ShaderAtomics;
 
     public bool CanUseIndirectDrawCommands => !IsOpenGlEs && MultiDrawIndirect;
 
@@ -130,6 +145,8 @@ internal sealed record PreviewGlCapabilities(
                $"entitySsbo={(CanUseEntitySkinningSsbo ? "on" : "off")}, " +
                $"materialDrawSsbo={(CanUseMaterialDrawRecordSsbo ? "on" : "off")}, " +
                $"computeFroxels={(CanUseComputeFroxelInject ? "on" : "off")}, " +
+               $"terrainHeightAtlasCompute={(CanUseComputeTerrainHeightAtlas ? "on" : "off")}, " +
+               $"terrainMeshCompute={(CanUseComputeTerrainMeshing ? "on" : "off")}, " +
                $"indirectDraws={(CanUseIndirectDrawCommands ? "on" : "off")}, " +
                $"multiDrawGroups={(CanUseMultiDrawIndirectGroups ? "on" : "off")}, " +
                $"gpuCommandCompaction={(CanUseGpuCommandCompaction ? "on" : "off")}, " +
@@ -154,7 +171,8 @@ internal sealed record PreviewGlCapabilities(
                $"drawParameters={(ShaderDrawParameters ? "yes" : "no")}, " +
                $"timerQuery={(TimerQuery ? "yes" : "no")}, " +
                $"spirv={(SpirV ? "yes" : "no")}, " +
-               $"separablePrograms={(SeparablePrograms ? "yes" : "no")}.";
+               $"separablePrograms={(SeparablePrograms ? "yes" : "no")}, " +
+               $"dedicatedVram={(DedicatedVideoMemoryBytes > 0 ? $"{DedicatedVideoMemoryBytes / (1024 * 1024)}MiB@{VideoMemorySource}" : "unknown")}.";
     }
 
     public string FormatContextSuffix()
@@ -164,6 +182,12 @@ internal sealed record PreviewGlCapabilities(
         var drawRecords = CanUseMaterialDrawRecordSsbo ? "draw SSBO" : "draw uniforms";
         var materialTextures = CanUseMaterialTextureArrays ? "material arrays" : "material samplers";
         var froxelInject = CanUseComputeFroxelInject ? "compute froxels" : "fragment froxels";
+        var terrainAtlas = CanUseComputeTerrainHeightAtlas
+            ? "compute terrain atlas"
+            : "CPU terrain atlas";
+        var terrainMesh = CanUseComputeTerrainMeshing
+            ? "compute terrain mesh"
+            : "CPU terrain mesh";
         var cloudTargets = CanUseFloatingPointCloudTargets
             ? CanUseCloudTemporalMoments ? "FP cloud targets + moments" : "FP cloud targets"
             : "RGBA8 clouds";
@@ -174,7 +198,10 @@ internal sealed record PreviewGlCapabilities(
         var drawCommands = CanUseMultiDrawIndirectGroups
             ? "multi-draw groups"
             : CanUseIndirectDrawCommands ? "indirect draws" : "direct draws";
-        return $" · {upload} · {entitySkinning} · {drawRecords} · {materialTextures} · {froxelInject} · {cloudTargets} · {cloudDensity} · {drawCommands} · {gpuTimers}";
+        var vram = DedicatedVideoMemoryBytes > 0
+            ? $"{DedicatedVideoMemoryBytes / (1024 * 1024)}MiB VRAM"
+            : "VRAM unknown";
+        return $" · {upload} · {entitySkinning} · {drawRecords} · {materialTextures} · {froxelInject} · {terrainAtlas} · {terrainMesh} · {cloudTargets} · {cloudDensity} · {drawCommands} · {gpuTimers} · {vram}";
     }
 
     public static PreviewGlCapabilities FromGl(GL gl, bool useOpenGlEs, string versionString)
@@ -185,10 +212,17 @@ internal sealed record PreviewGlCapabilities(
         var capabilities = FromStrings(versionString, vendor, renderer, extensions, useOpenGlEs);
         var maxColorAttachments = Math.Max(1, gl.GetInteger(GetPName.MaxColorAttachments));
         var maxDrawBuffers = Math.Max(1, gl.GetInteger(GetPName.MaxDrawBuffers));
+        PreviewGpuAdapterMemory.TryGetDedicatedVideoMemoryBytes(
+            gl,
+            renderer,
+            out var dedicatedVram,
+            out var vramSource);
         return capabilities with
         {
             MaxColorAttachments = maxColorAttachments,
             MaxDrawBuffers = maxDrawBuffers,
+            DedicatedVideoMemoryBytes = dedicatedVram,
+            VideoMemorySource = vramSource,
         };
     }
 
@@ -252,7 +286,9 @@ internal sealed record PreviewGlCapabilities(
             spirv,
             separable,
             Math.Max(1, maxColorAttachments ?? defaultColorAttachments),
-            Math.Max(1, maxDrawBuffers ?? defaultDrawBuffers));
+            Math.Max(1, maxDrawBuffers ?? defaultDrawBuffers),
+            DedicatedVideoMemoryBytes: 0,
+            VideoMemorySource: "unavailable");
     }
 
     private static (int Major, int Minor) ParseVersion(string versionString)

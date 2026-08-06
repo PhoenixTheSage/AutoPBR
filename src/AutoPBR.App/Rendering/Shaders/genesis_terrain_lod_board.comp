@@ -1,0 +1,107 @@
+#version 430 core
+
+// P11.4: fill an 18×18 LOD section height board at sample-step resolution.
+// Each texel covers sampleStep×sampleStep world meters (max height in the cell).
+// Production Stage-2 still uses CPU BakeLodSection; this board is for live parity / future emit.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+struct TerrainLodGpuColumn
+{
+    int height;
+    int bottom;
+    int biome;
+    int surface;
+    int _pad0;
+    int _pad1;
+    int _pad2;
+    int _pad3;
+};
+
+layout(std430, binding = 0) writeonly buffer LodColumnBoard
+{
+    TerrainLodGpuColumn columns[];
+};
+
+uniform ivec2 uBoardOrigin; // world XZ of board[0,0] (section origin - sampleStep)
+uniform int uBoardSide;     // 18
+uniform int uSampleStep;    // 2^LodLevel meters
+uniform int uSeed;
+uniform float uBiomeSize;
+uniform float uAmplification;
+uniform float uErosionStrength;
+uniform float uContinentalness;
+uniform int uFlatPadHalfExtent;
+uniform int uTransitionBlocks;
+uniform int uFillDepth;
+
+//!include "common/terrain_height_sample.glsl"
+
+void main()
+{
+    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
+    if (local.x >= uBoardSide || local.y >= uBoardSide)
+    {
+        return;
+    }
+
+    int step = max(1, uSampleStep);
+    int cellOriginX = uBoardOrigin.x + local.x * step;
+    int cellOriginZ = uBoardOrigin.y + local.y * step;
+
+    int height = -2147483647;
+    int biome = 0;
+    int surface = 0;
+    for (int dz = 0; dz < step; dz++)
+    {
+        for (int dx = 0; dx < step; dx++)
+        {
+            int h;
+            int bottom;
+            int b;
+            int surf;
+            int subsurface;
+            int deep;
+            thsSampleColumnBoard(
+                cellOriginX + dx,
+                cellOriginZ + dz,
+                uSeed,
+                uBiomeSize,
+                uAmplification,
+                uErosionStrength,
+                uContinentalness,
+                uFlatPadHalfExtent,
+                uTransitionBlocks,
+                uFillDepth,
+                h,
+                bottom,
+                b,
+                surf,
+                subsurface,
+                deep);
+            if (h > height)
+            {
+                height = h;
+                biome = b;
+                surface = surf;
+            }
+        }
+    }
+
+    if (height == -2147483647)
+    {
+        height = 0;
+    }
+
+    int bottomOut = height - max(1, uFillDepth);
+    TerrainLodGpuColumn col;
+    col.height = height;
+    col.bottom = bottomOut;
+    col.biome = biome;
+    col.surface = surface;
+    col._pad0 = 0;
+    col._pad1 = 0;
+    col._pad2 = 0;
+    col._pad3 = 0;
+    columns[local.y * uBoardSide + local.x] = col;
+}

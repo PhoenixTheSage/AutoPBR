@@ -7,12 +7,25 @@ namespace AutoPBR.App.Rendering.OpenGL;
 
 /// <summary>
 /// GPU RG32F atlas of heightfield column surface/bottom relative Y for voxel DDA occlusion.
-/// Texel (u,v) covers world column (OriginX + u, OriginZ + v).
-/// CPU fills run on a worker thread; GL uploads happen on the render thread via <see cref="PumpUpload"/>.
-/// Recenters only when the camera approaches the atlas edge (hysteresis), not on every chunk step.
+/// Texel (u,v) covers a <see cref="CellMeters"/>×<see cref="CellMeters"/> world block whose
+/// min corner is (OriginX + u×CellMeters, OriginZ + v×CellMeters). CellMeters=1 is the fine
+/// near-field atlas; larger cells track the full LOD ring as a coarse companion.
+/// Desktop GL may fill 1 m atlases via compute (genesis_terrain_height_atlas.comp);
+/// coarse and GLES paths use a CPU worker + <see cref="PumpUpload"/>.
 /// </summary>
-internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
+internal sealed class GlTerrainOccluderAtlas(GL gl, int cellMeters = 1) : IDisposable
 {
+    private const int ComputeLocalSize = 8;
+    internal const int CpuBakeMaxDegreeOfParallelism = 2;
+    internal const int CoarseSamplesPerAxis = 8;
+    private static readonly ParallelOptions CpuBakeParallelOptions = new()
+    {
+        MaxDegreeOfParallelism = CpuBakeMaxDegreeOfParallelism,
+    };
+
+    /// <summary>Maximum column writes issued by one compute pump (≈64×1024 at 8×8 groups).</summary>
+    public const int ComputeBudgetColumnsPerFrame = 64 * 1024;
+
     private uint _texture;
     private int _width;
     private int _height;
@@ -34,6 +47,14 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
     private long _bakeStartedUnixMs;
     private string _lastFailureDiagnostic = "none";
 
+    private GlShaderProgram? _computeProgram;
+    private bool _computeEnabled;
+    private bool _computeSessionDisabled;
+    private ComputeJob? _computeJob;
+
+    /// <summary>World meters per atlas texel (≥1). Fine atlas uses 1; coarse uses 8+.</summary>
+    public int CellMeters { get; } = Math.Max(1, cellMeters);
+
     public uint TextureHandle => _texture;
     public int Width => _width;
     public int Height => _height;
@@ -42,6 +63,9 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
     public bool IsValid => EvaluateValidity(_texture, _width, _height, _hasResidentData);
     public float GroundPlaneWorldY => PreviewStageConstants.GroundPlaneWorldY;
     public string LastFailureDiagnostic => Volatile.Read(ref _lastFailureDiagnostic);
+    public bool UsesComputeFill =>
+        CellMeters <= 1 &&
+        _computeEnabled && !_computeSessionDisabled && _computeProgram is { IsValid: true };
 
     /// <summary>Minimum time between starting atlas rebuilds while flying.</summary>
     public const int RebuildDebounceMs = 400;
@@ -53,10 +77,10 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
     /// </summary>
     public const int BakeSlowDiagnosticMs = 3000;
 
-    /// <summary>Maximum RG32F atlas bytes uploaded by one render frame.</summary>
+    /// <summary>Maximum RG32F atlas bytes uploaded by one render frame (CPU path).</summary>
     public const int UploadBudgetBytesPerFrame = 4 * 1024 * 1024;
 
-    /// <summary>True while a CPU bake worker holds the single-flight latch.</summary>
+    /// <summary>True while a CPU bake or compute fill holds the single-flight latch.</summary>
     public bool IsBakeInFlight => Volatile.Read(ref _bakeInFlight) != 0;
     public long BakeElapsedMilliseconds =>
         IsBakeInFlight
@@ -71,6 +95,15 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
         int height,
         bool hasResidentData) =>
         texture != 0 && width > 0 && height > 0 && hasResidentData;
+
+    /// <summary>
+    /// Bind a desktop compute program for atlas fills. Pass null / disabled to force the CPU path.
+    /// </summary>
+    public void ConfigureCompute(GlShaderProgram? program, bool enabled)
+    {
+        _computeProgram = program;
+        _computeEnabled = enabled && program is { IsValid: true };
+    }
 
     /// <summary>
     /// Request a rebuild when the camera nears the atlas edge, or view distance / world-gen changes.
@@ -92,17 +125,20 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
             chunkViewDistance,
             PreviewStageConstants.TerrainMinChunkViewDistance,
             PreviewStageConstants.TerrainMaxChunkViewDistance);
-        // Extreme LOD rings (256–1024) are far larger than a practical height atlas. DDA stays
-        // near-field: Full view distance + a modest LOD margin only.
+        // Fine (1 m): Full + modest LOD margin only. Coarse (cellMeters≥8): track full LOD ring.
+        var maxLodRing = CellMeters <= 1
+            ? PreviewStageConstants.TerrainOccluderAtlasMaxLodRingChunks
+            : PreviewStageConstants.TerrainMaxLodRingChunks;
         var atlasLodRing = Math.Clamp(
             lodRingChunks,
             PreviewStageConstants.TerrainMinLodRingChunks,
-            PreviewStageConstants.TerrainOccluderAtlasMaxLodRingChunks);
+            maxLodRing);
         var radiusChunks = chunkViewDistance + atlasLodRing;
-        var sizeChunks = radiusChunks * 2 + 1;
-        var sizeColumns = sizeChunks * PreviewStageConstants.TerrainChunkSize;
+        var sizeWorldMeters = (radiusChunks * 2 + 1) * PreviewStageConstants.TerrainChunkSize;
+        var sizeColumns = Math.Max(1, sizeWorldMeters / CellMeters);
         var settingsVersion = HashCode.Combine(
             sizeColumns,
+            CellMeters,
             worldGenRevision,
             worldGen.Seed,
             worldGen.Amplification.GetHashCode(),
@@ -112,7 +148,7 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
 
         // Keep the resident atlas while the camera stays inside with a chunk-margin buffer.
         // Flying across the interior must not trigger a full rebuild every chunk.
-        var edgeMarginChunks = Math.Max(2, atlasLodRing);
+        var edgeMarginChunks = Math.Max(2, CellMeters <= 1 ? atlasLodRing : Math.Min(atlasLodRing, 16));
         if (IsValid &&
             _width == sizeColumns &&
             _height == sizeColumns &&
@@ -122,8 +158,10 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
             return true;
         }
 
-        var originX = (cameraChunk.X - radiusChunks) * PreviewStageConstants.TerrainChunkSize;
-        var originZ = (cameraChunk.Z - radiusChunks) * PreviewStageConstants.TerrainChunkSize;
+        var rawOriginX = (cameraChunk.X - radiusChunks) * PreviewStageConstants.TerrainChunkSize;
+        var rawOriginZ = (cameraChunk.Z - radiusChunks) * PreviewStageConstants.TerrainChunkSize;
+        var originX = AlignDown(rawOriginX, CellMeters);
+        var originZ = AlignDown(rawOriginZ, CellMeters);
         var version = HashCode.Combine(settingsVersion, cameraChunk.X, cameraChunk.Z);
 
         // Already recentered on this chunk (bake in flight or just uploaded).
@@ -140,7 +178,9 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
         return IsValid;
     }
 
-    /// <summary>Upload any completed CPU bake on the GL thread.</summary>
+    /// <summary>
+    /// Advance CPU row uploads and/or compute tile dispatches on the GL thread.
+    /// </summary>
     public void PumpUpload()
     {
         if (_disposed)
@@ -148,6 +188,49 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
             return;
         }
 
+        if (_computeJob is not null)
+        {
+            PumpComputeJob();
+            return;
+        }
+
+        PumpCpuUpload();
+    }
+
+    public void Bind(TextureUnit unit)
+    {
+        if (!IsValid)
+        {
+            return;
+        }
+
+        gl.ActiveTexture(unit);
+        gl.BindTexture(TextureTarget.Texture2D, _texture);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        lock (_payloadGate)
+        {
+            _readyPayload = null;
+        }
+
+        _uploadPayload = null;
+        _uploadNextRow = 0;
+        AbortComputeJob(clearLatch: false);
+        DestroyTexture();
+        Interlocked.Exchange(ref _bakeInFlight, 0);
+        _computeProgram = null;
+    }
+
+    private void PumpCpuUpload()
+    {
         var payload = _uploadPayload;
         if (payload is null)
         {
@@ -222,68 +305,208 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
             return;
         }
 
-        if (_texture != 0)
+        PublishResidentTexture(
+            _pendingTexture,
+            payload.SizeColumns,
+            payload.OriginX,
+            payload.OriginZ,
+            payload.SettingsVersion,
+            payload.Version);
+        _pendingTexture = 0;
+        _uploadPayload = null;
+        _uploadNextRow = 0;
+    }
+
+    private void PumpComputeJob()
+    {
+        var job = _computeJob;
+        if (job is null || _computeProgram is not { IsValid: true })
+        {
+            AbortComputeJob(clearLatch: true);
+            return;
+        }
+
+        if (job.PendingTexture == 0)
+        {
+            var texture = CreateTexture(job.SizeColumns, job.SizeColumns);
+            if (texture == 0)
+            {
+                RecordFailure("atlas compute texture allocation failed");
+                AbortComputeJob(clearLatch: true);
+                return;
+            }
+
+            job = job with { PendingTexture = texture };
+            _computeJob = job;
+        }
+
+        while (gl.GetError() != GLEnum.NoError)
+        {
+        }
+
+        var remainingRows = job.SizeColumns - job.NextRow;
+        if (remainingRows <= 0)
+        {
+            FinishComputeJob(job);
+            return;
+        }
+
+        var rowsThisFrame = Math.Min(
+            remainingRows,
+            Math.Max(1, ComputeBudgetColumnsPerFrame / Math.Max(1, job.SizeColumns)));
+        var program = _computeProgram;
+        program.Use();
+        BindComputeUniforms(gl, program, job, job.NextRow, rowsThisFrame);
+
+        gl.BindImageTexture(
+            0,
+            job.PendingTexture,
+            0,
+            false,
+            0,
+            BufferAccessARB.WriteOnly,
+            InternalFormat.RG32f);
+
+        var groupsX = (uint)((job.SizeColumns + ComputeLocalSize - 1) / ComputeLocalSize);
+        var groupsY = (uint)((rowsThisFrame + ComputeLocalSize - 1) / ComputeLocalSize);
+        gl.DispatchCompute(groupsX, groupsY, 1);
+        gl.MemoryBarrier(
+            MemoryBarrierMask.ShaderImageAccessBarrierBit |
+            MemoryBarrierMask.TextureFetchBarrierBit);
+        gl.BindImageTexture(0, 0, 0, false, 0, BufferAccessARB.ReadOnly, InternalFormat.RG32f);
+        gl.UseProgram(0);
+
+        var dispatchError = gl.GetError();
+        if (dispatchError != GLEnum.NoError)
+        {
+            RecordFailure($"atlas compute dispatch produced {dispatchError}");
+            _computeSessionDisabled = true;
+            AbortComputeJob(clearLatch: true);
+            return;
+        }
+
+        job = job with { NextRow = job.NextRow + rowsThisFrame };
+        _computeJob = job;
+        if (job.NextRow >= job.SizeColumns)
+        {
+            FinishComputeJob(job);
+        }
+    }
+
+    private void FinishComputeJob(ComputeJob job)
+    {
+        PublishResidentTexture(
+            job.PendingTexture,
+            job.SizeColumns,
+            job.OriginX,
+            job.OriginZ,
+            job.SettingsVersion,
+            job.Version);
+        _computeJob = null;
+    }
+
+    private void AbortComputeJob(bool clearLatch)
+    {
+        if (_computeJob is { PendingTexture: not 0 } job &&
+            job.PendingTexture != _texture)
+        {
+            gl.DeleteTexture(job.PendingTexture);
+        }
+
+        _computeJob = null;
+        if (clearLatch)
+        {
+            Interlocked.Exchange(ref _bakeInFlight, 0);
+        }
+    }
+
+    private void PublishResidentTexture(
+        uint texture,
+        int sizeColumns,
+        int originX,
+        int originZ,
+        int settingsVersion,
+        int version)
+    {
+        if (_texture != 0 && _texture != texture)
         {
             gl.DeleteTexture(_texture);
         }
 
-        _texture = _pendingTexture;
-        _pendingTexture = 0;
-        _uploadPayload = null;
-        _uploadNextRow = 0;
-        _width = payload.SizeColumns;
-        _height = payload.SizeColumns;
-        _originX = payload.OriginX;
-        _originZ = payload.OriginZ;
-        _settingsVersion = payload.SettingsVersion;
-        _filledVersion = payload.Version;
+        _texture = texture;
+        _width = sizeColumns;
+        _height = sizeColumns;
+        _originX = originX;
+        _originZ = originZ;
+        _settingsVersion = settingsVersion;
+        _filledVersion = version;
         _hasResidentData = true;
         Volatile.Write(ref _lastFailureDiagnostic, "none");
         Interlocked.Exchange(ref _bakeInFlight, 0);
     }
 
-    public void Bind(TextureUnit unit)
+    private static void BindComputeUniforms(
+        GL gl,
+        GlShaderProgram program,
+        ComputeJob job,
+        int tileOriginY,
+        int tileRows)
     {
-        if (!IsValid)
-        {
-            return;
-        }
-
-        gl.ActiveTexture(unit);
-        gl.BindTexture(TextureTarget.Texture2D, _texture);
+        SetUniform2i(gl, program, "uOrigin", job.OriginX, job.OriginZ);
+        SetUniform2i(gl, program, "uSize", job.SizeColumns, job.SizeColumns);
+        SetUniform2i(gl, program, "uTileOrigin", 0, tileOriginY);
+        SetUniform2i(gl, program, "uTileSize", job.SizeColumns, tileRows);
+        SetUniform1i(gl, program, "uSeed", job.WorldGen.Seed);
+        SetUniform1f(gl, program, "uBiomeSize", job.WorldGen.BiomeSize);
+        SetUniform1f(gl, program, "uAmplification", job.WorldGen.Amplification);
+        SetUniform1f(gl, program, "uErosionStrength", job.WorldGen.ErosionStrength);
+        SetUniform1f(gl, program, "uContinentalness", job.WorldGen.Continentalness);
+        SetUniform1i(gl, program, "uFlatPadHalfExtent", PreviewStageConstants.TerrainFlatPadHalfExtent);
+        SetUniform1i(gl, program, "uTransitionBlocks", PreviewStageConstants.TerrainTransitionBlocks);
+        SetUniform1i(gl, program, "uFillDepth", PreviewStageConstants.TerrainFillDepth);
     }
 
-    public void Dispose()
+    private static void SetUniform1i(GL gl, GlShaderProgram program, string name, int value)
     {
-        if (_disposed)
+        var loc = program.GetUniformLocation(name);
+        if (loc >= 0)
         {
-            return;
+            gl.Uniform1(loc, value);
         }
+    }
 
-        _disposed = true;
-        lock (_payloadGate)
+    private static void SetUniform1f(GL gl, GlShaderProgram program, string name, float value)
+    {
+        var loc = program.GetUniformLocation(name);
+        if (loc >= 0)
         {
-            _readyPayload = null;
+            gl.Uniform1(loc, value);
         }
+    }
 
-        _uploadPayload = null;
-        _uploadNextRow = 0;
-        DestroyTexture();
-        Interlocked.Exchange(ref _bakeInFlight, 0);
+    private static void SetUniform2i(GL gl, GlShaderProgram program, string name, int x, int y)
+    {
+        var loc = program.GetUniformLocation(name);
+        if (loc >= 0)
+        {
+            gl.Uniform2(loc, x, y);
+        }
     }
 
     private bool CameraInsideAtlasWithMargin(TerrainChunkKey cameraChunk, int marginChunks)
     {
         var chunkSize = PreviewStageConstants.TerrainChunkSize;
-        if (_width < chunkSize || _height < chunkSize)
+        var worldWidth = _width * CellMeters;
+        var worldHeight = _height * CellMeters;
+        if (worldWidth < chunkSize || worldHeight < chunkSize)
         {
             return false;
         }
 
         var minCx = FloorDiv(_originX, chunkSize);
         var minCz = FloorDiv(_originZ, chunkSize);
-        var chunksX = _width / chunkSize;
-        var chunksZ = _height / chunkSize;
+        var chunksX = worldWidth / chunkSize;
+        var chunksZ = worldHeight / chunkSize;
         var maxCx = minCx + chunksX - 1;
         var maxCz = minCz + chunksZ - 1;
         marginChunks = Math.Clamp(marginChunks, 0, Math.Max(0, Math.Min(chunksX, chunksZ) / 2 - 1));
@@ -291,6 +514,17 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
                cameraChunk.X <= maxCx - marginChunks &&
                cameraChunk.Z >= minCz + marginChunks &&
                cameraChunk.Z <= maxCz - marginChunks;
+    }
+
+    private static int AlignDown(int value, int alignment)
+    {
+        alignment = Math.Max(1, alignment);
+        if (value >= 0)
+        {
+            return value / alignment * alignment;
+        }
+
+        return -((-value + alignment - 1) / alignment) * alignment;
     }
 
     private static int FloorDiv(int value, int divisor) =>
@@ -320,12 +554,56 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
         _lastRebuildRequestUnixMs = now;
         Volatile.Write(ref _bakeStartedUnixMs, now);
         var generation = Interlocked.Increment(ref _bakeGeneration);
-        var genCopy = worldGen;
+        var genCopy = PreviewTerrainWorldGenSettings.Resolve(worldGen);
+
+        if (UsesComputeFill)
+        {
+            // Drop any stale CPU payload; compute owns this generation on the GL thread.
+            lock (_payloadGate)
+            {
+                _readyPayload = null;
+            }
+
+            _uploadPayload = null;
+            _uploadNextRow = 0;
+            if (_pendingTexture != 0)
+            {
+                gl.DeleteTexture(_pendingTexture);
+                _pendingTexture = 0;
+            }
+
+            _computeJob = new ComputeJob(
+                OriginX: originX,
+                OriginZ: originZ,
+                SizeColumns: sizeColumns,
+                Version: version,
+                SettingsVersion: settingsVersion,
+                WorldGen: genCopy,
+                PendingTexture: 0,
+                NextRow: 0,
+                Generation: generation);
+            return;
+        }
+
+        AbortComputeJob(clearLatch: false);
+        StartCpuBake(sizeColumns, originX, originZ, version, settingsVersion, genCopy, generation);
+    }
+
+    private void StartCpuBake(
+        int sizeColumns,
+        int originX,
+        int originZ,
+        int version,
+        int settingsVersion,
+        PreviewTerrainWorldGenSettings worldGen,
+        int generation)
+    {
         var ox = originX;
         var oz = originZ;
         var size = sizeColumns;
         var ver = version;
         var settingsVer = settingsVersion;
+        var genCopy = worldGen;
 
         _ = Task.Factory.StartNew(() =>
         {
@@ -340,14 +618,15 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
 
                 var data = new float[checked(size * size * 2)];
                 var fillDepth = PreviewStageConstants.TerrainFillDepth;
-                Parallel.For(0, size, z =>
+                var cell = CellMeters;
+                Parallel.For(0, size, CpuBakeParallelOptions, z =>
                 {
-                    var worldZ = oz + z;
                     var row = z * size;
                     for (var x = 0; x < size; x++)
                     {
-                        var worldX = ox + x;
-                        var surface = PreviewTerrainHeightfield.SampleColumn(worldX, worldZ, genCopy);
+                        var cellOriginX = ox + x * cell;
+                        var cellOriginZ = oz + z * cell;
+                        var surface = SampleCellSurface(cellOriginX, cellOriginZ, cell, genCopy);
                         var bottom = PreviewVoxelDdaMath.SolidBottomY(surface, fillDepth);
                         var i = (row + x) * 2;
                         data[i] = surface;
@@ -379,6 +658,52 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
                 ClearBakeLatchIfCurrent(generation);
             }
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+    }
+
+    internal static int SampleCellSurface(
+        int cellOriginX,
+        int cellOriginZ,
+        int cell,
+        in PreviewTerrainWorldGenSettings worldGen)
+    {
+        var surface = int.MinValue;
+        if (cell <= CoarseSamplesPerAxis)
+        {
+            for (var dz = 0; dz < cell; dz++)
+            {
+                for (var dx = 0; dx < cell; dx++)
+                {
+                    surface = Math.Max(
+                        surface,
+                        PreviewTerrainHeightfield.SampleColumn(
+                            cellOriginX + dx,
+                            cellOriginZ + dz,
+                            worldGen));
+                }
+            }
+        }
+        else
+        {
+            // Exhaustively scanning a 128x128 coarse texel costs 16,384 worldgen evaluations.
+            // An 8x8 grid is sufficient for optional far-field occlusion. If it misses a local
+            // peak the atlas merely culls less aggressively; rendered geometry remains correct.
+            for (var sampleZ = 0; sampleZ < CoarseSamplesPerAxis; sampleZ++)
+            {
+                var dz = sampleZ * (cell - 1) / (CoarseSamplesPerAxis - 1);
+                for (var sampleX = 0; sampleX < CoarseSamplesPerAxis; sampleX++)
+                {
+                    var dx = sampleX * (cell - 1) / (CoarseSamplesPerAxis - 1);
+                    surface = Math.Max(
+                        surface,
+                        PreviewTerrainHeightfield.SampleColumn(
+                            cellOriginX + dx,
+                            cellOriginZ + dz,
+                            worldGen));
+                }
+            }
+        }
+
+        return surface == int.MinValue ? 0 : surface;
     }
 
     private void ClearBakeLatchIfCurrent(int generation)
@@ -450,4 +775,15 @@ internal sealed class GlTerrainOccluderAtlas(GL gl) : IDisposable
         int Version,
         int SettingsVersion,
         float[] Data);
+
+    private sealed record ComputeJob(
+        int OriginX,
+        int OriginZ,
+        int SizeColumns,
+        int Version,
+        int SettingsVersion,
+        PreviewTerrainWorldGenSettings WorldGen,
+        uint PendingTexture,
+        int NextRow,
+        int Generation);
 }

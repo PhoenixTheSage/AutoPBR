@@ -8,7 +8,12 @@ public readonly record struct PreviewTerrainGrassBakeSettings(
     bool HasStone = false,
     bool HasSand = false,
     bool HasGravel = false,
-    string VegetationIdentity = "")
+    string VegetationIdentity = "",
+    /// <summary>
+    /// OptiFine-style smart leaves: omit leaf cube faces buried against adjacent leaf voxels.
+    /// Full + LOD1 voxel canopies only; impostors unchanged.
+    /// </summary>
+    bool SmartLeavesEnabled = true)
 {
     public static PreviewTerrainGrassBakeSettings BuiltIn { get; } =
         new(PreviewTerrainGrassMode.BuiltInSingleTop, BetterGrassEnabled: false, EmitOverlay: false);
@@ -23,7 +28,8 @@ public readonly record struct PreviewTerrainGrassBakeSettings(
             HasStone: kit.Stone is not null || kit.StoneAliased,
             HasSand: kit.Sand is not null || kit.SandAliased,
             HasGravel: kit.Gravel is not null || kit.GravelAliased,
-            VegetationIdentity: vegetation is { HasAny: true } ? vegetation.Identity : "");
+            VegetationIdentity: vegetation is { HasAny: true } ? vegetation.Identity : "",
+            SmartLeavesEnabled: true);
 
     /// <summary>Biome mesh rules always enabled; materials may be aliased to grass-top.</summary>
     public bool UseBiomeMaterials => true;

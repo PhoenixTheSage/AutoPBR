@@ -639,6 +639,14 @@ public sealed partial class OpenGlPreviewBackend
 
         } // Scene timer scope
 
+        // Stage-2 Full meshing: budgeted outside Scene timers (same spirit as CPU LongRunning workers).
+        if (frame.Settings.ShowGroundMesh && _grassGroundReady)
+        {
+            EnsureTerrainGpuFullMeshBaker(frame.Gl);
+            PumpGpuFullMeshJobs();
+            PumpGpuLodMeshJobs();
+        }
+
         FinishOcclusionDebugFrame(frame.Settings);
         FinishGodRaySceneRender(ref frame);
     }
@@ -780,11 +788,14 @@ public sealed partial class OpenGlPreviewBackend
         var lodR = _terrainStreamer?.LodRingWorldRadius
                    ?? hardR + PreviewStageConstants.TerrainLodRingChunks *
                               PreviewStageConstants.TerrainChunkSize;
-        SetFloatLoc(u.TerrainFogStart, hardR * 0.85f);
-        SetFloatLoc(u.TerrainFogEnd, lodR * 0.98f);
+        // Start aerial fog after the Full↔LOD1 Chebyshev morph band so fog does not hide the
+        // seam (previously hardR*0.85 washed the dither into a soft circular cut).
+        var morphEnd = hardR + PreviewStageConstants.TerrainLodDetailFadeWidthMeters;
+        SetFloatLoc(u.TerrainFogStart, morphEnd);
+        SetFloatLoc(u.TerrainFogEnd, Math.Max(lodR * 0.98f, morphEnd + 1f));
         SetIntLoc(u.TerrainLodFadeEnable, 0);
-        SetFloatLoc(u.TerrainLodFadeStart, hardR);
-        SetFloatLoc(u.TerrainLodFadeEnd, hardR + PreviewStageConstants.TerrainLodDetailFadeWidthMeters);
+        SetFloatLoc(u.TerrainLodFadeStart, hardR - PreviewStageConstants.TerrainLodDetailFadeWidthMeters);
+        SetFloatLoc(u.TerrainLodFadeEnd, hardR);
         SetFloatLoc(u.TerrainPomFadeStart, PreviewStageConstants.TerrainNearPomRadius);
         SetFloatLoc(
             u.TerrainPomFadeEnd,

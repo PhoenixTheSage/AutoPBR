@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Threading.Tasks;
 
+using AutoPBR.App.Rendering.Scene;
 using AutoPBR.Preview;
 
 using Silk.NET.OpenGL;
@@ -99,7 +100,13 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         SetCollectDiagnostics(program, collectDiagnostics);
         SetPreserveOrder(program, preserveOrder);
         SetHiZUniforms(program, enabled: false, hiZ: null, viewProj: null, textureUnit: 0);
-        SetVoxelOcclusionUniforms(program, enabled: false, atlas: null, textureUnit: 0);
+        SetVoxelOcclusionUniforms(
+            program,
+            enabled: false,
+            atlas: null,
+            textureUnit: 0,
+            coarseAtlas: null,
+            coarseTextureUnit: 0);
         _gl.DispatchCompute(preserveOrder ? 1u : (uint)((commandCount + LocalSizeX - 1) / LocalSizeX), 1, 1);
         _gl.MemoryBarrier(ShaderStorageBarrierBit | CommandBarrierBit | BufferUpdateBarrierBit);
 
@@ -138,7 +145,9 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         int hiZTextureUnit = 0,
         bool enableVoxelOcclusion = false,
         GlTerrainOccluderAtlas? voxelAtlas = null,
-        int voxelTextureUnit = 0) =>
+        int voxelTextureUnit = 0,
+        GlTerrainOccluderAtlas? voxelCoarseAtlas = null,
+        int voxelCoarseTextureUnit = 0) =>
         DispatchWithGpuCulling(
             program,
             sourceCommands,
@@ -159,7 +168,9 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
             hiZTextureUnit,
             enableVoxelOcclusion,
             voxelAtlas,
-            voxelTextureUnit);
+            voxelTextureUnit,
+            voxelCoarseAtlas,
+            voxelCoarseTextureUnit);
 
     public bool DispatchWithGpuCulling(
         GlShaderProgram program,
@@ -181,7 +192,9 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         int hiZTextureUnit = 0,
         bool enableVoxelOcclusion = false,
         GlTerrainOccluderAtlas? voxelAtlas = null,
-        int voxelTextureUnit = 0)
+        int voxelTextureUnit = 0,
+        GlTerrainOccluderAtlas? voxelCoarseAtlas = null,
+        int voxelCoarseTextureUnit = 0)
     {
         if (_disposed ||
             program is not { IsValid: true } ||
@@ -197,7 +210,8 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
             return false;
         }
 
-        var useVoxel = enableVoxelOcclusion && voxelAtlas is { IsValid: true };
+        var useVoxel = enableVoxelOcclusion &&
+                       (voxelAtlas is { IsValid: true } || voxelCoarseAtlas is { IsValid: true });
         var useHiZ = !useVoxel && enableHiZ && hiZ is { IsValid: true } && viewProj is not null;
         outputCapacity = ResolveOutputCapacity(commandCount, outputCapacity);
         if (!_outputCommands.EnsureCommandCapacity(outputCapacity))
@@ -231,7 +245,13 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         SetCameraPosition(program, cameraPosition);
         SetFrustumPlanes(program, frustumPlanes[..6]);
         SetHiZUniforms(program, useHiZ, hiZ, viewProj, hiZTextureUnit);
-        SetVoxelOcclusionUniforms(program, useVoxel, voxelAtlas, voxelTextureUnit);
+        SetVoxelOcclusionUniforms(
+            program,
+            useVoxel,
+            voxelAtlas,
+            voxelTextureUnit,
+            voxelCoarseAtlas,
+            voxelCoarseTextureUnit);
 
         _gl.DispatchCompute(preserveOrder ? 1u : (uint)((commandCount + LocalSizeX - 1) / LocalSizeX), 1, 1);
         _gl.MemoryBarrier(ShaderStorageBarrierBit | CommandBarrierBit | BufferUpdateBarrierBit);
@@ -261,6 +281,11 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         {
             _gl.ActiveTexture(TextureUnit.Texture0 + voxelTextureUnit);
             _gl.BindTexture(TextureTarget.Texture2D, 0);
+            if (voxelCoarseAtlas is { IsValid: true })
+            {
+                _gl.ActiveTexture(TextureUnit.Texture0 + voxelCoarseTextureUnit);
+                _gl.BindTexture(TextureTarget.Texture2D, 0);
+            }
         }
 
         return true;
@@ -541,7 +566,9 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
         GlShaderProgram program,
         bool enabled,
         GlTerrainOccluderAtlas? atlas,
-        int textureUnit)
+        int textureUnit,
+        GlTerrainOccluderAtlas? coarseAtlas,
+        int coarseTextureUnit)
     {
         var useLoc = program.GetUniformLocation("uUseVoxelOcclusion");
         if (useLoc >= 0)
@@ -549,34 +576,96 @@ internal sealed class GlGpuDrawCommandCompactor : IDisposable
             _gl.Uniform1(useLoc, enabled ? 1 : 0);
         }
 
-        if (!enabled || atlas is null)
+        if (!enabled)
         {
+            var coarseOff = program.GetUniformLocation("uUseVoxelCoarse");
+            if (coarseOff >= 0)
+            {
+                _gl.Uniform1(coarseOff, 0);
+            }
+
             return;
         }
 
-        atlas.Bind(TextureUnit.Texture0 + textureUnit);
-        var samplerLoc = program.GetUniformLocation("uVoxelHeightAtlas");
-        if (samplerLoc >= 0)
+        if (atlas is { IsValid: true })
         {
-            _gl.Uniform1(samplerLoc, textureUnit);
+            atlas.Bind(TextureUnit.Texture0 + textureUnit);
+            var samplerLoc = program.GetUniformLocation("uVoxelHeightAtlas");
+            if (samplerLoc >= 0)
+            {
+                _gl.Uniform1(samplerLoc, textureUnit);
+            }
+
+            var originLoc = program.GetUniformLocation("uVoxelAtlasOrigin");
+            if (originLoc >= 0)
+            {
+                _gl.Uniform2(originLoc, atlas.OriginX, atlas.OriginZ);
+            }
+
+            var sizeLoc = program.GetUniformLocation("uVoxelAtlasSize");
+            if (sizeLoc >= 0)
+            {
+                _gl.Uniform2(sizeLoc, atlas.Width, atlas.Height);
+            }
+        }
+        else
+        {
+            // Fine missing: advertise an empty fine region so DDA falls through to coarse.
+            var originLoc = program.GetUniformLocation("uVoxelAtlasOrigin");
+            if (originLoc >= 0)
+            {
+                _gl.Uniform2(originLoc, 0, 0);
+            }
+
+            var sizeLoc = program.GetUniformLocation("uVoxelAtlasSize");
+            if (sizeLoc >= 0)
+            {
+                _gl.Uniform2(sizeLoc, 0, 0);
+            }
         }
 
-        var originLoc = program.GetUniformLocation("uVoxelAtlasOrigin");
-        if (originLoc >= 0)
+        var useCoarse = coarseAtlas is { IsValid: true };
+        var useCoarseLoc = program.GetUniformLocation("uUseVoxelCoarse");
+        if (useCoarseLoc >= 0)
         {
-            _gl.Uniform2(originLoc, atlas.OriginX, atlas.OriginZ);
+            _gl.Uniform1(useCoarseLoc, useCoarse ? 1 : 0);
         }
 
-        var sizeLoc = program.GetUniformLocation("uVoxelAtlasSize");
-        if (sizeLoc >= 0)
+        if (useCoarse)
         {
-            _gl.Uniform2(sizeLoc, atlas.Width, atlas.Height);
+            coarseAtlas!.Bind(TextureUnit.Texture0 + coarseTextureUnit);
+            var coarseSampler = program.GetUniformLocation("uVoxelHeightAtlasCoarse");
+            if (coarseSampler >= 0)
+            {
+                _gl.Uniform1(coarseSampler, coarseTextureUnit);
+            }
+
+            var coarseOrigin = program.GetUniformLocation("uVoxelCoarseOrigin");
+            if (coarseOrigin >= 0)
+            {
+                _gl.Uniform2(coarseOrigin, coarseAtlas.OriginX, coarseAtlas.OriginZ);
+            }
+
+            var coarseSize = program.GetUniformLocation("uVoxelCoarseSize");
+            if (coarseSize >= 0)
+            {
+                _gl.Uniform2(coarseSize, coarseAtlas.Width, coarseAtlas.Height);
+            }
+
+            var coarseCell = program.GetUniformLocation("uVoxelCoarseCellMeters");
+            if (coarseCell >= 0)
+            {
+                _gl.Uniform1(coarseCell, coarseAtlas.CellMeters);
+            }
         }
 
+        var groundY = atlas?.GroundPlaneWorldY ??
+                      coarseAtlas?.GroundPlaneWorldY ??
+                      PreviewStageConstants.GroundPlaneWorldY;
         var groundLoc = program.GetUniformLocation("uVoxelGroundPlaneY");
         if (groundLoc >= 0)
         {
-            _gl.Uniform1(groundLoc, atlas.GroundPlaneWorldY);
+            _gl.Uniform1(groundLoc, groundY);
         }
 
         var stepsLoc = program.GetUniformLocation("uVoxelMaxSteps");

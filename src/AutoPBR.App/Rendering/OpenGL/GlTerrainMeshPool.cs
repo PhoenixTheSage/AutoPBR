@@ -19,8 +19,7 @@ internal sealed class GlTerrainMeshPool : IDisposable
     /// <summary>
     /// Soft VRAM ceiling for the shared terrain VAO pool. Starts at
     /// <see cref="PreviewStageConstants.TerrainMeshPoolBudgetDefaultBytes"/> and may be raised
-    /// dynamically toward <see cref="PreviewStageConstants.TerrainMeshPoolBudgetCeilingBytes"/>
-    /// based on LOD ring size (see ConfigureBudgetCeiling).
+    /// dynamically toward a hardware-derived ceiling (see ConfigureBudgetCeiling).
     /// </summary>
     internal static long DefaultMaxTotalBufferBytes =>
         PreviewStageConstants.TerrainMeshPoolBudgetDefaultBytes;
@@ -28,6 +27,8 @@ internal sealed class GlTerrainMeshPool : IDisposable
     private readonly GL _gl;
     private readonly uint _vao;
     private long _maxTotalBufferBytes;
+    private long _absoluteCeilingBytes =
+        PreviewStageConstants.TerrainMeshPoolBudgetAbsoluteCeilingBytes;
     private uint _vbo;
     private uint _ebo;
     private readonly List<FreeBlock> _freeVertices = new(32);
@@ -86,15 +87,23 @@ internal sealed class GlTerrainMeshPool : IDisposable
     /// Raise or lower the soft growth ceiling. Does not shrink existing VBO/EBO allocations;
     /// only gates further EnsureGpuCapacity growth.
     /// </summary>
-    internal void ConfigureBudgetCeiling(long maxTotalBufferBytes)
+    internal void ConfigureBudgetCeiling(long maxTotalBufferBytes, long? absoluteCeilingBytes = null)
     {
+        if (absoluteCeilingBytes is > 0)
+        {
+            _absoluteCeilingBytes = Math.Clamp(
+                absoluteCeilingBytes.Value,
+                PreviewStageConstants.TerrainMeshPoolBudgetFloorBytes,
+                PreviewStageConstants.TerrainMeshPoolBudgetAbsoluteCeilingBytes);
+        }
+
         var minBytes =
             (long)InitialVertexFloatCapacity * sizeof(float) +
             (long)InitialIndexCapacity * sizeof(uint);
         _maxTotalBufferBytes = Math.Clamp(
             maxTotalBufferBytes,
             Math.Max(minBytes, PreviewStageConstants.TerrainMeshPoolBudgetFloorBytes),
-            PreviewStageConstants.TerrainMeshPoolBudgetCeilingBytes);
+            _absoluteCeilingBytes);
     }
 
     /// <summary>
@@ -106,7 +115,7 @@ internal sealed class GlTerrainMeshPool : IDisposable
         targetBytes = Math.Clamp(
             targetBytes,
             PreviewStageConstants.TerrainMeshPoolBudgetFloorBytes,
-            PreviewStageConstants.TerrainMeshPoolBudgetCeilingBytes);
+            _absoluteCeilingBytes);
         if (targetBytes <= _maxTotalBufferBytes)
         {
             return false;
@@ -127,7 +136,19 @@ internal sealed class GlTerrainMeshPool : IDisposable
         public bool IsEmpty => IndexCount <= 0 || VertexFloatCount <= 0;
     }
 
-    public Allocation Upload(ReadOnlySpan<float> interleavedVertices, ReadOnlySpan<uint> indices)
+    public Allocation Upload(ReadOnlySpan<float> interleavedVertices, ReadOnlySpan<uint> indices) =>
+        Upload(interleavedVertices, indices, staging: null);
+
+    /// <summary>
+    /// Upload into free-list ranges. When <paramref name="staging"/> is provided and the payload
+    /// fits one ring segment, CPU writes go through the staging buffer and GPU
+    /// <c>CopyBufferSubData</c> fills the resident VBO/EBO (P10.1). Oversized payloads and
+    /// GLES / unavailable staging keep direct <c>BufferSubData</c>.
+    /// </summary>
+    public Allocation Upload(
+        ReadOnlySpan<float> interleavedVertices,
+        ReadOnlySpan<uint> indices,
+        GlTerrainUploadStagingRing? staging)
     {
         if (_disposed || interleavedVertices.IsEmpty || indices.IsEmpty)
         {
@@ -167,23 +188,57 @@ internal sealed class GlTerrainMeshPool : IDisposable
         }
 
         ClearGlErrors();
-        BindVertexArray();
-        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
-        _gl.BufferSubData<float>(
-            GLEnum.ArrayBuffer,
-            vertexFloatOffset * sizeof(float),
-            interleavedVertices);
-        _gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, _ebo);
-        _gl.BufferSubData<uint>(
-            GLEnum.ElementArrayBuffer,
-            indexOffset * sizeof(uint),
-            remap.AsSpan(0, indices.Length));
-        UnbindVertexArray();
+        var usedStaging = false;
+        if (staging is { IsValid: true } &&
+            staging.TryWrite(
+                interleavedVertices,
+                remap.AsSpan(0, indices.Length),
+                out var stagingVertOffset,
+                out var stagingIndexOffset))
+        {
+            usedStaging = true;
+            BindVertexArray();
+            _gl.BindBuffer(BufferTargetARB.CopyReadBuffer, staging.Handle);
+            _gl.BindBuffer(BufferTargetARB.CopyWriteBuffer, _vbo);
+            _gl.CopyBufferSubData(
+                GLEnum.CopyReadBuffer,
+                GLEnum.CopyWriteBuffer,
+                stagingVertOffset,
+                vertexFloatOffset * sizeof(float),
+                (nuint)(vertexFloats * sizeof(float)));
+            _gl.BindBuffer(BufferTargetARB.CopyWriteBuffer, _ebo);
+            _gl.CopyBufferSubData(
+                GLEnum.CopyReadBuffer,
+                GLEnum.CopyWriteBuffer,
+                stagingIndexOffset,
+                indexOffset * sizeof(uint),
+                (nuint)(indices.Length * sizeof(uint)));
+            _gl.BindBuffer(BufferTargetARB.CopyReadBuffer, 0);
+            _gl.BindBuffer(BufferTargetARB.CopyWriteBuffer, 0);
+            UnbindVertexArray();
+            // Fence once per frame via GlTerrainUploadStagingRing.EndFrame — not per chunk.
+        }
+        else
+        {
+            BindVertexArray();
+            _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
+            _gl.BufferSubData<float>(
+                GLEnum.ArrayBuffer,
+                vertexFloatOffset * sizeof(float),
+                interleavedVertices);
+            _gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, _ebo);
+            _gl.BufferSubData<uint>(
+                GLEnum.ElementArrayBuffer,
+                indexOffset * sizeof(uint),
+                remap.AsSpan(0, indices.Length));
+            UnbindVertexArray();
+        }
+
         var uploadError = _gl.GetError();
         if (uploadError != GLEnum.NoError)
         {
             LastFailure = uploadError;
-            LastFailureReason = "buffer-subdata";
+            LastFailureReason = usedStaging ? "staging-copy" : "buffer-subdata";
             AllocationFailureCount++;
             InsertFree(_freeVertices, vertexFloatOffset, vertexFloats);
             InsertFree(_freeIndices, indexOffset, indices.Length);
@@ -241,7 +296,8 @@ internal sealed class GlTerrainMeshPool : IDisposable
         int indexCount,
         bool patches = false,
         bool keepBound = false,
-        bool updatePatchParameter = true)
+        bool updatePatchParameter = true,
+        uint baseInstance = 0)
     {
         if (_disposed || indexCount <= 0)
         {
@@ -261,11 +317,26 @@ internal sealed class GlTerrainMeshPool : IDisposable
         unsafe
         {
             var byteOffset = (void*)(firstIndex * sizeof(uint));
-            _gl.DrawElements(
-                patches ? PrimitiveType.Patches : PrimitiveType.Triangles,
-                (uint)indexCount,
-                DrawElementsType.UnsignedInt,
-                byteOffset);
+            var mode = patches ? PrimitiveType.Patches : PrimitiveType.Triangles;
+            // DrawElements leaves gl_BaseInstance at 0; draw-record shaders need the material index.
+            if (baseInstance != 0)
+            {
+                _gl.DrawElementsInstancedBaseInstance(
+                    mode,
+                    (uint)indexCount,
+                    DrawElementsType.UnsignedInt,
+                    byteOffset,
+                    1u,
+                    baseInstance);
+            }
+            else
+            {
+                _gl.DrawElements(
+                    mode,
+                    (uint)indexCount,
+                    DrawElementsType.UnsignedInt,
+                    byteOffset);
+            }
         }
 
         if (!keepBound)

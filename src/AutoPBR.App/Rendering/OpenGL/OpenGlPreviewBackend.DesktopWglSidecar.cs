@@ -192,8 +192,11 @@ public sealed partial class OpenGlPreviewBackend
 
         Task.Run(() =>
         {
+            var priorPriority = Thread.CurrentThread.Priority;
             try
             {
+                // Keep bootstrap from contending with interactive apps / the UI thread.
+                Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
                 SidecarGpuBootstrapLoop(sidecar);
             }
             catch (Exception ex)
@@ -202,6 +205,8 @@ public sealed partial class OpenGlPreviewBackend
             }
             finally
             {
+                Thread.CurrentThread.Priority = priorPriority;
+                GlShaderCompileYield.SetEnabled(false);
                 Interlocked.Exchange(ref _sidecarBootstrapWorkerState, 0);
             }
         });
@@ -209,6 +214,11 @@ public sealed partial class OpenGlPreviewBackend
 
     private void SidecarGpuBootstrapLoop(PreviewDesktopWglContext sidecar)
     {
+        // Soft slices: smaller GPU compile bursts + longer sleeps so the OS / other processes
+        // can schedule. Progress is raised after every slice so the overlay keeps moving.
+        const double sliceBudgetMs = 24.0;
+        const int sliceSleepMs = 12;
+
         while (true)
         {
             var shouldContinue = false;
@@ -226,15 +236,25 @@ public sealed partial class OpenGlPreviewBackend
             {
                 using (sidecar.BindOnOwnerThread())
                 {
-                    AdvanceSidecarGpuBootstrapSlice();
+                    var ownerPrior = Thread.CurrentThread.Priority;
+                    try
+                    {
+                        Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
+                        GlShaderCompileYield.SetEnabled(true);
+                        AdvanceSidecarGpuBootstrapSlice(sliceBudgetMs);
+                    }
+                    finally
+                    {
+                        Thread.CurrentThread.Priority = ownerPrior;
+                    }
                 }
             });
 
-            Thread.Sleep(1);
+            Thread.Sleep(sliceSleepMs);
         }
     }
 
-    private void AdvanceSidecarGpuBootstrapSlice()
+    private void AdvanceSidecarGpuBootstrapSlice(double maxMilliseconds = 24.0)
     {
         lock (_sync)
         {
@@ -244,7 +264,7 @@ public sealed partial class OpenGlPreviewBackend
             }
 
             var settings = _settings;
-            _gpuBootstrap.Advance(this, 100.0);
+            _gpuBootstrap.Advance(this, maxMilliseconds);
             var bootstrap = _gpuBootstrap;
             if (bootstrap is null)
             {
@@ -260,6 +280,7 @@ public sealed partial class OpenGlPreviewBackend
 
             if (bootstrap.IsComplete)
             {
+                GlShaderCompileYield.SetEnabled(false);
                 _forceSyncSidecarPresent = true;
                 // Ensure an idle stage exists as soon as core GPU resources (incl. terrain) are up,
                 // even if the VM has not pushed a subject yet.

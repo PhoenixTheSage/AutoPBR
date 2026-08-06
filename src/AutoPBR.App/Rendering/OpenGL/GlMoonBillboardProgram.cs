@@ -27,8 +27,9 @@ void main()
 """;
 
     // Embedded fragment: keep GLES/ANGLE-safe (no return in main; single FragColor write).
-    // HDR: same strength→radiance mapping as SDR (slider parity). Contrast expand only —
-    // do not undo paper-white (that made HDR ~paperScale darker than SDR at the same setting).
+    // Shared strength slider: SDR must approximate HDR midtone punch from presentEncodeScRgb
+    // (ACES × paperWhite/80 ≈ 2.1–2.5× at default 200 nits). A 1.22× lift is invisible;
+    // use ~2.1× with a soft shoulder so maria survive when the result exceeds display white.
     private const string Frag330 = """
 #version 330 core
 in vec2 vTexCoord;
@@ -45,12 +46,34 @@ uniform float uTextureSharpness;
 uniform int uHdrPresent;
 out vec4 FragColor;
 
+// Matches default paper-white midtone scale (200/80) minus a little so HDR peaks can still
+// read brighter than SDR white at the same slider value.
+const float MOON_SDR_STRENGTH_GAIN = 2.15;
+
 vec3 moonHdrPreserveContrast(vec3 rgb)
 {
-    // Expand maria/highland separation so ACES + paper-white present does not flatten
-    // the disc; pivot near lunar mid-gray so mean brightness stays slider-matched to SDR.
+    // Expand maria/highland separation for ACES; preserve luminance so HDR does not
+    // gain free brightness over SDR at the same strength.
     vec3 pivot = vec3(0.46);
-    return max((rgb - pivot) * 1.55 + pivot, vec3(0.0));
+    float lum0 = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+    vec3 c = max((rgb - pivot) * 1.55 + pivot, vec3(0.0));
+    float lum1 = max(dot(c, vec3(0.2126, 0.7152, 0.0722)), 1e-5);
+    return c * (lum0 / lum1);
+}
+
+vec3 moonApplyStrength(vec3 rgb, float strength, float discCut)
+{
+    vec3 outRgb = rgb * max(strength, 0.35) * discCut;
+    if (uHdrPresent <= 0)
+    {
+        outRgb *= MOON_SDR_STRENGTH_GAIN;
+        // Soft shoulder above display white — keep maria when gain pushes past 1.0.
+        float lum = dot(outRgb, vec3(0.2126, 0.7152, 0.0722));
+        float shoulder = 1.0 / (1.0 + max(lum - 1.0, 0.0) * 0.85);
+        outRgb *= shoulder;
+    }
+
+    return max(outRgb, vec3(0.0));
 }
 
 vec3 moonSceneReferredRadiance(vec3 albedo, float strength, float discCut)
@@ -61,7 +84,7 @@ vec3 moonSceneReferredRadiance(vec3 albedo, float strength, float discCut)
         rgb = moonHdrPreserveContrast(rgb);
     }
 
-    return max(rgb * max(strength, 0.35) * discCut, vec3(0.0));
+    return moonApplyStrength(rgb, strength, discCut);
 }
 
 void main()
@@ -86,8 +109,9 @@ void main()
     {
         float outerCut = 1.0 - smoothstep(1.03, 1.20, d);
         float halo = exp(-pow((d - 1.0) * 7.0, 1.45)) * outerCut * glowCut * max(uGlowStrength, 0.0);
-        vec3 haloCol = vec3(0.58, 0.68, 1.0) * halo * strength * 0.42;
-        float haloAlpha = clamp(halo * strength * 0.16, 0.0, 0.18);
+        vec3 haloCol = vec3(0.58, 0.68, 1.0) * halo * 0.42;
+        haloCol = moonApplyStrength(haloCol, strength, 1.0);
+        float haloAlpha = clamp(halo * strength * 0.16 * (uHdrPresent > 0 ? 1.0 : MOON_SDR_STRENGTH_GAIN), 0.0, 0.22);
         if (haloAlpha < 0.004)
         {
             discard;
