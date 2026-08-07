@@ -137,9 +137,10 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         {
             IsVisible = PreviewSurfaceVisibility.UseAvaloniaOpenGlSurface(requestedDesktop, isWindows)
         };
+        var useNativeWglHost = PreviewSurfaceVisibility.UseNativeWglHost(requestedDesktop, isWindows);
         _nativeHost = new PreviewNativeWglHost
         {
-            IsVisible = PreviewSurfaceVisibility.UseNativeWglHost(requestedDesktop, isWindows)
+            IsVisible = useNativeWglHost
         };
         _nativeHost.NativeWindowCreated += OnNativeHostWindowCreated;
         _nativeHost.NativeWindowDestroyed += OnNativeHostWindowDestroyed;
@@ -151,15 +152,16 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         _nativeHost.NativeKeyDown += OnNativeHostKeyDown;
         _nativeHost.NativeKeyUp += OnNativeHostKeyUp;
         _nativeHost.NativeInputLost += OnNativeHostInputLost;
-        Content = new Grid
+        // Never mount NativeControlHost off Windows: Avalonia X11 still attaches invisible hosts and
+        // PreviewNativeWglHost.CreateNativeControlCore returning null NREs in X11NativeControlHost.
+        var surfaceGrid = new Grid { ClipToBounds = true };
+        surfaceGrid.Children.Add(_angleSurface);
+        if (useNativeWglHost)
         {
-            ClipToBounds = true,
-            Children =
-            {
-                _angleSurface,
-                _nativeHost
-            }
-        };
+            surfaceGrid.Children.Add(_nativeHost);
+        }
+
+        Content = surfaceGrid;
 
         // Watchdog / idle recovery: unstick only when OnOpenGlRender has been silent.
         _backend.SetRequestPreviewFrame(RequestPreviewFrameFromBackend);

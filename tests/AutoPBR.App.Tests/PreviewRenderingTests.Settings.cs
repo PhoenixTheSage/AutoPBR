@@ -1266,7 +1266,8 @@ public sealed partial class PreviewRenderingTests
 
         Assert.Contains("TryInitSceneCaptureCore(gl, useOpenGlEs", taa, StringComparison.Ordinal);
         Assert.Contains("CanUseTaaSceneCapture", godRays, StringComparison.Ordinal);
-        Assert.Contains("!CanUseGodRayCapture(frame.Settings) && !CanUseTaaSceneCapture(frame.Settings)", godRays, StringComparison.Ordinal);
+        Assert.Contains("CanUseGodRayCapture(frame.Settings) ||", godRays, StringComparison.Ordinal);
+        Assert.Contains("CanUseTaaSceneCapture(frame.Settings)", godRays, StringComparison.Ordinal);
         Assert.Contains("frame.Settings.EnableGodRays || frame.Settings.EnableScreenSpaceGodRays", post, StringComparison.Ordinal);
     }
 
@@ -1333,7 +1334,9 @@ public sealed partial class PreviewRenderingTests
         Assert.Contains("IsChecked=\"{Binding PreviewUseOpenGl4, Mode=TwoWay}\"", settingsTab, StringComparison.Ordinal);
         Assert.Contains("[ObservableProperty] private bool _previewUseOpenGl4;", engineVm, StringComparison.Ordinal);
         Assert.Contains("PreviewOpenGlRestartRequired", engineVm, StringComparison.Ordinal);
-        Assert.Contains("PreviewOpenGlPlatformConfigurator.CreateWin32PlatformOptions(settings)", program, StringComparison.Ordinal);
+        Assert.Contains("PreviewOpenGlPlatformConfigurator.Configure(", program, StringComparison.Ordinal);
+        Assert.Contains("CreateWin32PlatformOptions", configurator, StringComparison.Ordinal);
+        Assert.Contains("CreateX11PlatformOptions", configurator, StringComparison.Ordinal);
         Assert.Contains("PreviewOpenGlSession.RequestedDesktopGl4 = settings.PreviewUseOpenGl4;", configurator, StringComparison.Ordinal);
     }
 

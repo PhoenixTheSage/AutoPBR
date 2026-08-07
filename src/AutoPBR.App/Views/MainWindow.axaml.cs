@@ -24,23 +24,25 @@ public partial class MainWindow : Window
 
     private void OnOpened(object? sender, EventArgs e)
     {
+        _rootBorder = this.FindControl<Border>("RootBorder");
         PlatformWindowChrome.ApplyLinuxNativeDecorations(
             this,
             this.FindControl<Control>("CustomTitleBar"),
-            this.FindControl<Control>("ResizeGripWest")!,
-            this.FindControl<Control>("ResizeGripEast")!,
-            this.FindControl<Control>("ResizeGripSouth")!,
-            this.FindControl<Control>("ResizeGripNorthWest")!,
-            this.FindControl<Control>("ResizeGripNorthEast")!,
-            this.FindControl<Control>("ResizeGripSouthWest")!,
-            this.FindControl<Control>("ResizeGripSouthEast")!);
+            _rootBorder,
+            this.FindControl<Control>("ResizeGripWest"),
+            this.FindControl<Control>("ResizeGripEast"),
+            this.FindControl<Control>("ResizeGripSouth"),
+            this.FindControl<Control>("ResizeGripNorthWest"),
+            this.FindControl<Control>("ResizeGripNorthEast"),
+            this.FindControl<Control>("ResizeGripSouthWest"),
+            this.FindControl<Control>("ResizeGripSouthEast"));
         TryEnableWindowsSnap();
-        _rootBorder = this.FindControl<Border>("RootBorder");
         RestoreWindowLayout();
         if (DataContext is MainWindowViewModel vmOpen)
         {
             _lastUiScaleForWindow = vmOpen.UiScale;
             vmOpen.PropertyChanged += ViewModel_OnPropertyChanged;
+            PlatformWindowChrome.SyncLinuxThemeChrome(this);
         }
 
         UpdateCornerRadiusFromCurrentState();
@@ -104,12 +106,19 @@ public partial class MainWindow : Window
 
     private void ViewModel_OnPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName != nameof(MainWindowViewModel.UiScale))
+        if (sender is not MainWindowViewModel vm)
         {
             return;
         }
 
-        if (sender is not MainWindowViewModel vm)
+        if (e.PropertyName is nameof(MainWindowViewModel.WindowBackground)
+            or nameof(MainWindowViewModel.ForegroundBrush))
+        {
+            PlatformWindowChrome.SyncLinuxThemeChrome(this);
+            return;
+        }
+
+        if (e.PropertyName != nameof(MainWindowViewModel.UiScale))
         {
             return;
         }

@@ -97,6 +97,15 @@ public sealed class PreviewOpenGlPlatformConfiguratorTests
         var configured = PreviewOpenGlPlatformConfigurator.Configure(builder, new UserSettings());
         Assert.Same(builder, configured);
     }
+
+    [Fact]
+    public void CreateX11PlatformOptions_AllowsLlvmpipeForSoftGpuPreview()
+    {
+        var options = PreviewOpenGlPlatformConfigurator.CreateX11PlatformOptions();
+        Assert.Empty(options.GlxRendererBlacklist);
+        Assert.Contains(X11RenderingMode.Glx, options.RenderingMode);
+        Assert.Contains(X11RenderingMode.Software, options.RenderingMode);
+    }
 }
 
 public sealed class PreviewSurfaceVisibilityTests

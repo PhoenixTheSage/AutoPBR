@@ -7,7 +7,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace AutoPBR.App.ViewModels;
 
-public partial class EntityPreviewDebugWindowViewModel : ViewModelBase
+public partial class EntityPreviewDebugWindowViewModel : ViewModelBase, IThemedWindowAppearance
 {
     private readonly MainWindowViewModel _main;
     private bool _syncingForceCpu;

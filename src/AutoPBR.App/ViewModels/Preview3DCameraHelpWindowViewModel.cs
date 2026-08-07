@@ -6,7 +6,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace AutoPBR.App.ViewModels;
 
-public sealed partial class Preview3DCameraHelpWindowViewModel : ViewModelBase
+public sealed partial class Preview3DCameraHelpWindowViewModel : ViewModelBase, IThemedWindowAppearance
 {
     private readonly MainWindowViewModel _main;
 

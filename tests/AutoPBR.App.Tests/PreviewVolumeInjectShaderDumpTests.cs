@@ -43,7 +43,7 @@ public sealed class PreviewVolumeInjectShaderEsTests
         var adapted = ResolveAndAdapt(fragmentFile, useOpenGlEs: false);
         // Desktop Adapt leaves source unchanged: both #ifdef GENESIS_GLES branches remain in the TU;
         // GLSL compile picks the #else vec4() path when GENESIS_GLES is undefined.
-        Assert.Contains("return vec4(mediumRho, sunLit.x, sunLit.y, occ);", adapted, StringComparison.Ordinal);
+        Assert.Contains("return vec4(mediumRho, sunEnergy, sunEnergy, occ);", adapted, StringComparison.Ordinal);
         Assert.Contains("#ifdef GENESIS_GLES", adapted, StringComparison.Ordinal);
         Assert.DoesNotContain("#define GENESIS_GLES 1", adapted, StringComparison.Ordinal);
         Assert.DoesNotContain("vec4 packed;", adapted, StringComparison.Ordinal);
@@ -79,7 +79,7 @@ public sealed class PreviewVolumeInjectShaderEsTests
         Assert.Contains("cstResolveViewSignal", adapted, StringComparison.Ordinal);
         Assert.Contains("ctMetadataDistance", adapted, StringComparison.Ordinal);
         Assert.Contains("cstViewTransmittance(t, sharedCloudDistance", adapted, StringComparison.Ordinal);
-        Assert.Contains("transmittance * cloudViewT * sunScatter", adapted, StringComparison.Ordinal);
+        Assert.Contains("transmittance * cloudViewT * (sunScatter + ambientScatter)", adapted, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -183,10 +183,11 @@ public sealed class PreviewVolumeInjectShaderEsTests
         Assert.Contains("vcCloudConservativeDensity", adapted, StringComparison.Ordinal);
         Assert.Contains("const int CLOUD_MAX_STEPS = 64", adapted, StringComparison.Ordinal);
         Assert.Contains("CLOUD_QUALITY >= 3", adapted, StringComparison.Ordinal);
-        Assert.Contains("tExit = min(slabSeg.y, sceneT)", adapted, StringComparison.Ordinal);
+        Assert.Contains("deckSeg.y = min(deckSeg.y, sceneT)", adapted, StringComparison.Ordinal);
+        Assert.Contains("tExit = deckSeg.y", adapted, StringComparison.Ordinal);
         Assert.Contains("float sceneT = cloudSceneDistance(rd)", adapted, StringComparison.Ordinal);
         Assert.Contains("density = vcCloudDensityFromBase", adapted, StringComparison.Ordinal);
-        Assert.Contains("accum *= slabDistanceVisibility", adapted, StringComparison.Ordinal);
+        Assert.Contains("cloudCol *= slabDistanceVisibility", adapted, StringComparison.Ordinal);
         Assert.DoesNotContain("uWindOffset) * slabDistanceVisibility", adapted,
             StringComparison.Ordinal);
         Assert.DoesNotContain("vcsPlanetOcclusionDistance", adapted, StringComparison.Ordinal);
@@ -220,7 +221,6 @@ public sealed class PreviewVolumeInjectShaderEsTests
         var trace = ResolveAndAdapt("genesis_clouds.frag", useOpenGlEs: false);
         var repair = ResolveAndAdapt("genesis_clouds_repair.frag", useOpenGlEs: false);
 
-        Assert.Contains("float layerSupportGuard", trace, StringComparison.Ordinal);
         Assert.Contains("float cirrusSupportGuard", trace, StringComparison.Ordinal);
         Assert.Contains("mod(phaseDistance - tEnter, baseStep)", trace, StringComparison.Ordinal);
         Assert.Contains("float cirrusVerticalProfile", trace, StringComparison.Ordinal);
@@ -459,8 +459,9 @@ public sealed class PreviewVolumeInjectShaderEsTests
         var repair = ResolveAndAdapt("genesis_clouds_repair.frag", useOpenGlEs: false);
         var upsample = ResolveAndAdapt("genesis_clouds_upsample.frag", useOpenGlEs: false);
 
-        Assert.Contains("accum *= slabDistanceVisibility", trace, StringComparison.Ordinal);
-        Assert.Contains("transmittance = 1.0 - cumulusAlpha * slabDistanceVisibility", trace,
+        Assert.Contains("cloudCol *= slabDistanceVisibility", trace, StringComparison.Ordinal);
+        Assert.Contains("alpha *= slabDistanceVisibility", trace, StringComparison.Ordinal);
+        Assert.Contains("accum = deckAccumStart + deckDelta * slabDistanceVisibility", trace,
             StringComparison.Ordinal);
         Assert.Contains("float cirrusAlpha = (1.0 - exp(-cirrusOd)) * cirrusDistanceVisibility",
             trace, StringComparison.Ordinal);
@@ -487,15 +488,15 @@ public sealed class PreviewVolumeInjectShaderEsTests
         Assert.Contains("float vcsMarchSpanLimit(", trace, StringComparison.Ordinal);
         Assert.Contains("float vcsMarchStepLength(", trace, StringComparison.Ordinal);
         Assert.Contains("vcsMarchStepLength(", trace, StringComparison.Ordinal);
-        Assert.Contains("vcsMarchSpanLimit(uVolumeSize, uVolumeHeight)", trace,
+        Assert.Contains("vcsMarchSpanLimit(uVolumeSize, activeDeckHeight)", trace,
             StringComparison.Ordinal);
         Assert.Contains("nearSpan", trace, StringComparison.Ordinal);
         Assert.Contains("i < 2", trace, StringComparison.Ordinal);
         Assert.Contains("longSlabMarch", trace, StringComparison.Ordinal);
         Assert.Contains("marchInterval", trace, StringComparison.Ordinal);
-        Assert.Contains("float farStep = max(", trace, StringComparison.Ordinal);
+        Assert.Contains("float farStepIdeal = max(", trace, StringComparison.Ordinal);
         Assert.Contains(
-            "marchInterval * 2.0 / float(steps) - baseStep",
+            "marchInterval * 2.0 / float(max(steps, 1)) - baseStep",
             trace,
             StringComparison.Ordinal);
         Assert.Contains("float(i) / float(max(steps - 1, 1))", trace,

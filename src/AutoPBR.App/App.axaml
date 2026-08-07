@@ -3,8 +3,8 @@
              x:Class="AutoPBR.App.App"
              xmlns:local="using:AutoPBR.App"
              xmlns:ctrls="using:AutoPBR.App.Controls"
-             RequestedThemeVariant="Default">
-             <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
+             RequestedThemeVariant="Dark">
+             <!-- AutoPBR color schemes are dark palettes; force Dark so Fluent control/text colors match Windows even when the Linux desktop theme is light. -->
 
     <Application.DataTemplates>
         <local:ViewLocator/>
