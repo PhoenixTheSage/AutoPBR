@@ -218,6 +218,9 @@ public sealed class UserSettings
     /// <summary>Draw the textured grass ground plane in 3D preview.</summary>
     public bool Preview3DShowGroundMesh { get; set; } = true;
 
+    /// <summary>Terrain streaming profile: 0 Auto, 1 Low, 2 Balanced, 3 High.</summary>
+    public int Preview3DTerrainStreamingMode { get; set; }
+
     /// <summary>Hard Full-detail terrain chunk radius (Chebyshev).</summary>
     public int Preview3DChunkViewDistance { get; set; } = 8;
 

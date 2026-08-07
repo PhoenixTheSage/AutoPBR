@@ -154,6 +154,14 @@ internal sealed class GlIndirectDrawCommandBuffer(GL gl) : IDisposable
         Span<uint> destination,
         uint indexCount,
         uint firstIndex,
+        uint baseInstance) =>
+        WriteCommandDwords(destination, indexCount, firstIndex, baseVertex: 0, baseInstance);
+
+    public static void WriteCommandDwords(
+        Span<uint> destination,
+        uint indexCount,
+        uint firstIndex,
+        int baseVertex,
         uint baseInstance)
     {
         if (destination.Length < CommandDwords)
@@ -164,7 +172,7 @@ internal sealed class GlIndirectDrawCommandBuffer(GL gl) : IDisposable
         destination[0] = indexCount;
         destination[1] = indexCount > 0 ? 1u : 0u;
         destination[2] = firstIndex;
-        destination[3] = 0u;
+        destination[3] = unchecked((uint)baseVertex);
         destination[4] = baseInstance;
     }
 

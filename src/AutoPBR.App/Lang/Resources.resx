@@ -2020,6 +2020,24 @@
   <data name="Preview3DChunkViewDistance" xml:space="preserve">
     <value>Chunk view distance</value>
   </data>
+  <data name="Preview3DTerrainStreamingMode" xml:space="preserve">
+    <value>Terrain streaming</value>
+  </data>
+  <data name="Preview3DTerrainStreamingModeTooltip" xml:space="preserve">
+    <value>Controls bounded terrain cache, bake, upload, and GPU residency budgets. Auto adapts to available CPU, GPU memory, and measured frame time while preserving the selected world radii.</value>
+  </data>
+  <data name="Preview3DTerrainStreamingAuto" xml:space="preserve">
+    <value>Auto</value>
+  </data>
+  <data name="Preview3DTerrainStreamingLow" xml:space="preserve">
+    <value>Low</value>
+  </data>
+  <data name="Preview3DTerrainStreamingBalanced" xml:space="preserve">
+    <value>Balanced</value>
+  </data>
+  <data name="Preview3DTerrainStreamingHigh" xml:space="preserve">
+    <value>High</value>
+  </data>
   <data name="Preview3DChunkViewDistanceTooltip" xml:space="preserve">
     <value>Hard radius (in 16-block chunks) of full-detail terrain around the camera. Distant LOD and fog extend beyond this to hide the unload edge.</value>
   </data>

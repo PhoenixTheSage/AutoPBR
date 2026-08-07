@@ -234,20 +234,50 @@ public sealed partial class PreviewRenderingTests
         Assert.Contains("ConstrainGrowthToBudget(", pool, StringComparison.Ordinal);
         Assert.Contains("GrowCapacityConservatively(", pool, StringComparison.Ordinal);
         Assert.Contains("AllocationFailureCount++", pool, StringComparison.Ordinal);
+        Assert.Contains("TryPreallocateFixedCapacity", pool, StringComparison.Ordinal);
         Assert.Contains("preserving existing terrain", ground, StringComparison.Ordinal);
         Assert.Contains("_terrainDeferredChunks", ground, StringComparison.Ordinal);
         Assert.Contains("DeferRemainingTerrainChunksAtPoolLimit();", ground, StringComparison.Ordinal);
+        Assert.Contains(
+            "arena.VertexCapacityBytes,",
+            ground,
+            StringComparison.Ordinal);
+        var initStart = ground.IndexOf("private void InitTerrainStreaming", StringComparison.Ordinal);
+        var initEnd = ground.IndexOf("private void EnsureTerrainGpuFullMeshBaker", initStart, StringComparison.Ordinal);
+        Assert.True(initStart >= 0 && initEnd > initStart);
+        Assert.DoesNotContain(
+            "EnsureTerrainMeshPool(gl);",
+            ground[initStart..initEnd],
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "arena.IndexCapacityBytes)",
+            ground,
+            StringComparison.Ordinal);
+
+        var preallocate = ground.IndexOf(
+            "TryPreallocateFixedCapacity(",
+            StringComparison.Ordinal);
+        var firstUpload = ground.IndexOf(
+            "UploadTerrainChunk(frame.Gl, cpu);",
+            StringComparison.Ordinal);
+        Assert.True(
+            preallocate >= 0 && firstUpload > preallocate,
+            "The arena-sized GL backing store must be allocated before streamed uploads begin.");
 
         var replacementUpload = ground.IndexOf(
-            "var replacement = pool.Upload(cpu.InterleavedVertices, cpu.Indices);",
+            "var replacement = pool.Upload(cpu.InterleavedVertices, cpu.Indices, staging);",
             StringComparison.Ordinal);
+        Assert.True(replacementUpload >= 0, "Replacement upload through staging must exist.");
         var oldAllocationFree = ground.IndexOf(
             "pool.Free(existing.Allocation);",
             replacementUpload,
             StringComparison.Ordinal);
         Assert.True(
-            replacementUpload >= 0 && oldAllocationFree > replacementUpload,
+            oldAllocationFree > replacementUpload,
             "A replacement upload must succeed before the last visible allocation is freed.");
+        Assert.Contains("AllowLiveBufferGrowth", ground, StringComparison.Ordinal);
+        Assert.Contains("TryAdmitTerrainArenaReservation", ground, StringComparison.Ordinal);
+        Assert.Contains("HasCoarserGpuUnderlayForFade", ground, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -356,7 +386,7 @@ public sealed partial class PreviewRenderingTests
     }
 
     [Fact]
-    public void PostCoreTerrainWarmup_SkipsExpensivePostPasses()
+    public void PostCoreTerrainWarmup_StartsCloudsAfterFirstTerrainButSkipsDependentPostPasses()
     {
         var source = LoadSource(ThisFilePath(),
             "src",
@@ -368,7 +398,10 @@ public sealed partial class PreviewRenderingTests
         Assert.Contains("ResolveStartupFrameSettings(settings)", source, StringComparison.Ordinal);
         Assert.Contains("ResolveTerrainInitProgressFraction() >= 1.0", source, StringComparison.Ordinal);
         Assert.Contains("_terrainStartupReadyLatched = true", source, StringComparison.Ordinal);
-        Assert.Contains("EnableVolumetricClouds = false", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "EnableVolumetricClouds = settings.EnableVolumetricClouds && HasTerrainChunksToDraw",
+            source,
+            StringComparison.Ordinal);
         Assert.Contains("EnablePreviewTaa = false", source, StringComparison.Ordinal);
         Assert.Contains("EnableScreenSpaceAo = false", source, StringComparison.Ordinal);
     }

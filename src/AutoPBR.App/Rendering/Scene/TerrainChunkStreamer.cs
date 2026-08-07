@@ -3,6 +3,8 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Numerics;
 
+using AutoPBR.App.Rendering.Abstractions;
+
 namespace AutoPBR.App.Rendering.Scene;
 
 /// <summary>
@@ -25,7 +27,12 @@ public sealed class TerrainChunkStreamer : IDisposable
     private readonly ConcurrentDictionary<TerrainResidencyKey, TerrainChunkLodKind> _inflight = new();
     private readonly ConcurrentDictionary<TerrainResidencyKey, TerrainChunkLodKind> _resident = new();
     private readonly TerrainLodSectionCache _lodCache = new();
-    private readonly TerrainLodDiskCache _lodDiskCache;
+    private readonly ITerrainMeshCache _lodDiskCache;
+    private readonly TerrainStreamingTelemetry _telemetry = new();
+    private readonly TerrainStreamingCoordinator _streamCoordinator = new();
+    private readonly TerrainDemandTracker _demandTracker = new();
+    private readonly Queue<ScheduledDemand> _pendingScheduledDemands = new();
+    private readonly HashSet<TerrainResidencyKey> _schedulerDemandedKeys = [];
     private readonly object _desiredLock = new();
     private readonly object _pickLock = new();
     private Dictionary<TerrainResidencyKey, TerrainChunkLodKind> _desired = new();
@@ -41,12 +48,21 @@ public sealed class TerrainChunkStreamer : IDisposable
     private int _lastDesiredLodRingChunks = int.MinValue;
     private int _scheduleMaxRing = PreviewStageConstants.TerrainStreamSoftStartInitialRing;
     private bool _holdScheduleExpansion;
-    private int _pickLaneCounter;
     private PreviewTerrainGrassBakeSettings _grassBakeSettings = PreviewTerrainGrassBakeSettings.BuiltIn;
     private PreviewTerrainWorldGenSettings _worldGenSettings = PreviewTerrainWorldGenSettings.Default;
     private PreviewTerrainVegetationBakePlan? _vegetationBakePlan;
     private bool _preferGpuFullMeshing;
     private bool _preferGpuLodMeshing;
+    private TerrainStreamingProfile _streamingProfile = TerrainStreamingProfile.Resolve(
+        PreviewTerrainStreamingMode.Balanced,
+        Environment.ProcessorCount,
+        dedicatedVramBytes: 0,
+        persistentTransferSupported: true) with
+    {
+        BakeConcurrency = ResolveWorkerCount(),
+    };
+    private int _demandRevision;
+    private int _contentGeneration;
     private long _fullBakeCompletedCount;
     private long _lodBakeCompletedCount;
     private long _diskWarmCompletedCount;
@@ -60,14 +76,30 @@ public sealed class TerrainChunkStreamer : IDisposable
     {
     }
 
-    public TerrainChunkStreamer(TerrainLodDiskCache? diskCache)
+    public TerrainChunkStreamer(ITerrainMeshCache? diskCache)
     {
-        _lodDiskCache = diskCache ?? new TerrainLodDiskCache();
+        _lodDiskCache = diskCache ?? new TerrainRegionPackStore();
     }
 
     public TerrainLodSectionCache LodCache => _lodCache;
 
-    public TerrainLodDiskCache LodDiskCache => _lodDiskCache;
+    public ITerrainMeshCache LodDiskCache => _lodDiskCache;
+
+    public TerrainStreamingTelemetry Telemetry => _telemetry;
+
+    /// <summary>
+    /// Incremental camera/content demand authority. Tick publishes through this tracker so
+    /// entered/exited sets and generation tokens stay coherent with the scheduler.
+    /// </summary>
+    public TerrainDemandTracker DemandTracker => _demandTracker;
+
+    public TerrainDemandUpdate? CurrentDemand => _demandTracker.Current;
+
+    public TerrainStreamingProfile StreamingProfile
+    {
+        get => _streamingProfile;
+        set => _streamingProfile = value;
+    }
 
     public PreviewTerrainGrassBakeSettings GrassBakeSettings
     {
@@ -549,11 +581,6 @@ public sealed class TerrainChunkStreamer : IDisposable
         IEnumerable<TerrainResidencyKey> gpuResidents)
     {
         ArgumentNullException.ThrowIfNull(gpuResidents);
-        if (!leaving.IsLod)
-        {
-            return true;
-        }
-
         keepRadiusChunks = Math.Max(0, keepRadiusChunks);
         var lx0 = leaving.OriginChunkX;
         var lz0 = leaving.OriginChunkZ;
@@ -581,34 +608,8 @@ public sealed class TerrainChunkStreamer : IDisposable
             return true;
         }
 
-        var covered = new HashSet<(int X, int Z)>();
-        foreach (var key in gpuResidents)
-        {
-            if (key == leaving)
-            {
-                continue;
-            }
-
-            var ox = key.OriginChunkX;
-            var oz = key.OriginChunkZ;
-            var side = key.ChunksPerSide;
-            var ix0 = Math.Max(lx0, ox);
-            var iz0 = Math.Max(lz0, oz);
-            var ix1 = Math.Min(lx1, ox + side);
-            var iz1 = Math.Min(lz1, oz + side);
-            if (ix0 >= ix1 || iz0 >= iz1)
-            {
-                continue;
-            }
-
-            for (var z = iz0; z < iz1; z++)
-            {
-                for (var x = ix0; x < ix1; x++)
-                {
-                    covered.Add((x, z));
-                }
-            }
-        }
+        var residents = gpuResidents as IReadOnlySet<TerrainResidencyKey> ??
+                        gpuResidents.ToHashSet();
 
         for (var z = lz0; z < lz1; z++)
         {
@@ -620,7 +621,19 @@ public sealed class TerrainChunkStreamer : IDisposable
                     continue;
                 }
 
-                if (!covered.Contains((x, z)))
+                var covered = false;
+                var chunk = new TerrainChunkKey(x, z);
+                for (byte level = 0; level <= TerrainResidencyKey.MaxLodLevel; level++)
+                {
+                    var candidate = TerrainResidencyKey.FromChunk(chunk, level);
+                    if (candidate != leaving && residents.Contains(candidate))
+                    {
+                        covered = true;
+                        break;
+                    }
+                }
+
+                if (!covered)
                 {
                     return false;
                 }
@@ -674,7 +687,10 @@ public sealed class TerrainChunkStreamer : IDisposable
         }
 
         _cts = new CancellationTokenSource();
-        var n = ResolveWorkerCount();
+        var n = Math.Clamp(
+            StreamingProfile.BakeConcurrency,
+            1,
+            Math.Max(1, Environment.ProcessorCount - 1));
         var workers = new Task[n];
         for (var i = 0; i < n; i++)
         {
@@ -728,6 +744,7 @@ public sealed class TerrainChunkStreamer : IDisposable
         _disposed = true;
         Stop();
         _lodCache.Clear();
+        _lodDiskCache.Dispose();
         // Keep on-disk LOD cache across streamer lifetimes (session / app restart reuse).
     }
 
@@ -749,24 +766,55 @@ public sealed class TerrainChunkStreamer : IDisposable
             return;
         }
 
-        var next = BuildDesiredResidency(cam, HardRadiusChunks, LodRingChunks);
+        var plannerStarted = Stopwatch.GetTimestamp();
+        // Incremental strict-quadtree cut is the demand authority. Soft hysteresis remains a
+        // membership stabilizer around that cut while replacements catch up.
+        var demand = _demandTracker.UpdateCameraTarget(cam, HardRadiusChunks, LodRingChunks);
+        var next = ToDesiredDictionary(demand.TargetCut);
         Dictionary<TerrainResidencyKey, TerrainChunkLodKind> priorDesired;
         lock (_desiredLock)
         {
             priorDesired = _desired;
         }
 
-        // Keep prior LOD sections for one soft-hysteresis margin so band/grid membership does
-        // not thrash every camera-chunk step while replacements catch up.
         ApplyDesiredMembershipHysteresis(next, priorDesired, cam, HardRadiusChunks, LodRingChunks);
 
-        var nextPrefetch = BuildDiskPrefetchResidency(cam, HardRadiusChunks, LodRingChunks);
+        var prefetchCap = StreamingProfile.Mode switch
+        {
+            PreviewTerrainStreamingMode.Low => 512,
+            PreviewTerrainStreamingMode.High => 4096,
+            _ => 2048,
+        };
+        var nextPrefetch = BuildWorkingSetPrefetchResidency(
+            cam,
+            HardRadiusChunks,
+            LodRingChunks,
+            next,
+            prefetchCap);
+        // Speculative corridor from entered boundary only — never materialize every LOD over
+        // the whole distant ring (legacy BuildDiskPrefetchResidency path retained for tests).
+        if (demand.Entered.Count > 0)
+        {
+            foreach (var key in demand.Entered)
+            {
+                if (!nextPrefetch.ContainsKey(key) && !next.ContainsKey(key))
+                {
+                    nextPrefetch[key] = key.Kind;
+                }
+            }
+        }
+
         lock (_desiredLock)
         {
             _desired = next;
             _desiredSnapshot = next;
             _diskPrefetch = nextPrefetch;
         }
+
+        var demandRevision = checked((int)demand.Token.DemandRevision);
+        Volatile.Write(ref _demandRevision, demandRevision);
+        Volatile.Write(ref _contentGeneration, checked((int)demand.Token.ContentGeneration));
+        RebuildBoundedSchedule(next, nextPrefetch, cam, demandRevision);
 
         lock (_pickLock)
         {
@@ -782,8 +830,26 @@ public sealed class TerrainChunkStreamer : IDisposable
         _lastDesiredCameraChunk = cam;
         _lastDesiredViewDistance = ChunkViewDistance;
         _lastDesiredLodRingChunks = LodRingChunks;
+        _telemetry.RecordPlanner(Stopwatch.GetTimestamp() - plannerStarted);
     }
 
+    private static Dictionary<TerrainResidencyKey, TerrainChunkLodKind> ToDesiredDictionary(
+        IReadOnlySet<TerrainResidencyKey> cut)
+    {
+        var next = new Dictionary<TerrainResidencyKey, TerrainChunkLodKind>(cut.Count);
+        foreach (var key in cut)
+        {
+            next[key] = key.Kind;
+        }
+
+        return next;
+    }
+
+    /// <summary>
+    /// Legacy band-materialized desired set retained for comparative tests and soft-start
+    /// helpers. Production <see cref="Tick"/> uses <see cref="TerrainDemandTracker"/> with a
+    /// strict <see cref="TerrainTargetCutBuilder"/> cut instead.
+    /// </summary>
     public static Dictionary<TerrainResidencyKey, TerrainChunkLodKind> BuildDesiredResidency(
         TerrainChunkKey cam,
         int hardRadius,
@@ -904,6 +970,86 @@ public sealed class TerrainChunkStreamer : IDisposable
         return next;
     }
 
+    /// <summary>
+    /// Bounded cache working set: immediate parent/child representations of the current target
+    /// cut. This covers approach/recede swaps without materializing every fine level over the
+    /// complete distant ring.
+    /// </summary>
+    public static Dictionary<TerrainResidencyKey, TerrainChunkLodKind> BuildWorkingSetPrefetchResidency(
+        TerrainChunkKey cam,
+        int hardRadius,
+        int lodRingChunks,
+        IReadOnlyDictionary<TerrainResidencyKey, TerrainChunkLodKind> desired,
+        int maxEntries)
+    {
+        ArgumentNullException.ThrowIfNull(desired);
+        maxEntries = Math.Max(0, maxEntries);
+        var result = new Dictionary<TerrainResidencyKey, TerrainChunkLodKind>(
+            Math.Min(maxEntries, desired.Count));
+        if (maxEntries == 0 || lodRingChunks <= 0)
+        {
+            return result;
+        }
+
+        var lodRadius = Math.Max(0, hardRadius) + Math.Max(0, lodRingChunks);
+        foreach (var key in desired.Keys
+                     .Where(static key => key.IsLod)
+                     .OrderBy(key => key.ChebyshevDistanceToChunk(cam))
+                     .ThenBy(static key => key.LodLevel))
+        {
+            if (key.LodLevel < TerrainResidencyKey.MaxLodLevel)
+            {
+                var parentLevel = (byte)(key.LodLevel + 1);
+                var parentScale = TerrainResidencyKey.ChunksPerSideForLevel(parentLevel);
+                var parent = TerrainResidencyKey.Section(
+                    TerrainResidencyKey.FloorDiv(key.OriginChunkX, parentScale),
+                    TerrainResidencyKey.FloorDiv(key.OriginChunkZ, parentScale),
+                    parentLevel);
+                if (!desired.ContainsKey(parent) &&
+                    parent.ChebyshevDistanceToChunk(cam) <= lodRadius)
+                {
+                    result[parent] = parent.Kind;
+                    if (result.Count >= maxEntries)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            if (key.LodLevel <= 1)
+            {
+                continue;
+            }
+
+            var childLevel = (byte)(key.LodLevel - 1);
+            var childSectionX = key.X * 2;
+            var childSectionZ = key.Z * 2;
+            for (var dz = 0; dz < 2; dz++)
+            {
+                for (var dx = 0; dx < 2; dx++)
+                {
+                    var child = TerrainResidencyKey.Section(
+                        childSectionX + dx,
+                        childSectionZ + dz,
+                        childLevel);
+                    if (desired.ContainsKey(child) ||
+                        child.ChebyshevDistanceToChunk(cam) > lodRadius)
+                    {
+                        continue;
+                    }
+
+                    result[child] = child.Kind;
+                    if (result.Count >= maxEntries)
+                    {
+                        return result;
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
+
     private static void AddLodSections(
         Dictionary<TerrainResidencyKey, TerrainChunkLodKind> desired,
         TerrainChunkKey cam,
@@ -980,8 +1126,11 @@ public sealed class TerrainChunkStreamer : IDisposable
     public bool ShouldUnload(TerrainResidencyKey key) =>
         key.ChebyshevDistanceToChunk(_cameraChunk) > UnloadRadiusChunks;
 
-    public void NotifyUploaded(TerrainResidencyKey key, TerrainChunkLodKind lod) =>
+    public void NotifyUploaded(TerrainResidencyKey key, TerrainChunkLodKind lod)
+    {
         _resident[key] = lod;
+        _streamCoordinator.MarkCoverageAvailable(key, Volatile.Read(ref _contentGeneration));
+    }
 
     /// <summary>
     /// True when the streamer treats the key as resident (real GPU upload or budget fake-park).
@@ -992,6 +1141,7 @@ public sealed class TerrainChunkStreamer : IDisposable
     {
         _resident.TryRemove(key, out _);
         _inflight.TryRemove(key, out _);
+        _streamCoordinator.RevokeCoverage(key);
     }
 
     public void InvalidateForRebuild(TerrainResidencyKey key)
@@ -1003,6 +1153,20 @@ public sealed class TerrainChunkStreamer : IDisposable
     /// <summary>Drop residency, queued bakes, GPU Full jobs, and the CPU LOD cache so the next tick rebakes.</summary>
     public void InvalidateAll()
     {
+        var token = _demandTracker.AdvanceContentGeneration();
+        Volatile.Write(ref _contentGeneration, checked((int)token.ContentGeneration));
+        var revision = checked((int)token.DemandRevision);
+        Volatile.Write(ref _demandRevision, revision);
+        lock (_pickLock)
+        {
+            foreach (var key in _schedulerDemandedKeys)
+            {
+                _streamCoordinator.CancelDemand(key, revision);
+            }
+
+            _schedulerDemandedKeys.Clear();
+            _pendingScheduledDemands.Clear();
+        }
         while (_ready.TryDequeue(out _))
         {
         }
@@ -1251,6 +1415,221 @@ public sealed class TerrainChunkStreamer : IDisposable
         return dist;
     }
 
+    private void RebuildBoundedSchedule(
+        IReadOnlyDictionary<TerrainResidencyKey, TerrainChunkLodKind> desired,
+        IReadOnlyDictionary<TerrainResidencyKey, TerrainChunkLodKind> prefetch,
+        TerrainChunkKey camera,
+        int demandRevision)
+    {
+        lock (_pickLock)
+        {
+            foreach (var stale in _schedulerDemandedKeys)
+            {
+                _streamCoordinator.CancelDemand(stale, demandRevision);
+            }
+
+            _schedulerDemandedKeys.Clear();
+            _pendingScheduledDemands.Clear();
+
+            var scheduled = new List<ScheduledDemand>(desired.Count + prefetch.Count);
+            var allKeys = desired.Keys.Concat(prefetch.Keys).ToHashSet();
+            var coverageAncestors = new HashSet<TerrainResidencyKey>();
+            foreach (var transitionKey in desired.Keys.Where(
+                         key => key.IsLod &&
+                                IsTransitionCoverageKey(key, camera, HardRadiusChunks)))
+            {
+                var ancestor = TerrainStreamScheduler.ParentOf(transitionKey);
+                while (ancestor is { } parent && allKeys.Contains(parent))
+                {
+                    coverageAncestors.Add(parent);
+                    ancestor = TerrainStreamScheduler.ParentOf(parent);
+                }
+            }
+
+            foreach (var key in desired.Keys)
+            {
+                var priority = ResolveScheduledPriority(
+                    key,
+                    camera,
+                    HardRadiusChunks,
+                    coverageAncestors);
+                scheduled.Add(new ScheduledDemand(key, priority, DiskWarmOnly: false));
+            }
+
+            foreach (var key in prefetch.Keys)
+            {
+                if (!desired.ContainsKey(key))
+                {
+                    scheduled.Add(new ScheduledDemand(
+                        key,
+                        TerrainStreamPriority.Speculation,
+                        DiskWarmOnly: true));
+                }
+            }
+
+            scheduled.Sort((left, right) =>
+            {
+                var priority = left.Priority.CompareTo(right.Priority);
+                if (priority != 0)
+                {
+                    return priority;
+                }
+
+                var distance = left.Key.ChebyshevDistanceToChunk(camera)
+                    .CompareTo(right.Key.ChebyshevDistanceToChunk(camera));
+                if (distance != 0)
+                {
+                    return distance;
+                }
+
+                // At the same distance, coarser parents land before dependent detail.
+                var level = right.Key.LodLevel.CompareTo(left.Key.LodLevel);
+                if (level != 0)
+                {
+                    return level;
+                }
+
+                return TerrainStreamSchedule.CompareKeys(left.Key, right.Key, camera);
+            });
+
+            foreach (var demand in scheduled)
+            {
+                _schedulerDemandedKeys.Add(demand.Key);
+                _pendingScheduledDemands.Enqueue(demand);
+            }
+
+            FillScheduledQueueUnsafe(demandRevision);
+        }
+    }
+
+    internal static TerrainStreamPriority ResolveScheduledPriority(
+        TerrainResidencyKey key,
+        TerrainChunkKey camera,
+        int hardRadiusChunks,
+        IReadOnlySet<TerrainResidencyKey>? coverageAncestors = null)
+    {
+        // Every Full chunk in the configured hard disk is required near-field coverage, not
+        // discretionary refinement. Treating only distance <= 1 as repair let all predicted
+        // distant LOD claims jump ahead of the remaining 280 Full chunks at the default radius.
+        if (IsTransitionCoverageKey(key, camera, hardRadiusChunks) ||
+            (key.IsLod && coverageAncestors?.Contains(key) == true))
+        {
+            return TerrainStreamPriority.CoverageRepair;
+        }
+
+        return key.IsLod
+            ? TerrainStreamPriority.PredictedArrival
+            : TerrainStreamPriority.VisibleRefinement;
+    }
+
+    private void FillScheduledQueueUnsafe(int demandRevision)
+    {
+        var metrics = _streamCoordinator.GetMetrics();
+        var queued = metrics.CpuBake.QueuedItems + metrics.CpuBake.InflightItems;
+        var cap = Math.Max(1, StreamingProfile.MaxInflightItems);
+        while (queued < cap && _pendingScheduledDemands.TryDequeue(out var pending))
+        {
+            if (_resident.TryGetValue(pending.Key, out var resident) &&
+                resident == pending.Key.Kind)
+            {
+                continue;
+            }
+
+            var parent = TerrainStreamScheduler.ParentOf(pending.Key);
+            TerrainResidencyKey? fallback = null;
+            if (parent is { } parentKey &&
+                SnapshotDesired().ContainsKey(parentKey) &&
+                !_resident.ContainsKey(parentKey))
+            {
+                fallback = parentKey;
+            }
+
+            var estimatedBytes = EstimateScheduledBytes(pending.Key);
+            var status = _streamCoordinator.SubmitDemand(
+                new TerrainStreamDemand(
+                    pending.Key,
+                    Volatile.Read(ref _contentGeneration),
+                    demandRevision,
+                    pending.Priority,
+                    CpuBakeBytes: estimatedBytes,
+                    UploadReadyBytes: estimatedBytes,
+                    DeadlineTicks: pending.Priority == TerrainStreamPriority.CoverageRepair
+                        ? Stopwatch.GetTimestamp()
+                        : long.MaxValue,
+                    PredictedArrivalTicks: pending.Priority == TerrainStreamPriority.PredictedArrival
+                        ? Stopwatch.GetTimestamp() + Stopwatch.Frequency
+                        : long.MaxValue,
+                    ParentFallback: fallback,
+                    ReadCache: false,
+                    WriteCache: !pending.Key.IsFull),
+                Stopwatch.GetTimestamp());
+            if (status == TerrainStreamEnqueueStatus.Backpressured)
+            {
+                _pendingScheduledDemands.Enqueue(pending);
+                _telemetry.RecordBackpressure();
+                break;
+            }
+
+            if (status is TerrainStreamEnqueueStatus.Accepted or TerrainStreamEnqueueStatus.Updated)
+            {
+                queued++;
+            }
+        }
+
+        metrics = _streamCoordinator.GetMetrics();
+        _telemetry.SetQueueState(
+            cacheReadItems: metrics.CacheRead.QueuedItems,
+            cacheReadBytes: metrics.CacheRead.QueuedBytes,
+            bakeItems: metrics.CpuBake.QueuedItems,
+            bakeBytes: metrics.CpuBake.QueuedBytes,
+            uploadItems: metrics.UploadReady.QueuedItems,
+            uploadBytes: metrics.UploadReady.QueuedBytes);
+    }
+
+    private bool TryClaimScheduledJob(
+        out TerrainStreamClaim claim,
+        out TerrainResidencyKey key,
+        out TerrainChunkLodKind lod,
+        out bool diskWarmOnly)
+    {
+        lock (_pickLock)
+        {
+            FillScheduledQueueUnsafe(Volatile.Read(ref _demandRevision));
+            if (!_streamCoordinator.TryClaim(
+                    TerrainStreamWorkKind.CpuBake,
+                    Stopwatch.GetTimestamp(),
+                    out claim))
+            {
+                key = default;
+                lod = default;
+                diskWarmOnly = false;
+                return false;
+            }
+
+            key = claim.Item.Key;
+            lod = key.Kind;
+            diskWarmOnly = claim.Item.Priority == TerrainStreamPriority.Speculation;
+            _telemetry.RecordSchedulerDequeue();
+            return true;
+        }
+    }
+
+    private static long EstimateScheduledBytes(TerrainResidencyKey key)
+    {
+        if (key.IsFull)
+        {
+            return PreviewStageConstants.TerrainMeshPoolEstimateFullChunkBytes;
+        }
+
+        var chunks = (long)key.ChunksPerSide * key.ChunksPerSide;
+        var vegetation = key.LodLevel <= PreviewStageConstants.TerrainLodVegetationFullVoxelMaxLevel
+            ? PreviewStageConstants.TerrainMeshPoolEstimateLodVegBytesPerWorldChunk
+            : PreviewStageConstants.TerrainMeshPoolEstimateLodImpostorBytesPerWorldChunk;
+        return checked(
+            PreviewStageConstants.TerrainMeshPoolEstimateLodHullSectionBytes +
+            chunks * vegetation);
+    }
+
     private void WorkerLoop(bool nearFullLatencyLane, CancellationToken ct)
     {
         // Mesh generation is sustained background work, not latency-critical UI work. Running
@@ -1279,10 +1658,9 @@ public sealed class TerrainChunkStreamer : IDisposable
                 }
             }
 
-            // One latency lane builds the camera-local 5x5 first. Additional workers stay parked
-            // until the viewport is paintable, and all lanes stop when GPU upload falls behind.
-            if ((!nearFullLatencyLane && !startupPadResident) ||
-                _inflight.Count >= PreviewStageConstants.TerrainMaxBakeJobsAhead)
+            // Coverage and parent-fallback work must continue even while the camera-local Full
+            // pad changes. Backpressure is byte/item bounded; it never serializes all LOD behind Full.
+            if (_inflight.Count >= StreamingProfile.MaxInflightItems)
             {
                 if (ct.WaitHandle.WaitOne(8))
                 {
@@ -1294,32 +1672,29 @@ public sealed class TerrainChunkStreamer : IDisposable
 
             TerrainResidencyKey jobKey;
             TerrainChunkLodKind needLod;
+            TerrainStreamClaim scheduledClaim;
             var diskWarmOnly = false;
             var haveJob = false;
-            // Alternate lanes: half workers prefer unlocked LOD; every 4th pick may disk-warm
-            // ahead even while GPU desired still has work.
-            var lane = Interlocked.Increment(ref _pickLaneCounter);
-            var preferLodLane = (lane & 1) == 1 && startupPadResident;
-            var preferDiskWarm = (lane & 3) == 3;
-            lock (_pickLock)
+            if (TryClaimScheduledJob(
+                    out scheduledClaim,
+                    out jobKey,
+                    out needLod,
+                    out diskWarmOnly) &&
+                _inflight.TryAdd(jobKey, needLod))
             {
-                if (TryPickJob(
-                        out jobKey,
-                        out needLod,
-                        out diskWarmOnly,
-                        allowDiskPrefetch: true,
-                        preferLodLane,
-                        preferDiskWarm) &&
-                    _inflight.TryAdd(jobKey, needLod))
+                haveJob = true;
+            }
+            else
+            {
+                if (scheduledClaim.Id != 0)
                 {
-                    haveJob = true;
+                    _streamCoordinator.Scheduler.Complete(scheduledClaim);
                 }
-                else
-                {
-                    jobKey = default;
-                    needLod = default;
-                    diskWarmOnly = false;
-                }
+
+                scheduledClaim = default;
+                jobKey = default;
+                needLod = default;
+                diskWarmOnly = false;
             }
 
             if (!haveJob)
@@ -1334,6 +1709,7 @@ public sealed class TerrainChunkStreamer : IDisposable
 
             try
             {
+                var contentGeneration = Volatile.Read(ref _contentGeneration);
                 if (!diskWarmOnly)
                 {
                     _resident.TryRemove(jobKey, out _);
@@ -1355,20 +1731,29 @@ public sealed class TerrainChunkStreamer : IDisposable
                         continue;
                     }
 
+                    var warmBakeStarted = Stopwatch.GetTimestamp();
                     mesh = PreviewTerrainLodMeshBaker.BakeLodSection(
                         jobKey,
                         worldGen,
                         grassSettings,
                         vegetation);
+                    _telemetry.RecordBake(Stopwatch.GetTimestamp() - warmBakeStarted);
                     if (mesh is not null)
                     {
+                        if (contentGeneration != Volatile.Read(ref _contentGeneration))
+                        {
+                            _telemetry.RecordStaleDrop();
+                            _inflight.TryRemove(jobKey, out _);
+                            continue;
+                        }
+
                         _lodCache.Store(cacheKey, mesh);
                         _lodDiskCache.TryStore(cacheKey, mesh);
                         Interlocked.Increment(ref _diskWarmCompletedCount);
                         // If this section became GPU-desired while baking, promote to upload.
                         if (SnapshotDesired().ContainsKey(jobKey))
                         {
-                            _ready.Enqueue(mesh);
+                            TryEnqueueCurrent(mesh, jobKey, contentGeneration);
                             continue;
                         }
                     }
@@ -1401,24 +1786,30 @@ public sealed class TerrainChunkStreamer : IDisposable
                     if (mesh is not null)
                     {
                         Interlocked.Increment(ref _fullBakeCompletedCount);
+                        _telemetry.RecordBake(Stopwatch.GetTimestamp() - fullBakeStarted);
                     }
                 }
                 else
                 {
                     var fingerprint = TerrainLodCacheFingerprint.From(worldGen, grassSettings, vegetation);
                     var cacheKey = new TerrainLodCacheKey(jobKey, fingerprint);
+                    var cacheReadStarted = Stopwatch.GetTimestamp();
                     if (_lodCache.TryGet(cacheKey, out mesh))
                     {
-                        _ready.Enqueue(mesh);
+                        _telemetry.RecordCacheRead(hit: true, Stopwatch.GetTimestamp() - cacheReadStarted);
+                        TryEnqueueCurrent(mesh, jobKey, contentGeneration);
                         continue;
                     }
 
+                    cacheReadStarted = Stopwatch.GetTimestamp();
                     if (_lodDiskCache.TryLoad(cacheKey, out mesh))
                     {
+                        _telemetry.RecordCacheRead(hit: true, Stopwatch.GetTimestamp() - cacheReadStarted);
                         _lodCache.Store(cacheKey, mesh);
-                        _ready.Enqueue(mesh);
+                        TryEnqueueCurrent(mesh, jobKey, contentGeneration);
                         continue;
                     }
+                    _telemetry.RecordCacheRead(hit: false, Stopwatch.GetTimestamp() - cacheReadStarted);
 
                     if (PreferGpuLodMeshing &&
                         jobKey.LodLevel >= PreviewStageConstants.TerrainGpuLodMinLevel)
@@ -1431,13 +1822,22 @@ public sealed class TerrainChunkStreamer : IDisposable
                         continue;
                     }
 
+                    var lodBakeStarted = Stopwatch.GetTimestamp();
                     mesh = PreviewTerrainLodMeshBaker.BakeLodSection(
                         jobKey,
                         worldGen,
                         grassSettings,
                         vegetation);
+                    _telemetry.RecordBake(Stopwatch.GetTimestamp() - lodBakeStarted);
                     if (mesh is not null)
                     {
+                        if (contentGeneration != Volatile.Read(ref _contentGeneration))
+                        {
+                            _telemetry.RecordStaleDrop();
+                            _inflight.TryRemove(jobKey, out _);
+                            continue;
+                        }
+
                         Interlocked.Increment(ref _lodBakeCompletedCount);
                         _lodCache.Store(cacheKey, mesh);
                         _lodDiskCache.TryStore(cacheKey, mesh);
@@ -1446,7 +1846,7 @@ public sealed class TerrainChunkStreamer : IDisposable
 
                 if (mesh is not null)
                 {
-                    _ready.Enqueue(mesh);
+                    TryEnqueueCurrent(mesh, jobKey, contentGeneration);
                 }
                 else
                 {
@@ -1459,7 +1859,37 @@ public sealed class TerrainChunkStreamer : IDisposable
                 Volatile.Write(ref _lastBakeFault, ex.GetType().Name + ": " + ex.Message);
                 _inflight.TryRemove(jobKey, out _);
             }
+            finally
+            {
+                var completion = _streamCoordinator.Scheduler.Complete(scheduledClaim);
+                if (completion == TerrainStreamCompletionStatus.Stale)
+                {
+                    _telemetry.RecordStaleDrop();
+                }
+
+                lock (_pickLock)
+                {
+                    FillScheduledQueueUnsafe(Volatile.Read(ref _demandRevision));
+                }
+            }
         }
+    }
+
+    private bool TryEnqueueCurrent(
+        PreviewTerrainChunkMesh mesh,
+        TerrainResidencyKey key,
+        int contentGeneration)
+    {
+        if (contentGeneration != Volatile.Read(ref _contentGeneration) ||
+            !SnapshotDesired().ContainsKey(key))
+        {
+            _telemetry.RecordStaleDrop();
+            _inflight.TryRemove(key, out _);
+            return false;
+        }
+
+        _ready.Enqueue(mesh);
+        return true;
     }
 
     private bool HasCameraNearFullPadResident()
@@ -1778,6 +2208,11 @@ public sealed class TerrainChunkStreamer : IDisposable
             return new Dictionary<TerrainResidencyKey, TerrainChunkLodKind>(_diskPrefetch);
         }
     }
+
+    private readonly record struct ScheduledDemand(
+        TerrainResidencyKey Key,
+        TerrainStreamPriority Priority,
+        bool DiskWarmOnly);
 }
 
 /// <summary>Full chunk handed from streamer workers to Stage-2 GL mesh pump.</summary>

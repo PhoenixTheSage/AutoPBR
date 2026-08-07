@@ -25,6 +25,7 @@ internal sealed class GlTerrainMeshPool : IDisposable
         PreviewStageConstants.TerrainMeshPoolBudgetDefaultBytes;
 
     private readonly GL _gl;
+    private readonly bool _useBaseVertex;
     private readonly uint _vao;
     private long _maxTotalBufferBytes;
     private long _absoluteCeilingBytes =
@@ -41,9 +42,13 @@ internal sealed class GlTerrainMeshPool : IDisposable
     private bool _disposed;
     private uint[]? _indexRemapScratch;
 
-    public GlTerrainMeshPool(GL gl, long maxTotalBufferBytes = 0)
+    public GlTerrainMeshPool(
+        GL gl,
+        long maxTotalBufferBytes = 0,
+        bool useBaseVertex = false)
     {
         _gl = gl;
+        _useBaseVertex = useBaseVertex;
         if (maxTotalBufferBytes <= 0)
         {
             maxTotalBufferBytes = DefaultMaxTotalBufferBytes;
@@ -82,6 +87,41 @@ internal sealed class GlTerrainMeshPool : IDisposable
     internal int AllocationFailureCount { get; private set; }
     internal GLEnum LastFailure { get; private set; } = GLEnum.NoError;
     internal string LastFailureReason { get; private set; } = "none";
+
+    /// <summary>
+    /// When false, EnsureGpuCapacity refuses live-buffer growth copies. Bootstrap may pre-grow;
+    /// movement-time uploads must fit existing segments or defer (segmented arena model).
+    /// </summary>
+    internal bool AllowLiveBufferGrowth { get; set; } = true;
+
+    /// <summary>
+    /// Allocates the immutable backing capacity described by the segmented arena before
+    /// movement-time streaming begins. The arena is only an admission model; without matching
+    /// GL storage, disabling live growth leaves this pool at its tiny constructor bootstrap size.
+    /// </summary>
+    internal bool TryPreallocateFixedCapacity(int vertexCapacityBytes, int indexCapacityBytes)
+    {
+        if (_disposed || vertexCapacityBytes <= 0 || indexCapacityBytes <= 0)
+        {
+            return false;
+        }
+
+        var vertexFloatCapacity = checked(
+            (vertexCapacityBytes + sizeof(float) - 1) / sizeof(float));
+        var indexCapacity = checked(
+            (indexCapacityBytes + sizeof(uint) - 1) / sizeof(uint));
+        var allocated = EnsureGpuCapacity(
+            Math.Max(_vertexFloatCapacity, vertexFloatCapacity),
+            Math.Max(_indexCapacity, indexCapacity));
+        if (allocated)
+        {
+            // From this point onward uploads suballocate fixed storage; they never copy the
+            // live terrain buffers merely because the camera crossed a chunk boundary.
+            AllowLiveBufferGrowth = false;
+        }
+
+        return allocated;
+    }
 
     /// <summary>
     /// Raise or lower the soft growth ceiling. Does not shrink existing VBO/EBO allocations;
@@ -180,11 +220,21 @@ internal sealed class GlTerrainMeshPool : IDisposable
         }
 
         var baseVertex = (uint)(vertexFloatOffset / FloatsPerVertex);
-        EnsureIndexRemapScratch(indices.Length);
-        var remap = _indexRemapScratch!;
-        for (var i = 0; i < indices.Length; i++)
+        ReadOnlySpan<uint> uploadIndices;
+        if (_useBaseVertex)
         {
-            remap[i] = indices[i] + baseVertex;
+            uploadIndices = indices;
+        }
+        else
+        {
+            EnsureIndexRemapScratch(indices.Length);
+            var remap = _indexRemapScratch!;
+            for (var i = 0; i < indices.Length; i++)
+            {
+                remap[i] = indices[i] + baseVertex;
+            }
+
+            uploadIndices = remap.AsSpan(0, indices.Length);
         }
 
         ClearGlErrors();
@@ -192,7 +242,7 @@ internal sealed class GlTerrainMeshPool : IDisposable
         if (staging is { IsValid: true } &&
             staging.TryWrite(
                 interleavedVertices,
-                remap.AsSpan(0, indices.Length),
+                uploadIndices,
                 out var stagingVertOffset,
                 out var stagingIndexOffset))
         {
@@ -230,7 +280,7 @@ internal sealed class GlTerrainMeshPool : IDisposable
             _gl.BufferSubData<uint>(
                 GLEnum.ElementArrayBuffer,
                 indexOffset * sizeof(uint),
-                remap.AsSpan(0, indices.Length));
+                uploadIndices);
             UnbindVertexArray();
         }
 
@@ -297,7 +347,8 @@ internal sealed class GlTerrainMeshPool : IDisposable
         bool patches = false,
         bool keepBound = false,
         bool updatePatchParameter = true,
-        uint baseInstance = 0)
+        uint baseInstance = 0,
+        int baseVertex = 0)
     {
         if (_disposed || indexCount <= 0)
         {
@@ -319,7 +370,27 @@ internal sealed class GlTerrainMeshPool : IDisposable
             var byteOffset = (void*)(firstIndex * sizeof(uint));
             var mode = patches ? PrimitiveType.Patches : PrimitiveType.Triangles;
             // DrawElements leaves gl_BaseInstance at 0; draw-record shaders need the material index.
-            if (baseInstance != 0)
+            if (_useBaseVertex && baseInstance != 0)
+            {
+                _gl.DrawElementsInstancedBaseVertexBaseInstance(
+                    mode,
+                    (uint)indexCount,
+                    DrawElementsType.UnsignedInt,
+                    byteOffset,
+                    1u,
+                    baseVertex,
+                    baseInstance);
+            }
+            else if (_useBaseVertex)
+            {
+                _gl.DrawElementsBaseVertex(
+                    mode,
+                    (uint)indexCount,
+                    DrawElementsType.UnsignedInt,
+                    byteOffset,
+                    baseVertex);
+            }
+            else if (baseInstance != 0)
             {
                 _gl.DrawElementsInstancedBaseInstance(
                     mode,
@@ -688,6 +759,18 @@ internal sealed class GlTerrainMeshPool : IDisposable
         {
             LastFailure = GLEnum.NoError;
             LastFailureReason = "budget-ceiling";
+            return false;
+        }
+
+        // Initial allocation (_vertexFloatCapacity == 0) is always allowed. Subsequent live
+        // growth copies are refused once the segmented arena model is active during movement.
+        if (!AllowLiveBufferGrowth &&
+            _vertexFloatCapacity > 0 &&
+            (growVerts || growIndices))
+        {
+            LastFailure = GLEnum.NoError;
+            LastFailureReason = "live-growth-disabled";
+            AllocationFailureCount++;
             return false;
         }
 

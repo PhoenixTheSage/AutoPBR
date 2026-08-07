@@ -431,13 +431,13 @@ public sealed partial class OpenGlPreviewBackend
             return settings;
         }
 
-        // Compile requested post tiers normally, but do not execute the expensive cloud/TAA/AO
-        // pipeline against a sky-only viewport. This keeps the WGL driver and terrain latency
-        // lane responsive until the camera-local Full pad is paintable.
+        // Compile requested post tiers normally. Clouds may start as soon as any streamed terrain
+        // is paintable; waiting for the complete 5x5 Full pad made an unrelated terrain admission
+        // failure suppress clouds indefinitely. TAA/AO and rays still wait for the stable pad.
         return settings with
         {
             EnableGodRays = false,
-            EnableVolumetricClouds = false,
+            EnableVolumetricClouds = settings.EnableVolumetricClouds && HasTerrainChunksToDraw,
             EnableScreenSpaceGodRays = false,
             EnablePreviewTaa = false,
             EnableScreenSpaceAo = false,

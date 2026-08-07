@@ -84,6 +84,9 @@ public sealed class PreviewRenderSettings
     /// <summary>Draw the textured grass ground plane under the preview object in 3D mode.</summary>
     public bool ShowGroundMesh { get; init; } = true;
 
+    /// <summary>Adaptive terrain streaming resource profile. Auto remains bounded by user radii.</summary>
+    public PreviewTerrainStreamingMode TerrainStreamingMode { get; init; } = PreviewTerrainStreamingMode.Auto;
+
     /// <summary>
     /// Hard Full-detail Chebyshev radius in chunks for streamed terrain (LOD + fog extend beyond).
     /// </summary>

@@ -57,6 +57,7 @@ public partial class MainWindowViewModel
     [ObservableProperty] private bool _preview3DShowGrid = true;
     [ObservableProperty] private Color _preview3DGridColor = Color.FromUInt32(PreviewStageConstants.DefaultGridColorArgb);
     [ObservableProperty] private bool _preview3DShowGroundMesh = true;
+    [ObservableProperty] private int _preview3DTerrainStreamingMode;
     [ObservableProperty] private double _preview3DChunkViewDistance = PreviewStageConstants.TerrainDefaultChunkViewDistance;
     [ObservableProperty] private double _preview3DLodRingChunks = PreviewStageConstants.TerrainDefaultLodRingChunks;
     [ObservableProperty] private bool _preview3DShowAxes = true;
@@ -442,6 +443,7 @@ public partial class MainWindowViewModel
     partial void OnPreview3DShowGridChanged(bool value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DGridColorChanged(Color value) => OnPreview3DGpuSettingChanged(value);
     partial void OnPreview3DShowGroundMeshChanged(bool value) => OnPreview3DGpuSettingChanged(value);
+    partial void OnPreview3DTerrainStreamingModeChanged(int value) => OnPreview3DGpuSettingChanged(value);
     // Chunk view distance shares World-gen debounce/clamp with seed + terrain modifiers
     // (see MainWindowViewModel.Preview.WorldGen.cs).
     partial void OnPreview3DShowAxesChanged(bool value) => OnPreview3DGpuSettingChanged(value);
@@ -816,6 +818,10 @@ public partial class MainWindowViewModel
             GridColorB = Preview3DGridColor.B / 255f,
             GridColorA = Preview3DGridColor.A / 255f,
             ShowGroundMesh = Preview3DShowGroundMesh,
+            TerrainStreamingMode = (PreviewTerrainStreamingMode)Math.Clamp(
+                Preview3DTerrainStreamingMode,
+                (int)PreviewTerrainStreamingMode.Auto,
+                (int)PreviewTerrainStreamingMode.High),
             ChunkViewDistance = (int)Math.Round(Math.Clamp(
                 Preview3DChunkViewDistance,
                 PreviewStageConstants.TerrainMinChunkViewDistance,

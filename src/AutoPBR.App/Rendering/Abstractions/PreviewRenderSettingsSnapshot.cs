@@ -29,6 +29,7 @@ public readonly struct PreviewRenderSettingsSnapshot
     public float GridColorB { get; init; }
     public float GridColorA { get; init; }
     public bool ShowGroundMesh { get; init; }
+    public PreviewTerrainStreamingMode TerrainStreamingMode { get; init; }
     public int ChunkViewDistance { get; init; }
     public int LodRingChunks { get; init; }
     public int TerrainWorldSeed { get; init; }
@@ -179,6 +180,7 @@ public readonly struct PreviewRenderSettingsSnapshot
         GridColorB = s.GridColorB,
         GridColorA = s.GridColorA,
         ShowGroundMesh = s.ShowGroundMesh,
+        TerrainStreamingMode = s.TerrainStreamingMode,
         ChunkViewDistance = s.ChunkViewDistance,
         LodRingChunks = s.LodRingChunks,
         TerrainWorldSeed = s.TerrainWorldSeed,

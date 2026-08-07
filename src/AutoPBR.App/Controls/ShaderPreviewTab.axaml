@@ -311,6 +311,21 @@
                                                         <StackPanel Spacing="8" IsEnabled="{Binding Preview3DShowGroundMesh}">
                                                             <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
                                                                 <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                                                           Text="{Binding Strings.Preview3DTerrainStreamingMode}"
+                                                                           TextWrapping="Wrap"
+                                                                           ToolTip.Tip="{Binding Strings.Preview3DTerrainStreamingModeTooltip}" />
+                                                                <ComboBox Grid.Column="1"
+                                                                          SelectedIndex="{Binding Preview3DTerrainStreamingMode, Mode=TwoWay}"
+                                                                          ToolTip.Tip="{Binding Strings.Preview3DTerrainStreamingModeTooltip}"
+                                                                          MinWidth="110">
+                                                                    <ComboBoxItem Content="{Binding Strings.Preview3DTerrainStreamingAuto}" />
+                                                                    <ComboBoxItem Content="{Binding Strings.Preview3DTerrainStreamingLow}" />
+                                                                    <ComboBoxItem Content="{Binding Strings.Preview3DTerrainStreamingBalanced}" />
+                                                                    <ComboBoxItem Content="{Binding Strings.Preview3DTerrainStreamingHigh}" />
+                                                                </ComboBox>
+                                                            </Grid>
+                                                            <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" MinWidth="0">
+                                                                <TextBlock Grid.Column="0" VerticalAlignment="Center"
                                                                            Text="{Binding Strings.Preview3DChunkViewDistance}"
                                                                            TextWrapping="Wrap"
                                                                            ToolTip.Tip="{Binding Strings.Preview3DChunkViewDistanceTooltip}" />

@@ -53,6 +53,10 @@ internal static class UserSettingsSynchronizer
                 ? PreviewStageConstants.DefaultGridColorArgb
                 : settings.Preview3DGridColorArgb);
         vm.Preview3DShowGroundMesh = settings.Preview3DShowGroundMesh;
+        vm.Preview3DTerrainStreamingMode = Math.Clamp(
+            settings.Preview3DTerrainStreamingMode,
+            (int)PreviewTerrainStreamingMode.Auto,
+            (int)PreviewTerrainStreamingMode.High);
         vm.Preview3DChunkViewDistance = Math.Clamp(
             settings.Preview3DChunkViewDistance, 2, 24);
         vm.Preview3DLodRingChunks = Math.Clamp(
@@ -475,6 +479,10 @@ internal static class UserSettingsSynchronizer
         settings.Preview3DShowGrid = vm.Preview3DShowGrid;
         settings.Preview3DGridColorArgb = vm.Preview3DGridColor.ToUInt32();
         settings.Preview3DShowGroundMesh = vm.Preview3DShowGroundMesh;
+        settings.Preview3DTerrainStreamingMode = Math.Clamp(
+            vm.Preview3DTerrainStreamingMode,
+            (int)PreviewTerrainStreamingMode.Auto,
+            (int)PreviewTerrainStreamingMode.High);
         settings.Preview3DChunkViewDistance = (int)Math.Round(Math.Clamp(vm.Preview3DChunkViewDistance, 2, 24));
         settings.Preview3DLodRingChunks = (int)Math.Round(Math.Clamp(
             vm.Preview3DLodRingChunks,

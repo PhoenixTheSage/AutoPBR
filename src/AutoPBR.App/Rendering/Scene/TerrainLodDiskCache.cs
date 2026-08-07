@@ -9,9 +9,11 @@ using AutoPBR.Preview;
 namespace AutoPBR.App.Rendering.Scene;
 
 /// <summary>
-/// Best-effort on-disk LOD section mesh cache under %AppData%/AutoPBR/terrain-lod-cache.
-/// Corrupt or mismatched fingerprints miss closed and fall through to bake.
+/// Legacy per-file LOD mesh cache (v2). Production streaming uses
+/// <see cref="TerrainRegionPackStore"/> (`terrain-lod-cache-v3`). Retained for parity tests
+/// until removal after acceptance gates.
 /// </summary>
+[Obsolete("Use TerrainRegionPackStore (terrain-lod-cache-v3).")]
 public sealed class TerrainLodDiskCache
 {
     public const int MeshFormatVersion = 2;

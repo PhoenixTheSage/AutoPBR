@@ -82,9 +82,10 @@ void main()
     float disc = max(uSunDiscRadius, 1e-4);
     float cone = max(uSunConeRadius, disc + 1e-4);
 
-    // Carve only the disc itself — must be disc-relative, NOT a fraction of cone width
-    // (coneT-based onset grew a vacancy ring as God-Ray Cone Size increased).
-    float discKeep = smoothstep(disc * 1.05, disc * 1.85, distFromSun);
+    // Carve only a thin pad outside the disc limb. Multiples of disc (e.g. 1.85×) opened a
+    // visible vacancy ring on the larger sun disc; cap absolute UV width instead.
+    float carvePad = min(max(disc * 0.22, 0.0035), 0.012);
+    float discKeep = smoothstep(disc - carvePad * 0.2, disc + carvePad, distFromSun);
     if (discKeep <= 1e-4)
     {
         discard;
@@ -158,7 +159,8 @@ void main()
         float gapMask = max(skyMask, (1.0 - cloudOp) * step(0.04, cloudOp) * 0.35);
         if (gapMask > 1e-4)
         {
-            float sampleCoreFade = smoothstep(disc * 1.1, disc * 2.1, beamDist);
+            // Match limb pad — avoid a second, wider core fade that reopens the ring.
+            float sampleCoreFade = smoothstep(disc - carvePad * 0.15, disc + carvePad, beamDist);
             shaft += visibility * weight * beamFalloff * gapMask * sampleCoreFade;
         }
         else if (isSkyReceiver)

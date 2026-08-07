@@ -611,6 +611,12 @@ public sealed class LocalizedStrings
     public static string Preview3DGridColorTooltip => Resources.Preview3DGridColorTooltip;
     public static string Preview3DShowGroundMesh => Resources.Preview3DShowGroundMesh;
     public static string Preview3DShowGroundMeshTooltip => Resources.Preview3DShowGroundMeshTooltip;
+    public static string Preview3DTerrainStreamingMode => Resources.Preview3DTerrainStreamingMode;
+    public static string Preview3DTerrainStreamingModeTooltip => Resources.Preview3DTerrainStreamingModeTooltip;
+    public static string Preview3DTerrainStreamingAuto => Resources.Preview3DTerrainStreamingAuto;
+    public static string Preview3DTerrainStreamingLow => Resources.Preview3DTerrainStreamingLow;
+    public static string Preview3DTerrainStreamingBalanced => Resources.Preview3DTerrainStreamingBalanced;
+    public static string Preview3DTerrainStreamingHigh => Resources.Preview3DTerrainStreamingHigh;
     public static string Preview3DChunkViewDistance => Resources.Preview3DChunkViewDistance;
     public static string Preview3DChunkViewDistanceTooltip => Resources.Preview3DChunkViewDistanceTooltip;
     public static string Preview3DDistantLod => Resources.Preview3DDistantLod;

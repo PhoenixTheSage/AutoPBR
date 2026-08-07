@@ -796,6 +796,7 @@ public sealed partial class OpenGlPreviewBackend
         SetIntLoc(u.TerrainLodFadeEnable, 0);
         SetFloatLoc(u.TerrainLodFadeStart, hardR - PreviewStageConstants.TerrainLodDetailFadeWidthMeters);
         SetFloatLoc(u.TerrainLodFadeEnd, hardR);
+        SetFloatLoc(u.TerrainTransitionKeep, 1f);
         SetFloatLoc(u.TerrainPomFadeStart, PreviewStageConstants.TerrainNearPomRadius);
         SetFloatLoc(
             u.TerrainPomFadeEnd,

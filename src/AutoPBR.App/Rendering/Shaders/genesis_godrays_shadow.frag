@@ -70,7 +70,8 @@ void main()
 
     float disc = max(uSunDiscRadius, 1e-4);
     float cone = max(uSunConeRadius, disc + 1e-4);
-    float discKeep = smoothstep(disc * 1.05, disc * 1.85, distFromSun);
+    float carvePad = min(max(disc * 0.22, 0.0035), 0.012);
+    float discKeep = smoothstep(disc - carvePad * 0.2, disc + carvePad, distFromSun);
     if (discKeep <= 1e-4)
     {
         discard;
@@ -135,7 +136,7 @@ void main()
         }
 
         // Same core fade as depth-only SS: keep beams, spare the sun disc/aureole.
-        float sampleCoreFade = smoothstep(disc * 1.1, disc * 2.1, beamDist);
+        float sampleCoreFade = smoothstep(disc - carvePad * 0.15, disc + carvePad, beamDist);
         if (sampleDepth >= SKY_DEPTH_EPS)
         {
             // Sky taps: depth occlusion already carved leaf gaps. Do NOT sample cascaded

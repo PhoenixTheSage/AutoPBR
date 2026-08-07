@@ -22,6 +22,7 @@ public static class TerrainChunkDrawCull
 
     public readonly struct Candidate
     {
+        public TerrainResidencyKey Key { get; init; }
         public required Vector3 BoundsCenter { get; init; }
         public required float BoundsRadius { get; init; }
         public required TerrainChunkLodKind Lod { get; init; }

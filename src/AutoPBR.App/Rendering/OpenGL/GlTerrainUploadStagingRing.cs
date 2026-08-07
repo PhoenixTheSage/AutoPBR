@@ -88,7 +88,13 @@ internal sealed class GlTerrainUploadStagingRing : IDisposable
                 FenceActiveSegment();
             }
 
-            AdvanceSegment();
+            // Nonblocking: if the next ring segment's fence is still busy, defer the upload to a
+            // later frame instead of ClientWaitSync(…, ulong.MaxValue) on the render thread.
+            if (!TryAdvanceSegment())
+            {
+                return false;
+            }
+
             _cursorInSegment = 0;
             _segmentHasWrites = true;
         }
@@ -188,11 +194,31 @@ internal sealed class GlTerrainUploadStagingRing : IDisposable
         _segmentFences[_activeSegment] = _gl.FenceSync(SyncCondition.SyncGpuCommandsComplete, (uint)0);
     }
 
-    private void AdvanceSegment()
+    /// <summary>
+    /// Zero-timeout poll for a staging segment. Used by the transfer queue so pressure defers
+    /// uploads instead of stalling the Scene thread.
+    /// </summary>
+    public bool TryAcquireSegment(int segment)
     {
-        _activeSegment = _nextSegment;
-        WaitForSegment(_activeSegment);
+        if ((uint)segment >= (uint)SegmentCount)
+        {
+            return false;
+        }
+
+        return TryWaitForSegmentReady(segment);
+    }
+
+    private bool TryAdvanceSegment()
+    {
+        var candidate = _nextSegment;
+        if (!TryWaitForSegmentReady(candidate))
+        {
+            return false;
+        }
+
+        _activeSegment = candidate;
         _nextSegment = (_nextSegment + 1) % SegmentCount;
+        return true;
     }
 
     private void CreateBuffer()
@@ -260,18 +286,24 @@ internal sealed class GlTerrainUploadStagingRing : IDisposable
         }
     }
 
-    private void WaitForSegment(int segment)
+    private bool TryWaitForSegmentReady(int segment)
     {
         var fence = _segmentFences[segment];
         if (!_persistent || fence == 0)
         {
-            return;
+            return true;
         }
 
-        // Do not pass SYNC_FLUSH_COMMANDS_BIT: a flushing wait mid-scene forces the whole
-        // frame's GPU queue to drain and was the P10.1 Scene hitch.
-        _ = _gl.ClientWaitSync(fence, 0u, ulong.MaxValue);
+        // Zero-timeout poll only — never ClientWaitSync with a positive/infinite timeout on the
+        // render thread (plan acceptance gate). Do not pass SYNC_FLUSH_COMMANDS_BIT.
+        var status = _gl.ClientWaitSync(fence, 0u, 0);
+        if (status is GLEnum.TimeoutExpired || (int)status == 0x911B)
+        {
+            return false;
+        }
+
         DeleteFence(segment);
+        return true;
     }
 
     private void DeleteFence(int segment)

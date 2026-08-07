@@ -92,6 +92,7 @@ uniform float uTerrainFogEnd;
 uniform int   uTerrainLodFadeEnable;
 uniform float uTerrainLodFadeStart;
 uniform float uTerrainLodFadeEnd;
+uniform float uTerrainTransitionKeep;
 uniform float uTurbidity;
 uniform float uHorizonFalloff;
 uniform float uGroundWorldY;
@@ -296,14 +297,19 @@ void main()
     // coarser underlay. Never fade-in the only coverage — that punches sky holes.
     // Use Chebyshev XZ distance so the morph matches the square Full/LOD residency disk
     // (Euclidean length() made a circular cut that fog then exaggerated).
-    if (uIsGroundPass > 0 && uTerrainLodFadeEnable > 0)
+    if (uIsGroundPass > 0 &&
+        (uTerrainLodFadeEnable > 0 || uTerrainTransitionKeep < 0.999))
     {
-        vec2 lodDelta = abs(vWorldPos.xz - uCameraPos.xz);
-        float lodDist = max(lodDelta.x, lodDelta.y);
-        float lodKeep = 1.0 - smoothstep(
-            uTerrainLodFadeStart,
-            max(uTerrainLodFadeEnd, uTerrainLodFadeStart + 1e-3),
-            lodDist);
+        float lodKeep = clamp(uTerrainTransitionKeep, 0.0, 1.0);
+        if (uTerrainLodFadeEnable > 0)
+        {
+            vec2 lodDelta = abs(vWorldPos.xz - uCameraPos.xz);
+            float lodDist = max(lodDelta.x, lodDelta.y);
+            lodKeep *= 1.0 - smoothstep(
+                uTerrainLodFadeStart,
+                max(uTerrainLodFadeEnd, uTerrainLodFadeStart + 1e-3),
+                lodDist);
+        }
         if (lodKeep < 0.001)
         {
             discard;

@@ -633,6 +633,12 @@ public static class Resources
     public static string Preview3DGridColorTooltip => GetString("Preview3DGridColorTooltip");
     public static string Preview3DShowGroundMesh => GetString("Preview3DShowGroundMesh");
     public static string Preview3DShowGroundMeshTooltip => GetString("Preview3DShowGroundMeshTooltip");
+    public static string Preview3DTerrainStreamingMode => GetString("Preview3DTerrainStreamingMode");
+    public static string Preview3DTerrainStreamingModeTooltip => GetString("Preview3DTerrainStreamingModeTooltip");
+    public static string Preview3DTerrainStreamingAuto => GetString("Preview3DTerrainStreamingAuto");
+    public static string Preview3DTerrainStreamingLow => GetString("Preview3DTerrainStreamingLow");
+    public static string Preview3DTerrainStreamingBalanced => GetString("Preview3DTerrainStreamingBalanced");
+    public static string Preview3DTerrainStreamingHigh => GetString("Preview3DTerrainStreamingHigh");
     public static string Preview3DChunkViewDistance => GetString("Preview3DChunkViewDistance");
     public static string Preview3DChunkViewDistanceTooltip => GetString("Preview3DChunkViewDistanceTooltip");
     public static string Preview3DDistantLod => GetString("Preview3DDistantLod");
