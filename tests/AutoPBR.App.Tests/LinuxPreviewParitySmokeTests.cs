@@ -13,6 +13,15 @@ public sealed class LinuxPreviewParitySmokeTests
     }
 
     [Fact]
+    public void PreviewSurfaces_LinuxNeverMountsNativeWglHost()
+    {
+        // Regression: mounting PreviewNativeWglHost on X11 crashes in X11NativeControlHost.Attachment
+        // when CreateNativeControlCore cannot produce an HWND child.
+        Assert.False(PreviewSurfaceVisibility.UseNativeWglHost(requestedDesktopGl4: false, isWindows: false));
+        Assert.False(PreviewSurfaceVisibility.UseNativeWglHost(requestedDesktopGl4: true, isWindows: false));
+    }
+
+    [Fact]
     public void PreviewSurfaces_OpenGl4OnWindows_UsesNativeHost()
     {
         Assert.True(PreviewSurfaceVisibility.UseNativeWglHost(requestedDesktopGl4: true, isWindows: true));

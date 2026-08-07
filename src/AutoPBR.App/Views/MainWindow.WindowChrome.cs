@@ -15,6 +15,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Linux uses system decorations; keep the client area square.
+        if (OperatingSystem.IsLinux())
+        {
+            _rootBorder.CornerRadius = default;
+            return;
+        }
 
         bool useSquare = WindowState == WindowState.Maximized || IsWindowsSnapped();
         _rootBorder.CornerRadius = useSquare ? new CornerRadius(0) : new CornerRadius(RoundedCornerRadius);

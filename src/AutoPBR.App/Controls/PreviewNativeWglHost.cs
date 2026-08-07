@@ -20,12 +20,16 @@ internal sealed class PreviewNativeWglHost : NativeControlHost, IPreviewNativeWg
 
     protected override IPlatformHandle CreateNativeControlCore(IPlatformHandle parent)
     {
-        if (parent.Handle == IntPtr.Zero ||
+        // Win32 HWND child only. Returning null crashes Avalonia.X11.X11NativeControlHost.Attachment;
+        // callers must not mount this host on non-Windows (see GlPbrPreviewControl).
+        if (!OperatingSystem.IsWindows() ||
+            parent.Handle == IntPtr.Zero ||
             !string.Equals(parent.HandleDescriptor, "HWND", StringComparison.OrdinalIgnoreCase) ||
             !PreviewNativeWglChildWindow.TryCreate(parent.Handle, this, out var hwnd))
         {
             NativeWindowCreationFailed?.Invoke();
-            return null!;
+            throw new PlatformNotSupportedException(
+                "PreviewNativeWglHost requires a Win32 HWND parent; do not mount on non-Windows.");
         }
 
         NativeWindowCreated?.Invoke(hwnd);
