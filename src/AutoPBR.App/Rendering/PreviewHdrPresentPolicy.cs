@@ -30,15 +30,8 @@ internal static class PreviewHdrPresentPolicy
         var paper = ClampPaperWhiteNits(paperWhiteNits);
         var peak = display.MaxLuminanceNits > 0f ? display.MaxLuminanceNits : 0f;
 
-        if (!OperatingSystem.IsWindows())
-        {
-            return PreviewHdrPresentDecision.Sdr(
-                PreviewHdrFallbackReason.PlatformUnsupported,
-                displaySupportsHdr: false,
-                peakNits: 0f,
-                paperWhiteNits: paper);
-        }
-
+        // Explicit SDR preference wins over platform capability so Linux/macOS still
+        // report UserForcedSdr when the user selected SDR.
         if (mode == PreviewHdrMode.Sdr)
         {
             return PreviewHdrPresentDecision.Sdr(
@@ -46,6 +39,15 @@ internal static class PreviewHdrPresentPolicy
                 display.SupportsHdr,
                 peak,
                 paper);
+        }
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return PreviewHdrPresentDecision.Sdr(
+                PreviewHdrFallbackReason.PlatformUnsupported,
+                displaySupportsHdr: false,
+                peakNits: 0f,
+                paperWhiteNits: paper);
         }
 
         if (presentPathFailed)

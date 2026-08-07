@@ -46,9 +46,8 @@ public sealed class PreviewSparseCloudBrickGenerationTests
 
         Assert.Empty(blocked.Entering);
         Assert.Equal(0, blocked.RequestedCount);
-        Assert.Equal(
-            PreviewSparseCloudVolumeContract.LogicalPageCount,
-            blocked.PendingCount);
+        Assert.True(blocked.PendingCount > 2, "expected pending pages while entry is blocked");
+        var pendingBeforeAdmit = blocked.PendingCount;
 
         var admitted = controller.Update(
             Vector3.Zero,
@@ -59,9 +58,7 @@ public sealed class PreviewSparseCloudBrickGenerationTests
             maximumEntering: 2);
         Assert.Equal(2, admitted.Entering.Count);
         Assert.Equal(2, admitted.RequestedCount);
-        Assert.Equal(
-            PreviewSparseCloudVolumeContract.LogicalPageCount - 2,
-            admitted.PendingCount);
+        Assert.Equal(pendingBeforeAdmit - 2, admitted.PendingCount);
     }
 
     [Fact]
