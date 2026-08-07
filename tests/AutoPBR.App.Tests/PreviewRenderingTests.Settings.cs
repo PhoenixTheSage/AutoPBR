@@ -257,12 +257,19 @@ public sealed partial class PreviewRenderingTests
         var preallocate = ground.IndexOf(
             "TryPreallocateFixedCapacity(",
             StringComparison.Ordinal);
+        var preallocateBudget = ground.LastIndexOf(
+            "ConfigureBudgetCeiling(",
+            preallocate,
+            StringComparison.Ordinal);
         var firstUpload = ground.IndexOf(
             "UploadTerrainChunk(frame.Gl, cpu);",
             StringComparison.Ordinal);
         Assert.True(
             preallocate >= 0 && firstUpload > preallocate,
             "The arena-sized GL backing store must be allocated before streamed uploads begin.");
+        Assert.True(
+            preallocateBudget >= 0 && preallocateBudget < preallocate,
+            "The hardware-aware pool ceiling must be configured before fixed preallocation.");
 
         var replacementUpload = ground.IndexOf(
             "var replacement = pool.Upload(cpu.InterleavedVertices, cpu.Indices, staging);",
@@ -278,6 +285,48 @@ public sealed partial class PreviewRenderingTests
         Assert.Contains("AllowLiveBufferGrowth", ground, StringComparison.Ordinal);
         Assert.Contains("TryAdmitTerrainArenaReservation", ground, StringComparison.Ordinal);
         Assert.Contains("HasCoarserGpuUnderlayForFade", ground, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DeferredTerrainUnpark_PreservesReadyQueueOwnership()
+    {
+        var ground = LoadSource(
+            ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.GroundTerrain.cs");
+
+        var releaseStart = ground.IndexOf(
+            "private void ReleaseDeferredTerrainMarks()",
+            StringComparison.Ordinal);
+        var releaseEnd = ground.IndexOf(
+            "private bool UpdateTerrainPoolPressureLatch()",
+            releaseStart,
+            StringComparison.Ordinal);
+        Assert.True(releaseStart >= 0 && releaseEnd > releaseStart);
+        Assert.DoesNotContain(
+            "_terrainStreamer.NotifyUnloaded(",
+            ground[releaseStart..releaseEnd],
+            StringComparison.Ordinal);
+
+        var unparkStart = ground.IndexOf(
+            "private void UnparkDeferredInsideScheduleWindow()",
+            StringComparison.Ordinal);
+        var unparkEnd = ground.IndexOf(
+            "private void EmitTerrainPoolLimitDiagnostic(",
+            unparkStart,
+            StringComparison.Ordinal);
+        Assert.True(unparkStart >= 0 && unparkEnd > unparkStart);
+        Assert.DoesNotContain(
+            "_terrainStreamer.NotifyUnloaded(",
+            ground[unparkStart..unparkEnd],
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "_terrainDeferredChunks.Remove(key);",
+            ground[unparkStart..unparkEnd],
+            StringComparison.Ordinal);
     }
 
     [Fact]

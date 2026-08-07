@@ -475,6 +475,28 @@ public sealed partial class OpenGlPreviewBackend
             useBaseVertex: _glCapabilities?.IsOpenGlEs != true);
         EnsureTerrainUploadStaging(gl);
         EnsureTerrainArenaAndTransferQueue();
+        // Configure the hardware-aware ceiling before materializing the fixed arena. The pool
+        // constructor intentionally starts at the conservative 1.5 GiB default, while the High
+        // profile arena is 2 GiB; configuring only later in Tick made every High preallocation
+        // fail with "budget-ceiling" despite sufficient VRAM.
+        if (_terrainMeshArena is { } bootstrapArena)
+        {
+            var dedicatedVram = _glCapabilities?.DedicatedVideoMemoryBytes ?? 0;
+            var absoluteCeiling = PreviewStageConstants.ResolveTerrainMeshPoolCeilingBytes(
+                dedicatedVram);
+            var targetBudget = PreviewStageConstants.ResolveTerrainMeshPoolBudgetBytes(
+                _terrainStreamer?.HardRadiusChunks ??
+                    PreviewStageConstants.TerrainDefaultChunkViewDistance,
+                _terrainStreamer?.LodRingChunks ??
+                    PreviewStageConstants.TerrainDefaultLodRingChunks,
+                dedicatedVram);
+            var fixedCapacityBytes = checked(
+                (long)bootstrapArena.VertexCapacityBytes + bootstrapArena.IndexCapacityBytes);
+            _terrainMeshPool.ConfigureBudgetCeiling(
+                Math.Max(targetBudget, fixedCapacityBytes),
+                absoluteCeiling);
+        }
+
         // The arena is the fixed-capacity admission authority. Materialize the same capacity in
         // the GL buffers before the first upload, then disable live growth. Previously the arena
         // advertised hundreds of MiB while the GL pool was frozen at its 3 MiB constructor size.
@@ -707,10 +729,9 @@ public sealed partial class OpenGlPreviewBackend
         var cameraChunk = _terrainStreamer.CameraChunk;
         if (_terrainDeferredCameraChunk is { } deferredCamera && deferredCamera != cameraChunk)
         {
-            // Camera moved: drop deferred marks so uploads can retry, but only un-park
-            // (NotifyUnloaded) keys that are still without a GPU mesh. Mass-unparking every
-            // chunk step thrashed bake/upload without helping near coverage.
-            ReleaseDeferredTerrainMarks(unparkMissingGpu: true);
+            // Camera moved: release backend admission marks while preserving any ready mesh or
+            // active scheduler ownership. The new target cut will discard genuinely stale work.
+            ReleaseDeferredTerrainMarks();
             _terrainDeferredCameraChunk = cameraChunk;
         }
         else
@@ -925,26 +946,16 @@ public sealed partial class OpenGlPreviewBackend
         }
     }
 
-    private void ReleaseDeferredTerrainMarks(bool unparkMissingGpu)
+    private void ReleaseDeferredTerrainMarks()
     {
-        if (_terrainStreamer is null || _terrainDeferredChunks.Count == 0)
+        if (_terrainDeferredChunks.Count == 0)
         {
             return;
         }
 
-        if (unparkMissingGpu)
-        {
-            foreach (var key in _terrainDeferredChunks)
-            {
-                // Fake-parked keys have no GPU mesh — clear the streamer resident mark so
-                // workers can rebake. Keys that already uploaded keep residency.
-                if (!_terrainGpuChunks.ContainsKey(key))
-                {
-                    _terrainStreamer.NotifyUnloaded(key);
-                }
-            }
-        }
-
+        // Deferred keys retain their inflight/ready ownership. NotifyUnloaded removes the
+        // ready-key token, causing the already-baked mesh to be discarded when DrainReadySplit
+        // sees it. Camera motion used to hide that loss by rebuilding the demand revision.
         _terrainDeferredChunks.Clear();
     }
 
@@ -1804,7 +1815,6 @@ public sealed partial class OpenGlPreviewBackend
                 continue;
             }
 
-            _terrainStreamer.NotifyUnloaded(key);
             released++;
             if (released >= maxCount)
             {
@@ -1814,8 +1824,8 @@ public sealed partial class OpenGlPreviewBackend
     }
 
     /// <summary>
-    /// Soft-start unlock grew past previously mass-parked keys — clear fake residency so
-    /// bakers can claim them inside the new annular window.
+    /// Soft-start unlock grew past previously deferred keys. Release only the backend admission
+    /// mark; the streamer must retain any queued ready mesh or pending scheduler ownership.
     /// </summary>
     private void UnparkDeferredInsideScheduleWindow()
     {
@@ -1844,7 +1854,6 @@ public sealed partial class OpenGlPreviewBackend
         foreach (var key in release)
         {
             _terrainDeferredChunks.Remove(key);
-            _terrainStreamer.NotifyUnloaded(key);
         }
     }
 
@@ -2905,9 +2914,14 @@ public sealed partial class OpenGlPreviewBackend
         bool hasCoarserUnderlay)
     {
         double keep;
-        if (_terrainRetireAfterSeconds.TryGetValue(key, out var retireAfter))
+        if (_terrainRetireAfterSeconds.ContainsKey(key))
         {
-            keep = (retireAfter - _renderTimeAccum) / TerrainTransitionSeconds;
+            // The incoming and outgoing meshes use the same screen-space dither mask. Fading
+            // both with opposing scalar keeps makes them discard the same pixels around the
+            // midpoint, briefly exposing sky. Keep the proven outgoing underlay opaque during
+            // its existing grace timer; disposal remains atomic after replacement coverage is
+            // drawable and the timer expires.
+            keep = 1.0;
         }
         else if (hasCoarserUnderlay)
         {
