@@ -10,7 +10,7 @@ namespace AutoPBR.App.Rendering.OpenGL;
 
 public sealed partial class OpenGlPreviewBackend
 {
-    private PreviewDesktopWglContext? _desktopWglSidecar;
+    private IPreviewDesktopGlSidecar? _desktopWglSidecar;
     private PreviewOpenGlCompositionBridge? _compositionBridge;
     private GlInterface? _presentationGlInterface;
     private bool _pendingDesktopWglSidecar;
@@ -112,26 +112,35 @@ public sealed partial class OpenGlPreviewBackend
             compositionBridge = _compositionBridge;
         }
 
-        EmitDiagnostic("[3D preview] Creating desktop WGL sidecar on the dedicated WGL owner thread...");
+        EmitDiagnostic(OperatingSystem.IsLinux()
+            ? "[3D preview] Creating desktop EGL sidecar on the dedicated EGL owner thread..."
+            : "[3D preview] Creating desktop WGL sidecar on the dedicated WGL owner thread...");
 
         Task.Run(() =>
             {
                 try
                 {
+                    if (OperatingSystem.IsLinux())
+                    {
+                        return PreviewDesktopEglOwnerThread.Run(
+                            () => (IPreviewDesktopGlSidecar?)PreviewDesktopEglContext.TryCreate(EmitDiagnostic),
+                            TimeSpan.FromSeconds(60));
+                    }
+
                     return PreviewDesktopWglOwnerThread.Run(
-                        () => CreateDesktopWglSidecarForInit(compositionBridge),
+                        () => (IPreviewDesktopGlSidecar?)CreateDesktopWglSidecarForInit(compositionBridge),
                         TimeSpan.FromSeconds(60));
                 }
                 catch (Exception ex)
                 {
-                    EmitDiagnostic("[3D preview] Desktop WGL sidecar init failed: " + ex.Message);
+                    EmitDiagnostic("[3D preview] Desktop GL sidecar init failed: " + ex.Message);
                     return null;
                 }
             })
             .ContinueWith(
                 task =>
                 {
-                    PreviewDesktopWglContext? sidecar = null;
+                    IPreviewDesktopGlSidecar? sidecar = null;
                     if (task.IsCompletedSuccessfully)
                     {
                         sidecar = task.Result;
@@ -155,7 +164,7 @@ public sealed partial class OpenGlPreviewBackend
                 TaskScheduler.Default);
     }
 
-    private void ApplyCompletedDesktopWglSidecar(PreviewDesktopWglContext? sidecar)
+    private void ApplyCompletedDesktopWglSidecar(IPreviewDesktopGlSidecar? sidecar)
     {
         Interlocked.Exchange(ref _desktopWglSidecarInitState, SidecarInitDone);
 
@@ -183,7 +192,7 @@ public sealed partial class OpenGlPreviewBackend
         }
     }
 
-    private void StartSidecarGpuBootstrapWorker(PreviewDesktopWglContext sidecar)
+    private void StartSidecarGpuBootstrapWorker(IPreviewDesktopGlSidecar sidecar)
     {
         if (Interlocked.CompareExchange(ref _sidecarBootstrapWorkerState, 1, 0) != 0)
         {
@@ -212,7 +221,7 @@ public sealed partial class OpenGlPreviewBackend
         });
     }
 
-    private void SidecarGpuBootstrapLoop(PreviewDesktopWglContext sidecar)
+    private void SidecarGpuBootstrapLoop(IPreviewDesktopGlSidecar sidecar)
     {
         // Soft slices: smaller GPU compile bursts + longer sleeps so the OS / other processes
         // can schedule. Progress is raised after every slice so the overlay keeps moving.

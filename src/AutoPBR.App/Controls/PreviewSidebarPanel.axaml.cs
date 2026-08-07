@@ -60,7 +60,7 @@ public partial class PreviewSidebarPanel : UserControl
                 Content = new SelectableTextBlock
                 {
                     Text = text,
-                    FontFamily = new Avalonia.Media.FontFamily("Cascadia Mono, Consolas, Courier New, monospace"),
+                    FontFamily = new Avalonia.Media.FontFamily(AutoPBR.App.Rendering.OpenGL.PreviewMonoFont.FontFamilyCss),
                     FontSize = 12,
                     Margin = new Avalonia.Thickness(12),
                     TextWrapping = Avalonia.Media.TextWrapping.NoWrap

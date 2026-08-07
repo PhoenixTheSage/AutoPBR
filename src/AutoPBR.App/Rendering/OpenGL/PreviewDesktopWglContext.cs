@@ -10,7 +10,7 @@ namespace AutoPBR.App.Rendering.OpenGL;
 /// <summary>
 /// Native desktop OpenGL context used only for 3D preview rendering while Avalonia keeps ANGLE for compositor pacing.
 /// </summary>
-internal sealed partial class PreviewDesktopWglContext : IDisposable
+internal sealed partial class PreviewDesktopWglContext : IPreviewDesktopGlSidecar
 {
     private readonly IGlContext _context;
     private readonly GL _gl;

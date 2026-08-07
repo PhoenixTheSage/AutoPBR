@@ -17,6 +17,7 @@
     <PackageVersion Include="JsonSchema.Net" Version="7.2.3" />
     <PackageVersion Include="MathNet.Numerics" Version="5.0.0" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntime.Managed" Version="1.24.3" />
+    <PackageVersion Include="Microsoft.ML.OnnxRuntime" Version="1.24.3" />
     <PackageVersion Include="Microsoft.ML.Tokenizers" Version="1.0.2" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageVersion Include="Silk.NET.OpenGL" Version="2.22.0" />

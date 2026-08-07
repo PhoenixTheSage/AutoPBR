@@ -1050,7 +1050,7 @@ public sealed partial class OpenGlPreviewBackend
 
     internal void GlInitNativeWglPresenter(GlInterface glInterface) => BeginNativeWglPresenterGlInit(glInterface);
 
-    private void FinishGlInitLocked(GlInterface renderGlInterface, PreviewDesktopWglContext? sidecar)
+    private void FinishGlInitLocked(GlInterface renderGlInterface, IPreviewDesktopGlSidecar? sidecar)
     {
         try
         {
@@ -1125,7 +1125,7 @@ public sealed partial class OpenGlPreviewBackend
     internal void GlDeinit(GlInterface glInterface)
     {
         _ = glInterface;
-        PreviewDesktopWglContext? sidecar;
+        IPreviewDesktopGlSidecar? sidecar;
         lock (_sync)
         {
             _appliedWglSwapInterval = int.MinValue;

@@ -911,7 +911,7 @@
     <value>OpenGL 4.x preview</value>
   </data>
   <data name="PreviewOpenGl4Tooltip" xml:space="preserve">
-    <value>Uses native desktop OpenGL 4.x (WGL sidecar) for 3D preview rendering while ANGLE keeps high-refresh compositor pacing. Enables tessellation displacement and higher-precision volume shaders. Requires a restart. Keep off for maximum compatibility (OpenGL ES 3.0 via ANGLE).</value>
+    <value>Uses native desktop OpenGL 4.x for 3D preview (WGL sidecar on Windows; EGL sidecar on Linux) while the Avalonia compositor keeps UI pacing. Enables tessellation displacement and higher-precision volume shaders. Requires a restart. Keep off for maximum compatibility (OpenGL ES 3.0 via ANGLE on Windows).</value>
   </data>
   <data name="PreviewOpenGlRestartRequired" xml:space="preserve">
     <value>Restart AutoPBR to apply the OpenGL preview change.</value>
@@ -920,7 +920,7 @@
     <value>Active preview context: {0}</value>
   </data>
   <data name="PreviewOpenGlFallbackWarning" xml:space="preserve">
-    <value>OpenGL 4.x was requested but the app started on OpenGL ES (ANGLE). Update GPU drivers or leave the toggle off.</value>
+    <value>OpenGL 4.x was requested but the app started on OpenGL ES. Update GPU drivers, ensure the WGL (Windows) or EGL (Linux) sidecar can start, or leave the toggle off.</value>
   </data>
   <data name="PreviewHdrMode" xml:space="preserve">
     <value>Preview HDR</value>

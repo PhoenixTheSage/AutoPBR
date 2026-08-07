@@ -10,6 +10,9 @@ public partial class UvDebugWindow : Window
     public UvDebugWindow()
     {
         InitializeComponent();
+        Opened += (_, _) => PlatformWindowChrome.ApplyLinuxNativeDecorations(
+            this,
+            this.FindControl<Control>("CustomTitleBar"));
         Closing += OnClosing;
     }
 

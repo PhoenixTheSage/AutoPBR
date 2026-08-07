@@ -24,7 +24,7 @@ public sealed partial class OpenGlPreviewBackend
             return;
         }
 
-        PreviewDesktopWglContext? sidecar;
+        IPreviewDesktopGlSidecar? sidecar;
         lock (_sync)
         {
             sidecar = _desktopWglSidecar;

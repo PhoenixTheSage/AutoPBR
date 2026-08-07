@@ -16,6 +16,8 @@
     <PackageReference Include="JetBrains.Annotations" />
     <PackageReference Include="MathNet.Numerics" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" />
+    <!-- CPU natives for linux-x64 (and other non-Windows RIDs). Windows keeps Managed + bundled GPU DLLs. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Condition="!$([MSBuild]::IsOSPlatform('WINDOWS')) OR '$(RuntimeIdentifier)' == 'linux-x64'" />
     <PackageReference Include="Microsoft.ML.Tokenizers" />
     <PackageReference Include="SixLabors.ImageSharp" />
     <PackageReference Include="System.IO.Hashing" />

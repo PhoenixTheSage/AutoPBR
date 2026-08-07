@@ -2,6 +2,10 @@
 
 Place redistributable native libraries here so the App and CLI build copy them to `runtimes\win-x64\native`. The build **does not** download anything from the network; you supply binaries under your licenses.
 
+**Linux CPU:** On non-Windows builds (and `-r linux-x64` publish), `AutoPBR.Ml` also references **`Microsoft.ML.OnnxRuntime` 1.24.3** so NuGet RID assets supply `libonnxruntime.so`. That does **not** change this Windows GPU DLL folder or `runtimes\win-x64\native` layout.
+
+**Linux CUDA EP (optional follow-on):** Not wired. When enabling, place matching `.so` files under output `runtimes/linux-x64/native`, probe with `OperatingSystem.IsLinux()`, and keep CPU RID natives as fallback—never alter the Windows `SetDllDirectory` / win-x64 search path.
+
 **CUDA / cuDNN:** redistribution under the [CUDA EULA](https://docs.nvidia.com/cuda/eula/) and [cuDNN license](https://docs.nvidia.com/deeplearning/cudnn/latest/reference/eula.html) when incorporated into your application.
 
 **ONNX Runtime GPU (CUDA 13):** `AutoPBR.Ml` references **`Microsoft.ML.OnnxRuntime.Managed`** only (not **`Microsoft.ML.OnnxRuntime.Gpu`**), so NuGet does **not** ship Windows GPU natives—the default Gpu package carries **CUDA 12**–linked providers. Copy the full set of GPU runtime DLLs from the official **`onnxruntime-win-x64-gpu_cuda13`** zip for the **same version** as `Microsoft.ML.OnnxRuntime.Managed` (e.g. **1.24.3**), including at least `onnxruntime.dll`, `onnxruntime_providers_shared.dll`, `onnxruntime_providers_cuda.dll`, and `onnxruntime_providers_tensorrt.dll` if you use TensorRT. See the [ONNX Runtime license](https://github.com/microsoft/onnxruntime/blob/main/LICENSE).

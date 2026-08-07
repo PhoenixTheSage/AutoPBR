@@ -37,8 +37,7 @@ internal sealed class GlOverlayFontAtlas
     /// </summary>
     public const int BakeOversample = 2;
 
-    private static readonly FontFamily OverlayFontFamily =
-        new("Cascadia Mono, Consolas, Courier New, monospace");
+    private static readonly FontFamily OverlayFontFamily = PreviewMonoFont.Family;
 
     private readonly GlOverlayGlyphInfo[] _glyphs;
 

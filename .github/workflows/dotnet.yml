@@ -112,5 +112,16 @@ jobs:
       - name: Build App stack
         run: dotnet build "AutoPBR.App.slnf" -c Release --no-restore -m -v minimal
 
+      - name: Install Linux GUI / GL smoke deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libegl1 libgl1 mesa-utils
+
       - name: Test App
         run: dotnet test "tests/AutoPBR.App.Tests/AutoPBR.App.Tests.csproj" -c Release --no-build --settings tests/ci.runsettings -v minimal
+
+      - name: Linux preview parity smoke (xvfb)
+        run: |
+          xvfb-run -a dotnet test "tests/AutoPBR.App.Tests/AutoPBR.App.Tests.csproj" -c Release --no-build \
+            --filter "FullyQualifiedName~LinuxPreviewParitySmokeTests|FullyQualifiedName~PreviewSurfaceVisibilityTests|FullyQualifiedName~OnnxRuntimeNativeAvailabilityTests" \
+            -v minimal

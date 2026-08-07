@@ -10,6 +10,9 @@ public partial class EntityPreviewDebugWindow : Window
     public EntityPreviewDebugWindow()
     {
         InitializeComponent();
+        Opened += (_, _) => PlatformWindowChrome.ApplyLinuxNativeDecorations(
+            this,
+            this.FindControl<Control>("CustomTitleBar"));
         Closing += OnClosing;
     }
 

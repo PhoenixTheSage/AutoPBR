@@ -8,9 +8,44 @@ namespace AutoPBR.App.Rendering.OpenGL;
 
 internal static class PreviewOpenGlPlatformConfigurator
 {
+    /// <summary>
+    /// Syncs <see cref="PreviewOpenGlSession.RequestedDesktopGl4"/> from settings on every OS.
+    /// Win32 ANGLE/WGL options are applied only on Windows.
+    /// </summary>
+    public static AppBuilder Configure(AppBuilder builder, UserSettings settings)
+    {
+        PreviewDesktopEglSidecar.EnsureProbed();
+        SyncSessionFromSettings(settings);
+
+        if (OperatingSystem.IsWindows())
+        {
+            return builder.With(CreateWin32PlatformOptions(settings));
+        }
+
+        return builder;
+    }
+
+    /// <summary>Updates the launch-scoped desktop GL 4 session flag without touching platform options.</summary>
+    public static void SyncSessionFromSettings(UserSettings settings)
+    {
+        var requested = settings.PreviewUseOpenGl4;
+        if (PreviewSurfaceVisibility.ShouldDemoteDesktopGl4OnCurrentOs(requested))
+        {
+            // Keep Avalonia OpenGL surface; native desktop sidecar is Windows (WGL) or Linux Phase 2 (EGL).
+            PreviewOpenGlSession.RequestedDesktopGl4 = false;
+            PreviewOpenGlSession.DesktopGl4DemotedForPlatform = true;
+            return;
+        }
+
+        PreviewOpenGlSession.RequestedDesktopGl4 = requested;
+        PreviewOpenGlSession.DesktopGl4DemotedForPlatform = false;
+    }
+
     public static Win32PlatformOptions CreateWin32PlatformOptions(UserSettings settings)
     {
+        // Session flag is owned by SyncSessionFromSettings / Configure; keep Windows path explicit for tests.
         PreviewOpenGlSession.RequestedDesktopGl4 = settings.PreviewUseOpenGl4;
+        PreviewOpenGlSession.DesktopGl4DemotedForPlatform = false;
 
         var useDesktop = settings.PreviewUseOpenGl4;
         return new Win32PlatformOptions

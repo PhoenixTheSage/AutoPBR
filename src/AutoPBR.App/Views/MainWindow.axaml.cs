@@ -24,6 +24,16 @@ public partial class MainWindow : Window
 
     private void OnOpened(object? sender, EventArgs e)
     {
+        PlatformWindowChrome.ApplyLinuxNativeDecorations(
+            this,
+            this.FindControl<Control>("CustomTitleBar"),
+            this.FindControl<Control>("ResizeGripWest")!,
+            this.FindControl<Control>("ResizeGripEast")!,
+            this.FindControl<Control>("ResizeGripSouth")!,
+            this.FindControl<Control>("ResizeGripNorthWest")!,
+            this.FindControl<Control>("ResizeGripNorthEast")!,
+            this.FindControl<Control>("ResizeGripSouthWest")!,
+            this.FindControl<Control>("ResizeGripSouthEast")!);
         TryEnableWindowsSnap();
         _rootBorder = this.FindControl<Border>("RootBorder");
         RestoreWindowLayout();

@@ -639,9 +639,12 @@ public sealed partial class OpenGlPreviewBackend
         }
         else if (_desktopWglSidecar is not null)
         {
-            ActiveContextSummary = _desktopWglSidecar.UsesDxInteropPresentation
-                ? $"{_glVersionString} · GLSL 330 core (WGL sidecar · D3D11 interop){capabilitySuffix}"
-                : $"{_glVersionString} · GLSL 330 core (WGL sidecar){capabilitySuffix}";
+            var label = _desktopWglSidecar is PreviewDesktopEglContext
+                ? "EGL sidecar"
+                : _desktopWglSidecar.UsesDxInteropPresentation
+                    ? "WGL sidecar · D3D11 interop"
+                    : "WGL sidecar";
+            ActiveContextSummary = $"{_glVersionString} · GLSL 330 core ({label}){capabilitySuffix}";
         }
         else
         {

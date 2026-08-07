@@ -238,7 +238,7 @@
                                                             <ctrls:OverlaySlider Grid.Column="1" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.1" TickFrequency="0.1" Value="{Binding Preview3DGrassColormapDownfall, Mode=TwoWay}" Increment="0.01" FormatString="0.##" ToolTip.Tip="{Binding Strings.Preview3DGrassColormapDownfallTooltip}" HorizontalAlignment="Left" />
                                                         </Grid>
                                                         <TextBlock Text="{Binding Preview3DGrassColormapSampleText}"
-                                                                   FontFamily="Consolas"
+                                                                   FontFamily="avares://AutoPBR.App/Assets/Fonts/CascadiaMono.ttf#Cascadia Mono, Consolas, Courier New, monospace"
                                                                    FontSize="11"
                                                                    Opacity="0.85"
                                                                    TextWrapping="Wrap" />

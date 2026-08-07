@@ -75,9 +75,9 @@ sealed class Program
     public static AppBuilder BuildAvaloniaApp()
     {
         var settings = UserSettings.Load();
-        return AppBuilder.Configure<App>()
-            .UsePlatformDetect()
-            .With(PreviewOpenGlPlatformConfigurator.CreateWin32PlatformOptions(settings))
+        return PreviewOpenGlPlatformConfigurator.Configure(
+                AppBuilder.Configure<App>().UsePlatformDetect(),
+                settings)
             .WithInterFont()
             // Avalonia framework noise stays out of the console; Warning+ only.
             .LogToTrace(Avalonia.Logging.LogEventLevel.Warning)

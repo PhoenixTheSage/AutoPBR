@@ -131,13 +131,15 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         ClipToBounds = true;
         Focusable = true;
         IsTabStop = false;
+        var requestedDesktop = PreviewOpenGlSession.RequestedDesktopGl4;
+        var isWindows = OperatingSystem.IsWindows();
         _angleSurface = new AngleOpenGlSurface(this)
         {
-            IsVisible = !PreviewOpenGlSession.RequestedDesktopGl4
+            IsVisible = PreviewSurfaceVisibility.UseAvaloniaOpenGlSurface(requestedDesktop, isWindows)
         };
         _nativeHost = new PreviewNativeWglHost
         {
-            IsVisible = PreviewOpenGlSession.RequestedDesktopGl4 && OperatingSystem.IsWindows()
+            IsVisible = PreviewSurfaceVisibility.UseNativeWglHost(requestedDesktop, isWindows)
         };
         _nativeHost.NativeWindowCreated += OnNativeHostWindowCreated;
         _nativeHost.NativeWindowDestroyed += OnNativeHostWindowDestroyed;
@@ -424,6 +426,11 @@ public sealed class GlPbrPreviewControl : UserControl, ICustomHitTest, IDisposab
         _backendInitialized = true;
         _backend.GpuInitProgressChanged += OnGpuInitProgressChanged;
         _backend.Initialize(new RenderPreviewInitializationOptions());
+        if (PreviewOpenGlSession.DesktopGl4DemotedForPlatform)
+        {
+            _backend.EmitPreviewDiagnostic(
+                "[3D preview] OpenGL 4.x was requested but native desktop GL is not available on this platform yet; using Avalonia OpenGL.");
+        }
     }
 
     private void OnAngleOpenGlInit(GlInterface gl)

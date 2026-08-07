@@ -10,6 +10,9 @@ public partial class Preview3DCameraHelpWindow : Window
     public Preview3DCameraHelpWindow()
     {
         InitializeComponent();
+        Opened += (_, _) => PlatformWindowChrome.ApplyLinuxNativeDecorations(
+            this,
+            this.FindControl<Control>("CustomTitleBar"));
         Closing += OnClosing;
     }
 
