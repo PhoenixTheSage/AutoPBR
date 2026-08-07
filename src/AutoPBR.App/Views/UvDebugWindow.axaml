@@ -10,6 +10,7 @@
         MinHeight="420"
         WindowStartupLocation="CenterOwner"
         Background="Transparent"
+        Foreground="{Binding ForegroundBrush}"
         SystemDecorations="None"
         ExtendClientAreaToDecorationsHint="True"
         TransparencyLevelHint="None">

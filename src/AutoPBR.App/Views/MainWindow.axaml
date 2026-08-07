@@ -20,6 +20,7 @@
         Height="720"
         SystemDecorations="None"
         Background="Transparent"
+        Foreground="{Binding ForegroundBrush}"
         ExtendClientAreaToDecorationsHint="True"
         TransparencyLevelHint="None">
 

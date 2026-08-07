@@ -42,6 +42,7 @@ public partial class MainWindow : Window
         {
             _lastUiScaleForWindow = vmOpen.UiScale;
             vmOpen.PropertyChanged += ViewModel_OnPropertyChanged;
+            PlatformWindowChrome.SyncLinuxThemeChrome(this);
         }
 
         UpdateCornerRadiusFromCurrentState();
@@ -105,12 +106,19 @@ public partial class MainWindow : Window
 
     private void ViewModel_OnPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName != nameof(MainWindowViewModel.UiScale))
+        if (sender is not MainWindowViewModel vm)
         {
             return;
         }
 
-        if (sender is not MainWindowViewModel vm)
+        if (e.PropertyName is nameof(MainWindowViewModel.WindowBackground)
+            or nameof(MainWindowViewModel.ForegroundBrush))
+        {
+            PlatformWindowChrome.SyncLinuxThemeChrome(this);
+            return;
+        }
+
+        if (e.PropertyName != nameof(MainWindowViewModel.UiScale))
         {
             return;
         }

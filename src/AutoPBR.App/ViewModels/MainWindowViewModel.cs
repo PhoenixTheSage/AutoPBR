@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
 
+using Avalonia;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Styling;
 using Avalonia.Threading;
 
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -16,7 +18,7 @@ using AutoPBR.Core.Models;
 
 namespace AutoPBR.App.ViewModels;
 
-public partial class MainWindowViewModel : ViewModelBase, IDisposable
+public partial class MainWindowViewModel : ViewModelBase, IThemedWindowAppearance, IDisposable
 {
     private CancellationTokenSource? _cts;
     private CancellationTokenSource? _scanCts;
@@ -450,6 +452,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         CardBorderBrush = palette.CardBorderBrush;
         AccentBrush = palette.AccentBrush;
         ForegroundBrush = palette.ForegroundBrush;
+
+        // Color schemes are dark palettes with light text. Keep Fluent resources on Dark so
+        // Linux light desktop themes cannot force dark tab/header labels against the scheme.
+        if (Application.Current is { } app)
+        {
+            app.RequestedThemeVariant = ThemeVariant.Dark;
+        }
     }
 
     private static void RunOnUiThread(Action action)

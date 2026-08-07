@@ -8,7 +8,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace AutoPBR.App.ViewModels;
 
-public partial class UvDebugWindowViewModel : ViewModelBase
+public partial class UvDebugWindowViewModel : ViewModelBase, IThemedWindowAppearance
 {
     private readonly MainWindowViewModel _main;
     private bool _suppressDebugWrites;
