@@ -6,6 +6,11 @@ namespace AutoPBR.App.Rendering.OpenGL;
 /// </summary>
 internal sealed class GlTerrainMeshArena
 {
+    // GlTerrainMeshPool and the arena expose per-stream capacities as Int32. A 2 GiB combined
+    // arena keeps the 3:1 vertex/index split below that limit while still materializing the
+    // Balanced/High profiles far beyond the old accidental 256/512 MiB caps.
+    internal const long MaxMaterializedCapacityBytes = 2L * 1024 * 1024 * 1024;
+
     private readonly Segment[] _segments;
     private readonly Dictionary<long, Entry> _entries = [];
     private readonly int _vertexPageBytes;
@@ -72,6 +77,45 @@ internal sealed class GlTerrainMeshArena
         checked(_indexHeadroomPages * _indexPageBytes * SegmentCount);
 
     /// <summary>
+    /// Resolves a fixed arena layout from the profile-wide byte budget. Transfer segment size is
+    /// only the preferred minimum granularity; when the segment-count cap is reached, segments
+    /// grow so the profile budget is not silently discarded.
+    /// </summary>
+    internal static (int SegmentCount, int VertexSegmentBytes, int IndexSegmentBytes)
+        ResolveSegmentLayout(
+            long requestedArenaBytes,
+            int preferredSegmentCount,
+            int preferredPairBytes,
+            int pageBytes,
+            int maxSegmentCount = 16)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(requestedArenaBytes);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(preferredSegmentCount);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(preferredPairBytes);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageBytes);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxSegmentCount, 2);
+
+        var minimumBytes = checked((long)preferredPairBytes * preferredSegmentCount);
+        var materializedBytes = Math.Min(
+            Math.Max(requestedArenaBytes, minimumBytes),
+            MaxMaterializedCapacityBytes);
+        var requiredSegments = DivideRoundUp(materializedBytes, preferredPairBytes);
+        var segmentCount = Math.Clamp(
+            Math.Max(preferredSegmentCount, (int)Math.Min(int.MaxValue, requiredSegments)),
+            2,
+            maxSegmentCount);
+
+        // Stay at or below the Int32-safe combined cap. Both stream sizes remain page-aligned.
+        var pairBytes = Math.Max(
+            preferredPairBytes,
+            checked((int)(materializedBytes / segmentCount / pageBytes * pageBytes)));
+        var vertexSegmentBytes = checked((int)(((long)pairBytes * 3 / 4) / pageBytes * pageBytes));
+        vertexSegmentBytes = Math.Max(pageBytes, vertexSegmentBytes);
+        var indexSegmentBytes = Math.Max(pageBytes, pairBytes - vertexSegmentBytes);
+        return (segmentCount, vertexSegmentBytes, indexSegmentBytes);
+    }
+
+    /// <summary>
     /// Scales the profile-wide, combined vertex/index transition reserve to the capacity that
     /// the segmented arena actually materialized, then distributes it across both streams and
     /// all segments. At least one ordinary page remains available in every segment.
@@ -102,6 +146,41 @@ internal sealed class GlTerrainMeshArena
             scaledCombinedReserve,
             checked((long)segmentCount * 2));
         var aligned = checked(DivideRoundUp(perStreamSegment, pageBytes) * pageBytes);
+        return (int)Math.Min(aligned, segmentBytes - pageBytes);
+    }
+
+    /// <summary>
+    /// Distributes the profile-wide transition reserve proportionally to one asymmetric arena
+    /// stream. Terrain vertex payloads are substantially larger than index payloads, so equal
+    /// per-stream headroom strands index capacity while exhausting the vertex stream.
+    /// </summary>
+    internal static int ResolveTransitionHeadroomPerSegment(
+        long requestedArenaBytes,
+        long requestedTransitionReserveBytes,
+        long realizedArenaBytes,
+        long realizedStreamBytes,
+        int segmentCount,
+        int pageBytes,
+        int segmentBytes)
+    {
+        if (requestedArenaBytes <= 0 ||
+            requestedTransitionReserveBytes <= 0 ||
+            realizedArenaBytes <= 0 ||
+            realizedStreamBytes <= 0 ||
+            segmentCount <= 0 ||
+            pageBytes <= 0 ||
+            segmentBytes <= pageBytes)
+        {
+            return 0;
+        }
+
+        var boundedReserve = Math.Min(requestedTransitionReserveBytes, requestedArenaBytes);
+        var realizedReserve = (long)Math.Ceiling(
+            boundedReserve * (double)realizedArenaBytes / requestedArenaBytes);
+        var streamReserve = (long)Math.Ceiling(
+            realizedReserve * (double)realizedStreamBytes / realizedArenaBytes);
+        var perSegment = DivideRoundUp(streamReserve, segmentCount);
+        var aligned = checked(DivideRoundUp(perSegment, pageBytes) * pageBytes);
         return (int)Math.Min(aligned, segmentBytes - pageBytes);
     }
 

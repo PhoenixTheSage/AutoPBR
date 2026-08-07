@@ -80,6 +80,66 @@ public sealed class GlTerrainMeshArenaTests
     }
 
     [Fact]
+    public void ProfileHeadroom_FollowsAsymmetricVertexIndexCapacity()
+    {
+        const int mib = 1024 * 1024;
+        var vertexHeadroom = GlTerrainMeshArena.ResolveTransitionHeadroomPerSegment(
+            requestedArenaBytes: 4L * 1024 * mib,
+            requestedTransitionReserveBytes: 512L * mib,
+            realizedArenaBytes: 512L * mib,
+            realizedStreamBytes: 384L * mib,
+            segmentCount: 16,
+            pageBytes: 64 * 1024,
+            segmentBytes: 24 * mib);
+        var indexHeadroom = GlTerrainMeshArena.ResolveTransitionHeadroomPerSegment(
+            requestedArenaBytes: 4L * 1024 * mib,
+            requestedTransitionReserveBytes: 512L * mib,
+            realizedArenaBytes: 512L * mib,
+            realizedStreamBytes: 128L * mib,
+            segmentCount: 16,
+            pageBytes: 64 * 1024,
+            segmentBytes: 8 * mib);
+
+        Assert.Equal(3 * mib, vertexHeadroom);
+        Assert.Equal(1 * mib, indexHeadroom);
+        var arena = new GlTerrainMeshArena(
+            segmentCount: 16,
+            vertexSegmentBytes: 24 * mib,
+            indexSegmentBytes: 8 * mib,
+            vertexPageBytes: 64 * 1024,
+            indexPageBytes: 64 * 1024,
+            transitionVertexHeadroomBytes: vertexHeadroom,
+            transitionIndexHeadroomBytes: indexHeadroom);
+
+        Assert.Equal(384 * mib, arena.VertexCapacityBytes);
+        Assert.Equal(128 * mib, arena.IndexCapacityBytes);
+        Assert.Equal(48 * mib, arena.TransitionVertexHeadroomBytes);
+        Assert.Equal(16 * mib, arena.TransitionIndexHeadroomBytes);
+    }
+
+    [Theory]
+    [InlineData(512, 16, 24, 8)]
+    [InlineData(1536, 16, 72, 24)]
+    [InlineData(4096, 16, 96, 32)]
+    public void SegmentLayout_MaterializesProfileBudgetInsteadOfClampingToTransferSegments(
+        int requestedMiB,
+        int expectedSegments,
+        int expectedVertexSegmentMiB,
+        int expectedIndexSegmentMiB)
+    {
+        const int mib = 1024 * 1024;
+        var layout = GlTerrainMeshArena.ResolveSegmentLayout(
+            (long)requestedMiB * mib,
+            preferredSegmentCount: 5,
+            preferredPairBytes: 32 * mib,
+            pageBytes: 64 * 1024);
+
+        Assert.Equal(expectedSegments, layout.SegmentCount);
+        Assert.Equal(expectedVertexSegmentMiB * mib, layout.VertexSegmentBytes);
+        Assert.Equal(expectedIndexSegmentMiB * mib, layout.IndexSegmentBytes);
+    }
+
+    [Fact]
     public void Reserve_PairedPressureAndOversizeRefusalDoNotMutateArena()
     {
         var arena = CreateArena(segmentCount: 1, pagesPerSegment: 4);

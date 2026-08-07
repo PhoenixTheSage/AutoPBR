@@ -68,6 +68,9 @@ public sealed partial class OpenGlPreviewBackend
     private bool _loggedTerrainMultiDraw;
     private bool _loggedTerrainPoolLimit;
     private bool _terrainPoolPressureLatched;
+    private int _terrainArenaFailedVertexBytes;
+    private int _terrainArenaFailedIndexBytes;
+    private long _terrainRecoveryEvictionCount;
     private readonly HashSet<TerrainResidencyKey> _terrainDeferredChunks = [];
     private readonly Dictionary<TerrainResidencyKey, double> _terrainRetireAfterSeconds = [];
     private TerrainChunkKey? _terrainDeferredCameraChunk;
@@ -213,6 +216,10 @@ public sealed partial class OpenGlPreviewBackend
         _terrainArenaAllocations.Clear();
         _terrainRetireAfterSeconds.Clear();
         _terrainCoverageGraph = null;
+        _terrainPoolPressureLatched = false;
+        _terrainArenaFailedVertexBytes = 0;
+        _terrainArenaFailedIndexBytes = 0;
+        _terrainRecoveryEvictionCount = 0;
         foreach (var key in _terrainDeferredChunks)
         {
             _terrainStreamer?.NotifyUnloaded(key);
@@ -238,6 +245,10 @@ public sealed partial class OpenGlPreviewBackend
         _terrainMeshArena = null;
         _terrainArenaAllocations.Clear();
         _terrainCoverageGraph = null;
+        _terrainPoolPressureLatched = false;
+        _terrainArenaFailedVertexBytes = 0;
+        _terrainArenaFailedIndexBytes = 0;
+        _terrainRecoveryEvictionCount = 0;
         _terrainMultiDrawIndirectCount = null;
         _terrainShadowGpuIndirectReady = false;
     }
@@ -497,7 +508,8 @@ public sealed partial class OpenGlPreviewBackend
                 $"(baseVertex desktop; remapped indices on GLES; fixedCapacity=" +
                 $"{_terrainMeshPool.TotalCapacityBytes / (1024 * 1024)} MiB; " +
                 $"arena={_terrainMeshArena?.SegmentCount ?? 0}x" +
-                $"{(_terrainMeshArena?.VertexSegmentBytes ?? 0) / (1024 * 1024)} MiB/stream; " +
+                $"{(_terrainMeshArena?.VertexSegmentBytes ?? 0) / (1024 * 1024)} MiB-vbo/" +
+                $"{(_terrainMeshArena?.IndexSegmentBytes ?? 0) / (1024 * 1024)} MiB-ebo; " +
                 $"page={(_terrainMeshArena?.VertexPageBytes ?? 0) / 1024} KiB; " +
                 $"transitionReserve={((long)(_terrainMeshArena?.TransitionVertexHeadroomBytes ?? 0) + (_terrainMeshArena?.TransitionIndexHeadroomBytes ?? 0)) / (1024 * 1024)} MiB; " +
                 $"liveGrowth={(_terrainMeshPool.AllowLiveBufferGrowth ? "fallback" : "off")}).");
@@ -520,29 +532,49 @@ public sealed partial class OpenGlPreviewBackend
                 persistentTransferSupported: true);
         _terrainStreamingProfile = profile;
         var segmentBytes = Math.Max(profile.TransferSegmentBytes, profile.MeshArenaPageBytes);
-        var segmentCount = Math.Clamp(profile.TransferSegmentCount, 2, 8);
+        var preferredSegmentCount = Math.Clamp(profile.TransferSegmentCount, 2, 8);
         var pageBytes = Math.Max(4 * 1024, profile.MeshArenaPageBytes);
         // Align segment size to page multiples required by the arena.
         segmentBytes = Math.Max(pageBytes, (segmentBytes / pageBytes) * pageBytes);
-        var totalArenaBytes = Math.Max(profile.MeshArenaBytes, (long)segmentBytes * segmentCount * 2);
-        var vertexSegments = Math.Max(1, (int)(totalArenaBytes / 2 / segmentBytes));
-        segmentCount = Math.Clamp(Math.Max(segmentCount, vertexSegments), 2, 16);
-        var realizedArenaBytes = checked((long)segmentBytes * segmentCount * 2);
-        var headroom = GlTerrainMeshArena.ResolveTransitionHeadroomPerStreamSegment(
-            requestedArenaBytes: totalArenaBytes,
+        var pairBytes = checked(segmentBytes * 2);
+        var requestedArenaBytes = Math.Max(
+            profile.MeshArenaBytes,
+            (long)pairBytes * preferredSegmentCount);
+        var layout = GlTerrainMeshArena.ResolveSegmentLayout(
+            requestedArenaBytes,
+            preferredSegmentCount,
+            pairBytes,
+            pageBytes);
+        var segmentCount = layout.SegmentCount;
+        var vertexSegmentBytes = layout.VertexSegmentBytes;
+        var indexSegmentBytes = layout.IndexSegmentBytes;
+        var realizedVertexBytes = checked((long)vertexSegmentBytes * segmentCount);
+        var realizedIndexBytes = checked((long)indexSegmentBytes * segmentCount);
+        var realizedArenaBytes = checked(realizedVertexBytes + realizedIndexBytes);
+        var vertexHeadroom = GlTerrainMeshArena.ResolveTransitionHeadroomPerSegment(
+            requestedArenaBytes: requestedArenaBytes,
             requestedTransitionReserveBytes: profile.TransitionReserveBytes,
             realizedArenaBytes: realizedArenaBytes,
+            realizedStreamBytes: realizedVertexBytes,
             segmentCount: segmentCount,
             pageBytes: pageBytes,
-            segmentBytes: segmentBytes);
+            segmentBytes: vertexSegmentBytes);
+        var indexHeadroom = GlTerrainMeshArena.ResolveTransitionHeadroomPerSegment(
+            requestedArenaBytes: requestedArenaBytes,
+            requestedTransitionReserveBytes: profile.TransitionReserveBytes,
+            realizedArenaBytes: realizedArenaBytes,
+            realizedStreamBytes: realizedIndexBytes,
+            segmentCount: segmentCount,
+            pageBytes: pageBytes,
+            segmentBytes: indexSegmentBytes);
         _terrainMeshArena = new GlTerrainMeshArena(
             segmentCount: segmentCount,
-            vertexSegmentBytes: segmentBytes,
-            indexSegmentBytes: segmentBytes,
+            vertexSegmentBytes: vertexSegmentBytes,
+            indexSegmentBytes: indexSegmentBytes,
             vertexPageBytes: pageBytes,
             indexPageBytes: pageBytes,
-            transitionVertexHeadroomBytes: headroom,
-            transitionIndexHeadroomBytes: headroom);
+            transitionVertexHeadroomBytes: vertexHeadroom,
+            transitionIndexHeadroomBytes: indexHeadroom);
         _terrainTransferQueue = new GlTerrainTransferQueue(
             _terrainMeshArena,
             stagingSegmentCount: Math.Max(2, profile.TransferSegmentCount),
@@ -865,14 +897,17 @@ public sealed partial class OpenGlPreviewBackend
             _terrainStreamingNeedsFrames = needsFrames;
         }
 
+        var arenaTelemetry = _terrainMeshArena?.GetTelemetry();
         _terrainStreamer.Telemetry.SetGpuState(
-            _terrainMeshPool is null
-                ? 0
-                : _terrainMeshPool.VertexHighWaterBytes + _terrainMeshPool.IndexHighWaterBytes,
-            transitionIncomplete && _terrainMeshArena is { } arena
-                ? (long)arena.TransitionVertexHeadroomBytes + arena.TransitionIndexHeadroomBytes
+            arenaTelemetry is { } arenaState
+                ? arenaState.LiveVertexBytes + arenaState.LiveIndexBytes
+                : SumTerrainGpuResidentBytes(),
+            arenaTelemetry is { } reservedState
+                ? reservedState.ReservedVertexBytes + reservedState.ReservedIndexBytes
                 : 0,
-            retiringBytes: 0);
+            arenaTelemetry is { } retiringState
+                ? retiringState.RetiringVertexBytes + retiringState.RetiringIndexBytes
+                : 0);
         _terrainStreamer.Telemetry.SetCoverageState(
             missingDesiredGpu,
             transitionIncomplete || pinnedObsoleteLod ? 1 : 0);
@@ -915,7 +950,8 @@ public sealed partial class OpenGlPreviewBackend
 
     private bool UpdateTerrainPoolPressureLatch()
     {
-        if (_terrainMeshPool is not { } pool)
+        var pool = _terrainMeshPool;
+        if (pool is null)
         {
             _terrainPoolPressureLatched = false;
             return false;
@@ -923,23 +959,44 @@ public sealed partial class OpenGlPreviewBackend
 
         // Use live resident bytes — TotalCapacityBytes never shrinks after growth and would
         // latch pressure forever (soft-start HoldScheduleExpansion → empty LOD rings).
-        long liveBytes = 0;
-        foreach (var chunk in _terrainGpuChunks.Values)
+        var liveBytes = SumTerrainGpuResidentBytes();
+        var poolRatio = liveBytes / (double)Math.Max(1L, pool.MaxTotalBufferBytes);
+        var arenaRatio = 0d;
+        var arenaBlocked = false;
+        if (_terrainMeshArena is { } arena)
         {
-            liveBytes += (long)chunk.Allocation.VertexFloatCount * sizeof(float);
-            liveBytes += (long)chunk.Allocation.IndexCount * sizeof(uint);
+            var telemetry = arena.GetTelemetry();
+            var ordinaryVertexCapacity = Math.Max(
+                1L,
+                (long)telemetry.VertexCapacityBytes - arena.TransitionVertexHeadroomBytes);
+            var ordinaryIndexCapacity = Math.Max(
+                1L,
+                (long)telemetry.IndexCapacityBytes - arena.TransitionIndexHeadroomBytes);
+            arenaRatio = Math.Max(
+                (telemetry.VertexCapacityBytes - telemetry.FreeVertexBytes) /
+                    (double)ordinaryVertexCapacity,
+                (telemetry.IndexCapacityBytes - telemetry.FreeIndexBytes) /
+                    (double)ordinaryIndexCapacity);
+            arenaBlocked =
+                (_terrainArenaFailedVertexBytes > 0 &&
+                 telemetry.LargestFreeVertexRangeBytes < _terrainArenaFailedVertexBytes) ||
+                (_terrainArenaFailedIndexBytes > 0 &&
+                 telemetry.LargestFreeIndexRangeBytes < _terrainArenaFailedIndexBytes);
         }
 
-        var budget = Math.Max(1L, pool.MaxTotalBufferBytes);
-        var ratio = liveBytes / (double)budget;
+        var ratio = Math.Max(poolRatio, arenaRatio);
         if (_terrainPoolPressureLatched)
         {
-            if (ratio < PreviewStageConstants.TerrainMeshPoolPressureExitRatio)
+            if (!arenaBlocked &&
+                ratio < PreviewStageConstants.TerrainMeshPoolPressureExitRatio)
             {
                 _terrainPoolPressureLatched = false;
+                _terrainArenaFailedVertexBytes = 0;
+                _terrainArenaFailedIndexBytes = 0;
             }
         }
-        else if (ratio >= PreviewStageConstants.TerrainMeshPoolPressureEnterRatio)
+        else if (arenaBlocked ||
+                 ratio >= PreviewStageConstants.TerrainMeshPoolPressureEnterRatio)
         {
             _terrainPoolPressureLatched = true;
         }
@@ -955,6 +1012,18 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         return _terrainMeshPool.VertexHighWaterBytes + _terrainMeshPool.IndexHighWaterBytes;
+    }
+
+    private long SumTerrainGpuResidentBytes()
+    {
+        long liveBytes = 0;
+        foreach (var chunk in _terrainGpuChunks.Values)
+        {
+            liveBytes += (long)chunk.Allocation.VertexFloatCount * sizeof(float);
+            liveBytes += (long)chunk.Allocation.IndexCount * sizeof(uint);
+        }
+
+        return liveBytes;
     }
 
     private bool TryRaiseTerrainMeshPoolBudget()
@@ -1050,13 +1119,24 @@ public sealed partial class OpenGlPreviewBackend
             TerrainChunkStreamer.ResolveLodPinKeepRadiusChunks(_terrainStreamer.HardRadiusChunks));
         var telemetry = _terrainStreamer.Telemetry.Snapshot();
         var cacheStats = _terrainStreamer.LodDiskCache.GetStats();
+        var arenaStats = _terrainMeshArena?.GetTelemetry();
+        var arenaDiagnostic = arenaStats is { } stats
+            ? $", arenaLive={stats.LiveVertexBytes}/{stats.LiveIndexBytes}, " +
+              $"arenaReserved={stats.ReservedVertexBytes}/{stats.ReservedIndexBytes}, " +
+              $"arenaFree={stats.FreeVertexBytes}/{stats.FreeIndexBytes}, " +
+              $"arenaLargest={stats.LargestFreeVertexRangeBytes}/" +
+              $"{stats.LargestFreeIndexRangeBytes}, " +
+              $"arenaFragmentation={stats.VertexFragmentation:0.###}/" +
+              $"{stats.IndexFragmentation:0.###}"
+            : "";
         EmitDiagnostic(
             "[3D preview] Terrain residency " +
             FormatTerrainResidencyDiagBreakdown(desired) +
             $", uploadedFull={_lastTerrainFullUploads}, uploadedLod={_lastTerrainLodUploads}, " +
             $"disposed={_lastTerrainDisposals}, pinnedObsolete={pinned}, " +
             $"workers={_terrainStreamer.WorkerCount}, inflight={_terrainStreamer.InflightCount}, " +
-            $"ready={_terrainStreamer.ReadyCount}, bakedFull={_terrainStreamer.FullBakeCompletedCount}, " +
+            $"ready={_terrainStreamer.ReadyCount}/{_terrainStreamer.ReadyUniqueCount}, " +
+            $"bakedFull={_terrainStreamer.FullBakeCompletedCount}, " +
             $"bakedLod={_terrainStreamer.LodBakeCompletedCount}, " +
             $"diskWarm={_terrainStreamer.DiskWarmCompletedCount}, " +
             $"cacheStores={cacheStats.Stores}, cacheHits={cacheStats.Hits}, " +
@@ -1066,7 +1146,9 @@ public sealed partial class OpenGlPreviewBackend
             $"streamCpuP95Ms={telemetry.StreamCpuP95Ms:0.###}, " +
             $"plannerMs={telemetry.PlannerMilliseconds:0.###}, " +
             $"staleDrops={telemetry.SchedulerStaleDrops}, coverageDebt={telemetry.CoverageDebt}, " +
+            $"recoveryEvicted={_terrainRecoveryEvictionCount}, " +
             $"gpuActiveBytes={telemetry.ActiveGpuBytes}, gpuReservedBytes={telemetry.ReservedGpuBytes}, " +
+            $"arenaPressure={_terrainPoolPressureLatched}{arenaDiagnostic}, " +
             $"profile={_terrainStreamingProfile.Mode}, " +
             $"bakeFaults={_terrainStreamer.BakeFaultCount}, " +
             $"lastBakeFault={_terrainStreamer.LastBakeFault}.");
@@ -1107,7 +1189,8 @@ public sealed partial class OpenGlPreviewBackend
     /// <summary>
     /// Unloads hard-out-of-range residents, then soft-unloads / pressure-evicts keys that left
     /// the desired set so extreme LOD rings can track the camera inside the VRAM budget.
-    /// LOD sections stay pinned until every keep-radius cell has replacement GPU coverage.
+    /// Residents crossing the camera-local transition skirt stay pinned until every protected
+    /// cell has replacement GPU coverage. The far trail is retired by distance/pressure only.
     /// </summary>
     private void DisposeTerrainGpuResidents(
         IReadOnlyDictionary<TerrainResidencyKey, TerrainChunkLodKind> desired,
@@ -1121,7 +1204,8 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         var hardRadius = _terrainStreamer.HardRadiusChunks;
-        var pinKeepRadius = TerrainChunkStreamer.ResolveLodPinKeepRadiusChunks(hardRadius);
+        var renderRadius = _terrainStreamer.LodRadiusChunks;
+        var gpuResidents = _terrainGpuChunks.Keys.ToHashSet();
         List<(int Rank, TerrainResidencyKey Key)>? ranked = null;
         foreach (var (key, _) in _terrainGpuChunks)
         {
@@ -1134,16 +1218,27 @@ public sealed partial class OpenGlPreviewBackend
             }
 
             var dist = key.ChebyshevDistanceToChunk(cameraChunk);
-            // Coverage-first retirement for every representation, including outgoing Full.
-            // A non-desired mesh may leave only after every still-required cell in its footprint
-            // has another real GPU resident. Streamer marks and deferred placeholders do not count.
-            if (!hardUnload &&
-                !inDesired &&
+            // Protect real GPU coverage throughout the render window. Soft-start controls bake
+            // order only; distant residents remain visible and must survive until replacement.
+            // The resident HashSet is shared across the pass to keep this linear-time.
+            var protectionRadius = !hardUnload && !inDesired
+                ? TerrainChunkStreamer.ResolveReplacementProtectionRadiusChunks(
+                    key,
+                    cameraChunk,
+                    hardRadius,
+                    renderRadius)
+                : -1;
+            if (protectionRadius >= 0 &&
                 !HasGpuFootprintReplacementCoverage(
                     key,
                     cameraChunk,
-                    _terrainStreamer.LodRadiusChunks))
+                    protectionRadius,
+                    gpuResidents))
             {
+                // Coverage can regress after a retirement timer starts (camera movement or an
+                // allocation retry). Cancel the fade immediately; retaining a timer whose end
+                // has passed keeps the only available underlay resident but fully transparent.
+                _terrainRetireAfterSeconds.Remove(key);
                 continue;
             }
 
@@ -1165,17 +1260,10 @@ public sealed partial class OpenGlPreviewBackend
             // entire lod ring — full-ring pins held VRAM and stalled unlock under pressure.
             if (!hardUnload && key.IsLod && !inDesired)
             {
-                var pinRadius = key.OverlapsFullDisk(cameraChunk, pinKeepRadius)
-                    ? pinKeepRadius
-                    : -1;
-                if (pinRadius >= 0 &&
-                    !HasGpuFootprintReplacementCoverage(key, cameraChunk, pinRadius))
-                {
-                    continue;
-                }
-
                 var softHysteresis = TerrainChunkStreamer.ResolveSoftUnloadHysteresisChunks(key);
-                if (pinRadius < 0 && dist <= softHysteresis && !(forceNonDesired && !inDesired))
+                if (protectionRadius < 0 &&
+                    dist <= softHysteresis &&
+                    !(forceNonDesired && !inDesired))
                 {
                     continue;
                 }
@@ -1234,12 +1322,13 @@ public sealed partial class OpenGlPreviewBackend
     private bool HasGpuFootprintReplacementCoverage(
         TerrainResidencyKey lodSection,
         TerrainChunkKey cameraChunk,
-        int keepRadiusChunks) =>
+        int keepRadiusChunks,
+        IReadOnlySet<TerrainResidencyKey>? gpuResidents = null) =>
         TerrainChunkStreamer.HasFootprintReplacementCoverage(
             lodSection,
             cameraChunk,
             keepRadiusChunks,
-            _terrainGpuChunks.Keys);
+            gpuResidents ?? _terrainGpuChunks.Keys.ToHashSet());
 
     private void UploadTerrainChunk(GL gl, PreviewTerrainChunkMesh cpu)
     {
@@ -1264,11 +1353,14 @@ public sealed partial class OpenGlPreviewBackend
             }
         }
 
-        var isTransition = _terrainStreamer is not null &&
-            TerrainChunkStreamer.IsTransitionCoverageKey(
-                cpu.Key,
-                _terrainStreamer.CameraChunk,
-                _terrainStreamer.HardRadiusChunks);
+        var replacingResident = _terrainGpuChunks.ContainsKey(cpu.Key);
+        var isTransition = replacingResident ||
+            HasOverlappingTerrainGpuRepresentation(cpu.Key) ||
+            (_terrainStreamer is not null &&
+             TerrainChunkStreamer.IsTransitionCoverageKey(
+                 cpu.Key,
+                 _terrainStreamer.CameraChunk,
+                 _terrainStreamer.HardRadiusChunks));
         if (!TryAdmitTerrainArenaReservation(cpu, isTransition, out var arenaReservation))
         {
             _terrainDeferredChunks.Add(cpu.Key);
@@ -1388,7 +1480,46 @@ public sealed partial class OpenGlPreviewBackend
 
         // Reclaim fence-complete retirement before refusing refinement.
         arena.ReclaimCompleted(static _ => true);
-        return arena.TryReserve(vertexBytes, indexBytes, isTransition, out reservation);
+        if (arena.TryReserve(vertexBytes, indexBytes, isTransition, out reservation))
+        {
+            return true;
+        }
+
+        // Arena admission is the real fixed-capacity authority. Surface its pressure to the
+        // same eviction/throttle path as the GL pool and make room from safe, obsolete trail
+        // residents immediately so queued replacements do not retry forever.
+        _terrainArenaFailedVertexBytes = Math.Max(_terrainArenaFailedVertexBytes, vertexBytes);
+        _terrainArenaFailedIndexBytes = Math.Max(_terrainArenaFailedIndexBytes, indexBytes);
+        _terrainPoolPressureLatched = true;
+        return TryEvictTerrainForUploadBudget() &&
+               arena.TryReserve(vertexBytes, indexBytes, isTransition, out reservation);
+    }
+
+    private bool HasOverlappingTerrainGpuRepresentation(TerrainResidencyKey incoming)
+    {
+        var incomingX0 = incoming.OriginChunkX;
+        var incomingZ0 = incoming.OriginChunkZ;
+        var incomingX1 = incomingX0 + incoming.ChunksPerSide;
+        var incomingZ1 = incomingZ0 + incoming.ChunksPerSide;
+        foreach (var resident in _terrainGpuChunks.Keys)
+        {
+            if (resident == incoming)
+            {
+                continue;
+            }
+
+            var residentX0 = resident.OriginChunkX;
+            var residentZ0 = resident.OriginChunkZ;
+            var residentX1 = residentX0 + resident.ChunksPerSide;
+            var residentZ1 = residentZ0 + resident.ChunksPerSide;
+            if (incomingX0 < residentX1 && incomingX1 > residentX0 &&
+                incomingZ0 < residentZ1 && incomingZ1 > residentZ0)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void PublishTerrainArenaReservation(
@@ -1443,8 +1574,10 @@ public sealed partial class OpenGlPreviewBackend
             return true;
         }
 
-        // Required coverage is never evicted to admit refinement. The upload remains queued
-        // until a transactional merge or a genuinely non-required resident releases capacity.
+        // Never evict a key that belongs to the target cut to admit another target key. That
+        // creates a permanent rebake cycle and can regress a completed handoff. The fixed arena
+        // now materializes the profile capacity; if no obsolete resident is safely retireable,
+        // defer this upload until normal handoff disposal makes room.
         return false;
     }
 
@@ -1510,9 +1643,11 @@ public sealed partial class OpenGlPreviewBackend
                 continue;
             }
 
+            ReleaseTerrainArenaAllocation(key);
             _terrainMeshPool?.Free(gpu.Allocation);
             _terrainStreamer.NotifyUnloaded(key);
             _terrainDeferredChunks.Remove(key);
+            _terrainRetireAfterSeconds.Remove(key);
             disposed++;
             if (disposed >= maxCount)
             {
@@ -1569,6 +1704,7 @@ public sealed partial class OpenGlPreviewBackend
             return false;
         }
 
+        IReadOnlySet<TerrainResidencyKey>? gpuResidents = null;
         foreach (var key in _terrainGpuChunks.Keys)
         {
             if (!key.IsLod || desired.ContainsKey(key))
@@ -1587,7 +1723,12 @@ public sealed partial class OpenGlPreviewBackend
                 continue;
             }
 
-            if (!HasGpuFootprintReplacementCoverage(key, cameraChunk, pinKeepRadiusChunks))
+            gpuResidents ??= _terrainGpuChunks.Keys.ToHashSet();
+            if (!HasGpuFootprintReplacementCoverage(
+                    key,
+                    cameraChunk,
+                    pinKeepRadiusChunks,
+                    gpuResidents))
             {
                 return true;
             }

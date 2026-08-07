@@ -1079,6 +1079,32 @@ public sealed class PreviewTerrainTests
     }
 
     [Fact]
+    public void TerrainChunkStreamer_camera_motion_preserves_a_strict_bounded_target_cut()
+    {
+        using var streamer = new TerrainChunkStreamer();
+        const int hardRadius = 2;
+        const int lodRingChunks = 32;
+        var counts = new List<int>();
+
+        for (var chunkX = 0; chunkX <= 24; chunkX++)
+        {
+            streamer.Tick(
+                new Vector3(chunkX * PreviewStageConstants.TerrainChunkSize + 1f, 2f, 1f),
+                hardRadius,
+                lodRingChunks);
+            var desired = streamer.SnapshotDesired();
+            counts.Add(desired.Count);
+            TerrainTargetCutBuilder.ValidateCameraTarget(
+                desired.Keys,
+                streamer.CameraChunk,
+                hardRadius,
+                lodRingChunks);
+        }
+
+        Assert.True(counts.Max() < counts.Min() * 2);
+    }
+
+    [Fact]
     public void ObsoleteLodUnderFullDisk_unloads_even_when_camera_inside_section()
     {
         var cam = new TerrainChunkKey(0, 0);

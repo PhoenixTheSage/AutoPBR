@@ -22,6 +22,7 @@ public sealed class TerrainChunkStreamer : IDisposable
             new Dictionary<TerrainResidencyKey, TerrainChunkLodKind>());
 
     private readonly ConcurrentQueue<PreviewTerrainChunkMesh> _ready = new();
+    private readonly ConcurrentDictionary<TerrainResidencyKey, byte> _readyKeys = new();
     private readonly ConcurrentQueue<TerrainGpuFullJob> _gpuFullJobs = new();
     private readonly ConcurrentQueue<TerrainGpuLodJob> _gpuLodJobs = new();
     private readonly ConcurrentDictionary<TerrainResidencyKey, TerrainChunkLodKind> _inflight = new();
@@ -266,6 +267,8 @@ public sealed class TerrainChunkStreamer : IDisposable
     public int InflightCount => _inflight.Count;
 
     public int ReadyCount => _ready.Count;
+
+    public int ReadyUniqueCount => _readyKeys.Count;
 
     public long FullBakeCompletedCount => Interlocked.Read(ref _fullBakeCompletedCount);
 
@@ -588,59 +591,88 @@ public sealed class TerrainChunkStreamer : IDisposable
         var lx1 = lx0 + lSide;
         var lz1 = lz0 + lSide;
 
-        // Cheap reject: if no cell is inside keep radius, nothing to protect.
-        var anyKept = false;
-        for (var z = lz0; z < lz1 && !anyKept; z++)
-        {
-            for (var x = lx0; x < lx1; x++)
-            {
-                var chebyshev = Math.Max(Math.Abs(x - cameraChunk.X), Math.Abs(z - cameraChunk.Z));
-                if (chebyshev <= keepRadiusChunks)
-                {
-                    anyKept = true;
-                    break;
-                }
-            }
-        }
-
-        if (!anyKept)
+        // AABB reject and clip avoid walking every cell of far 64×64/128×128 sections.
+        if (!leaving.OverlapsFullDisk(cameraChunk, keepRadiusChunks))
         {
             return true;
         }
 
         var residents = gpuResidents as IReadOnlySet<TerrainResidencyKey> ??
                         gpuResidents.ToHashSet();
+        var keptX0 = Math.Max(lx0, cameraChunk.X - keepRadiusChunks);
+        var keptZ0 = Math.Max(lz0, cameraChunk.Z - keepRadiusChunks);
+        var keptX1 = Math.Min(lx1, cameraChunk.X + keepRadiusChunks + 1);
+        var keptZ1 = Math.Min(lz1, cameraChunk.Z + keepRadiusChunks + 1);
 
-        for (var z = lz0; z < lz1; z++)
+        // Dyadic terrain keys are laminar: two keys are either disjoint or one contains the
+        // other. Check a coarser replacement once, then descend the leaving key's quadtree.
+        // The previous per-cell × every-LOD proof became an O(radius²) render-thread scan for
+        // each outgoing Lod6/Lod7 section while moving.
+        var originChunk = new TerrainChunkKey(lx0, lz0);
+        for (var level = leaving.LodLevel + 1;
+             level <= TerrainResidencyKey.MaxLodLevel;
+             level++)
         {
-            for (var x = lx0; x < lx1; x++)
+            if (residents.Contains(
+                    TerrainResidencyKey.FromChunk(originChunk, (byte)level)))
             {
-                var chebyshev = Math.Max(Math.Abs(x - cameraChunk.X), Math.Abs(z - cameraChunk.Z));
-                if (chebyshev > keepRadiusChunks)
-                {
-                    continue;
-                }
+                return true;
+            }
+        }
 
-                var covered = false;
-                var chunk = new TerrainChunkKey(x, z);
-                for (byte level = 0; level <= TerrainResidencyKey.MaxLodLevel; level++)
-                {
-                    var candidate = TerrainResidencyKey.FromChunk(chunk, level);
-                    if (candidate != leaving && residents.Contains(candidate))
-                    {
-                        covered = true;
-                        break;
-                    }
-                }
+        return IsCoveredByDescendants(leaving);
 
-                if (!covered)
+        bool IsCoveredByDescendants(TerrainResidencyKey node)
+        {
+            var nx0 = node.OriginChunkX;
+            var nz0 = node.OriginChunkZ;
+            var nx1 = nx0 + node.ChunksPerSide;
+            var nz1 = nz0 + node.ChunksPerSide;
+            if (nx0 >= keptX1 || nx1 <= keptX0 || nz0 >= keptZ1 || nz1 <= keptZ0)
+            {
+                return true;
+            }
+
+            if (node != leaving && residents.Contains(node))
+            {
+                return true;
+            }
+
+            if (node.IsFull)
+            {
+                return false;
+            }
+
+            foreach (var child in TerrainTargetCutBuilder.ChildrenOf(node))
+            {
+                if (!IsCoveredByDescendants(child))
                 {
                     return false;
                 }
             }
-        }
 
-        return true;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Returns the camera-local radius whose drawable coverage must survive an outgoing
+    /// residency handoff, or -1 when the mesh is only part of the disposable far trail.
+    /// Protection includes the full render window. Soft-start controls generation order, not
+    /// visibility: already-drawable distant LOD must persist until its replacement is drawable.
+    /// </summary>
+    public static int ResolveReplacementProtectionRadiusChunks(
+        TerrainResidencyKey leaving,
+        TerrainChunkKey cameraChunk,
+        int hardRadiusChunks,
+        int renderRadiusChunks)
+    {
+        var keepRadius = Math.Max(
+            ResolveLodPinKeepRadiusChunks(hardRadiusChunks),
+            Math.Max(0, renderRadiusChunks));
+        return leaving.OverlapsFullDisk(cameraChunk, keepRadius)
+            ? keepRadius
+            : -1;
     }
 
     /// <summary>
@@ -725,8 +757,13 @@ public sealed class TerrainChunkStreamer : IDisposable
         while (_ready.TryDequeue(out _))
         {
         }
+        _readyKeys.Clear();
 
         while (_gpuFullJobs.TryDequeue(out _))
+        {
+        }
+
+        while (_gpuLodJobs.TryDequeue(out _))
         {
         }
 
@@ -767,17 +804,11 @@ public sealed class TerrainChunkStreamer : IDisposable
         }
 
         var plannerStarted = Stopwatch.GetTimestamp();
-        // Incremental strict-quadtree cut is the demand authority. Soft hysteresis remains a
-        // membership stabilizer around that cut while replacements catch up.
+        // The incremental strict-quadtree cut is the sole demand authority. Drawable GPU
+        // hysteresis belongs to the coverage handoff layer; merging prior leaves into this set
+        // creates parent/descendant overlap and makes desired residency grow without bound.
         var demand = _demandTracker.UpdateCameraTarget(cam, HardRadiusChunks, LodRingChunks);
         var next = ToDesiredDictionary(demand.TargetCut);
-        Dictionary<TerrainResidencyKey, TerrainChunkLodKind> priorDesired;
-        lock (_desiredLock)
-        {
-            priorDesired = _desired;
-        }
-
-        ApplyDesiredMembershipHysteresis(next, priorDesired, cam, HardRadiusChunks, LodRingChunks);
 
         var prefetchCap = StreamingProfile.Mode switch
         {
@@ -888,8 +919,8 @@ public sealed class TerrainChunkStreamer : IDisposable
     }
 
     /// <summary>
-    /// Retains prior LOD section keys that still intersect an expanded band margin so desired
-    /// membership does not flicker every camera-chunk step.
+    /// Legacy band-cut helper retained for compatibility tests. Do not apply it to the strict
+    /// production target cut: temporary overlap is owned by GPU coverage handoffs.
     /// </summary>
     public static void ApplyDesiredMembershipHysteresis(
         Dictionary<TerrainResidencyKey, TerrainChunkLodKind> next,
@@ -1129,6 +1160,7 @@ public sealed class TerrainChunkStreamer : IDisposable
     public void NotifyUploaded(TerrainResidencyKey key, TerrainChunkLodKind lod)
     {
         _resident[key] = lod;
+        _inflight.TryRemove(key, out _);
         _streamCoordinator.MarkCoverageAvailable(key, Volatile.Read(ref _contentGeneration));
     }
 
@@ -1141,6 +1173,7 @@ public sealed class TerrainChunkStreamer : IDisposable
     {
         _resident.TryRemove(key, out _);
         _inflight.TryRemove(key, out _);
+        _readyKeys.TryRemove(key, out _);
         _streamCoordinator.RevokeCoverage(key);
     }
 
@@ -1148,6 +1181,7 @@ public sealed class TerrainChunkStreamer : IDisposable
     {
         _resident.TryRemove(key, out _);
         _inflight.TryRemove(key, out _);
+        _readyKeys.TryRemove(key, out _);
     }
 
     /// <summary>Drop residency, queued bakes, GPU Full jobs, and the CPU LOD cache so the next tick rebakes.</summary>
@@ -1170,6 +1204,7 @@ public sealed class TerrainChunkStreamer : IDisposable
         while (_ready.TryDequeue(out _))
         {
         }
+        _readyKeys.Clear();
 
         while (_gpuFullJobs.TryDequeue(out _))
         {
@@ -1210,6 +1245,10 @@ public sealed class TerrainChunkStreamer : IDisposable
     public int DrainReady(List<PreviewTerrainChunkMesh> destination, int maxCount)
         => DrainReady(destination, maxCount, long.MaxValue);
 
+    /// <summary>
+    /// Transfers ready meshes to the caller while retaining inflight ownership until the caller
+    /// reports success through <see cref="NotifyUploaded"/> or defers through <see cref="ReturnReady"/>.
+    /// </summary>
     public int DrainReady(
         List<PreviewTerrainChunkMesh> destination,
         int maxCount,
@@ -1230,7 +1269,13 @@ public sealed class TerrainChunkStreamer : IDisposable
                 continue;
             }
 
-            _inflight.TryRemove(mesh.Key, out _);
+            // A key owns at most one ready-queue slot. Any legacy duplicate left from an older
+            // producer race is discarded rather than uploaded repeatedly.
+            if (!_readyKeys.TryRemove(mesh.Key, out _))
+            {
+                continue;
+            }
+
             destination.Add(mesh);
             bytes += mesh.UploadByteLength;
             n++;
@@ -1241,7 +1286,7 @@ public sealed class TerrainChunkStreamer : IDisposable
 
     /// <summary>
     /// Drain ready meshes into separate Full / LOD quotas so Full catch-up cannot starve LOD uploads.
-    /// Overflow stays on the ready queue (inflight restored).
+    /// Overflow stays on the ready queue without releasing producer ownership.
     /// </summary>
     public void DrainReadySplit(
         List<PreviewTerrainChunkMesh> fullDestination,
@@ -1265,7 +1310,18 @@ public sealed class TerrainChunkStreamer : IDisposable
         }
 
         var buffer = new List<PreviewTerrainChunkMesh>(totalCap);
-        DrainReady(buffer, totalCap, maxFullBytes + maxLodBytes);
+        var seen = new HashSet<TerrainResidencyKey>();
+        while (buffer.Count < totalCap && _ready.TryDequeue(out var mesh))
+        {
+            if (!_readyKeys.ContainsKey(mesh.Key) || !seen.Add(mesh.Key))
+            {
+                continue;
+            }
+
+            // Keep the inflight + ready-key ownership intact until quota selection. Removing it
+            // here allowed workers to rebake overflow keys before this method requeued them.
+            buffer.Add(mesh);
+        }
 
         long fullBytes = 0;
         long lodBytes = 0;
@@ -1277,6 +1333,7 @@ public sealed class TerrainChunkStreamer : IDisposable
                 if (fullDestination.Count < maxFull &&
                     (fullDestination.Count == 0 || fullBytes + mesh.UploadByteLength <= maxFullBytes))
                 {
+                    _readyKeys.TryRemove(mesh.Key, out _);
                     fullDestination.Add(mesh);
                     fullBytes += mesh.UploadByteLength;
                     continue;
@@ -1285,6 +1342,7 @@ public sealed class TerrainChunkStreamer : IDisposable
             else if (lodDestination.Count < maxLod &&
                      (lodDestination.Count == 0 || lodBytes + mesh.UploadByteLength <= maxLodBytes))
             {
+                _readyKeys.TryRemove(mesh.Key, out _);
                 lodDestination.Add(mesh);
                 lodBytes += mesh.UploadByteLength;
                 continue;
@@ -1301,16 +1359,16 @@ public sealed class TerrainChunkStreamer : IDisposable
 
         foreach (var mesh in overflow)
         {
-            ReturnReady(mesh);
+            _ready.Enqueue(mesh);
         }
     }
 
-    /// <summary>Re-queue a drained mesh that lost the per-frame Full/LOD upload split.</summary>
+    /// <summary>Re-queue a drained mesh whose GL upload was deferred.</summary>
     public void ReturnReady(PreviewTerrainChunkMesh mesh)
     {
         ArgumentNullException.ThrowIfNull(mesh);
         _inflight.TryAdd(mesh.Key, mesh.Lod);
-        _ready.Enqueue(mesh);
+        TryPublishReady(mesh);
     }
 
     /// <summary>Pull the next Full chunk queued for Stage-2 GL compute meshing.</summary>
@@ -1323,7 +1381,7 @@ public sealed class TerrainChunkStreamer : IDisposable
     public void CompleteGpuFullMesh(PreviewTerrainChunkMesh mesh)
     {
         ArgumentNullException.ThrowIfNull(mesh);
-        _ready.Enqueue(mesh);
+        CompleteGpuMesh(mesh);
     }
 
     /// <summary>Publish a Stage-2 LOD mesh onto the ready upload queue and warm caches.</summary>
@@ -1341,7 +1399,41 @@ public sealed class TerrainChunkStreamer : IDisposable
             _lodDiskCache.TryStore(cacheKey, mesh);
         }
 
+        CompleteGpuMesh(mesh);
+    }
+
+    private void CompleteGpuMesh(PreviewTerrainChunkMesh mesh)
+    {
+        var key = mesh.Key;
+        if (!SnapshotDesired().ContainsKey(key))
+        {
+            _telemetry.RecordStaleDrop();
+            _inflight.TryRemove(key, out _);
+            _readyKeys.TryRemove(key, out _);
+            return;
+        }
+
+        // A late duplicate Stage-2 completion must not replace the same drawable allocation
+        // forever. Content invalidation clears resident state before issuing fresh work.
+        if (_resident.TryGetValue(key, out var resident) && resident == mesh.Lod)
+        {
+            _inflight.TryRemove(key, out _);
+            _readyKeys.TryRemove(key, out _);
+            return;
+        }
+
+        TryPublishReady(mesh);
+    }
+
+    private bool TryPublishReady(PreviewTerrainChunkMesh mesh)
+    {
+        if (!_readyKeys.TryAdd(mesh.Key, 0))
+        {
+            return false;
+        }
+
         _ready.Enqueue(mesh);
+        return true;
     }
 
     /// <summary>
@@ -1885,11 +1977,11 @@ public sealed class TerrainChunkStreamer : IDisposable
         {
             _telemetry.RecordStaleDrop();
             _inflight.TryRemove(key, out _);
+            _readyKeys.TryRemove(key, out _);
             return false;
         }
 
-        _ready.Enqueue(mesh);
-        return true;
+        return TryPublishReady(mesh);
     }
 
     private bool HasCameraNearFullPadResident()
