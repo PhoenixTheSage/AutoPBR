@@ -11,7 +11,10 @@ namespace AutoPBR.App.Rendering.Scene;
 public static class TerrainChunkDrawCull
 {
     /// <summary>Match shadow-cascade parallel gate; tiny candidate sets stay single-threaded.</summary>
-    public const int ParallelFilterMinCandidates = 64;
+    // A frustum sphere test is tiny; Parallel.For + ConcurrentBag costs more than the work for
+    // the ~1.5k candidates seen in normal High-profile terrain sessions. Reserve parallel fanout
+    // for genuinely large resident sets.
+    public const int ParallelFilterMinCandidates = 2048;
     private static readonly ParallelOptions FilterParallelOptions = new()
     {
         MaxDegreeOfParallelism = Math.Clamp(

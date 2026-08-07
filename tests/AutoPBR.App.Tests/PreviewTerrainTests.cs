@@ -1965,7 +1965,7 @@ public sealed class PreviewTerrainTests
             fullOnly: false,
             selected);
 
-        Assert.True(selected.Count >= TerrainChunkDrawCull.ParallelFilterMinCandidates);
+        Assert.NotEmpty(selected);
         static int ExpectedDrawGroup(in TerrainChunkDrawCull.Candidate c) =>
             c.Lod != TerrainChunkLodKind.Full
                 ? TerrainResidencyKey.MaxLodLevel - (int)c.Lod

@@ -52,7 +52,12 @@ public sealed partial class OpenGlPreviewBackend
     private GlShaderProgram? _terrainFullMeshEmitComputeProgram;
     private GlShaderProgram? _terrainLodBoardComputeProgram;
     private bool _loggedTerrainGpuMeshCompute;
-    private GlIndirectDrawCommandBuffer? _terrainIndirectCommands;
+    // Shadow cascades, depth, and shaded terrain can all upload MDI commands in one frame.
+    // Rotating storage prevents BufferSubData from waiting on the immediately preceding draw.
+    private const int TerrainIndirectCommandRingSize = 16;
+    private readonly GlIndirectDrawCommandBuffer?[] _terrainIndirectCommandRing =
+        new GlIndirectDrawCommandBuffer?[TerrainIndirectCommandRingSize];
+    private int _terrainIndirectCommandCursor;
     private readonly List<TerrainDrawItem> _terrainDrawItems = new(1024);
     private uint[] _terrainIndirectScratch = [];
     private GlTexture2DArray? _groundAlbedoArray;
@@ -233,8 +238,13 @@ public sealed partial class OpenGlPreviewBackend
 
     private void DisposeTerrainMeshPool()
     {
-        _terrainIndirectCommands?.Dispose();
-        _terrainIndirectCommands = null;
+        foreach (var commands in _terrainIndirectCommandRing)
+        {
+            commands?.Dispose();
+        }
+
+        Array.Clear(_terrainIndirectCommandRing);
+        _terrainIndirectCommandCursor = 0;
         _terrainShadowSourceCommands?.Dispose();
         _terrainShadowSourceCommands = null;
         _terrainMeshPool?.Dispose();
@@ -513,7 +523,6 @@ public sealed partial class OpenGlPreviewBackend
                 $"transactional growth (failure={_terrainMeshPool.LastFailureReason}, " +
                 $"glError={_terrainMeshPool.LastFailure}).");
         }
-        _terrainIndirectCommands ??= new GlIndirectDrawCommandBuffer(gl);
         if (_terrainMultiDrawIndirectCount is null &&
             (gl.Context.TryGetProcAddress("glMultiDrawElementsIndirectCount", out var proc) ||
              gl.Context.TryGetProcAddress("glMultiDrawElementsIndirectCountARB", out proc)))
@@ -2573,6 +2582,7 @@ public sealed partial class OpenGlPreviewBackend
             scratch,
             selected,
             enableParallaxSetting && !shadowPass,
+            resolveTransitions: !shadowPass,
             opaqueOnly);
         if (_terrainDrawItems.Count == 0)
         {
@@ -2648,20 +2658,24 @@ public sealed partial class OpenGlPreviewBackend
         List<TerrainGpuChunk> scratch,
         List<int> selected,
         bool applyNearPom,
+        bool resolveTransitions,
         bool opaqueOnly = false)
     {
         _terrainDrawItems.Clear();
         var multiSlot = _grassGroundSlots.Length > 1;
+        // Snapshot once per shaded draw. Previously every selected chunk reacquired the desired
+        // lock while proving its coarser underlay. Shadow shaders do not consume either fade value.
+        var desired = resolveTransitions ? _terrainStreamer?.SnapshotDesired() : null;
         for (var order = 0; order < selected.Count; order++)
         {
             var candidate = candidates[selected[order]];
             var chunk = scratch[candidate.SourceIndex];
             var nearPom = applyNearPom && candidate.NearPom;
-            var hasUnderlay = HasCoarserGpuUnderlayForFade(candidate.Key);
-            var transitionKeep = ResolveTerrainTransitionKeep(
-                candidate.Key,
-                chunk,
-                hasUnderlay);
+            var hasUnderlay = resolveTransitions &&
+                HasCoarserGpuUnderlayForFade(candidate.Key, desired);
+            var transitionKeep = resolveTransitions
+                ? ResolveTerrainTransitionKeep(candidate.Key, chunk, hasUnderlay)
+                : 1f;
             var batches = chunk.DrawBatches;
             if (batches.Length == 0)
             {
@@ -2872,9 +2886,10 @@ public sealed partial class OpenGlPreviewBackend
     /// outgoing/retiring (or superseded by the current target cut). Stable dual residency is not
     /// enough — that was the old global HasCoarserGpuUnderlayForFade path.
     /// </summary>
-    private bool HasCoarserGpuUnderlayForFade(TerrainResidencyKey finer)
+    private bool HasCoarserGpuUnderlayForFade(
+        TerrainResidencyKey finer,
+        IReadOnlyDictionary<TerrainResidencyKey, TerrainChunkLodKind>? desired)
     {
-        var desired = _terrainStreamer?.SnapshotDesired();
         var chunk = new TerrainChunkKey(finer.OriginChunkX, finer.OriginChunkZ);
         for (var level = finer.LodLevel + 1; level <= TerrainResidencyKey.MaxLodLevel; level++)
         {
@@ -2949,7 +2964,7 @@ public sealed partial class OpenGlPreviewBackend
         bool opaqueOnly)
     {
         var pool = _terrainMeshPool;
-        var commands = _terrainIndirectCommands;
+        var commands = AcquireTerrainIndirectCommandBuffer();
         if (pool is null || commands is null || _terrainDrawItems.Count == 0)
         {
             return false;
@@ -3129,6 +3144,20 @@ public sealed partial class OpenGlPreviewBackend
         }
 
         return true;
+    }
+
+    private GlIndirectDrawCommandBuffer? AcquireTerrainIndirectCommandBuffer()
+    {
+        if (_gl is null)
+        {
+            return null;
+        }
+
+        var index = _terrainIndirectCommandCursor;
+        _terrainIndirectCommandCursor =
+            (_terrainIndirectCommandCursor + 1) % TerrainIndirectCommandRingSize;
+        return _terrainIndirectCommandRing[index] ??=
+            new GlIndirectDrawCommandBuffer(_gl);
     }
 
     private void SetGroundDrawRecordIndex(int materialIndex)

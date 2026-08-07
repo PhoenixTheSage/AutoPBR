@@ -330,6 +330,26 @@ public sealed partial class PreviewRenderingTests
     }
 
     [Fact]
+    public void TerrainDrawSubmission_RotatesIndirectStorageAndSkipsShadowFadeProofs()
+    {
+        var ground = LoadSource(
+            ThisFilePath(),
+            "src",
+            "AutoPBR.App",
+            "Rendering",
+            "OpenGL",
+            "OpenGlPreviewBackend.GroundTerrain.cs");
+
+        Assert.Contains("TerrainIndirectCommandRingSize = 16", ground, StringComparison.Ordinal);
+        Assert.Contains("AcquireTerrainIndirectCommandBuffer()", ground, StringComparison.Ordinal);
+        Assert.Contains("resolveTransitions: !shadowPass", ground, StringComparison.Ordinal);
+        Assert.Contains(
+            "var desired = resolveTransitions ? _terrainStreamer?.SnapshotDesired() : null;",
+            ground,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ScenePass_StreamingSafetyUnderlayIsStartupOnlyTwoSidedWithoutPom()
     {
         var bootstrap = LoadSource(ThisFilePath(),
